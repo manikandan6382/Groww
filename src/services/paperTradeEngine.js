@@ -1,0 +1,268 @@
+import { EventEmitter } from "node:events";
+import { getPaperLab, markPaperTrade } from "../repositories/paper-lab.repository.js";
+import { createUpstoxClient } from "./upstoxClient.js";
+
+const MARKET_CLOSED_REFRESH_MS = 60_000;
+const ACTIVE_REFRESH_MS = 15_000;
+
+export class PaperTradeEngine extends EventEmitter {
+  constructor(options = {}) {
+    super();
+    this.client = options.client || createUpstoxClient(options.upstox || {});
+    this.activeTrades = new Map();
+    this.tokenToTradeIds = new Map();
+    this.resolving = new Set();
+    this.triggering = new Set();
+    this.lastEventId = 0;
+    this.events = [];
+    this.refreshTimer = null;
+    this.started = false;
+
+    this.client.on("tick", (tick) => this.handleTick(tick));
+    this.client.on("status", (status) => this.publish("status", status));
+    this.client.on("session_expired", (payload) => this.publish("session_expired", payload));
+    this.client.on("error", (error) => this.publish("error", { message: error.message }));
+  }
+
+  start() {
+    if (this.started) return;
+    this.started = true;
+    this.client.start();
+    this.refreshActiveTrades();
+    this.refreshTimer = setInterval(() => this.refreshActiveTrades(), ACTIVE_REFRESH_MS);
+  }
+
+  stop() {
+    this.started = false;
+    if (this.refreshTimer) clearInterval(this.refreshTimer);
+    this.refreshTimer = null;
+    this.client.stop();
+  }
+
+  getStatus() {
+    return {
+      started: this.started,
+      marketOpen: isMarketOpenNow(),
+      client: this.client.getStatus(),
+      activeTrades: Array.from(this.activeTrades.values()).map((item) => ({
+        id: item.trade.id,
+        symbol: item.trade.symbol,
+        tokenKey: item.tokenKey,
+        subscribed: Boolean(item.tokenKey),
+        lastLtp: item.lastLtp || null,
+        lastTickAt: item.lastTickAt || null,
+        status: item.status,
+      })),
+    };
+  }
+
+  getRecentEvents(afterId = 0) {
+    return this.events.filter((event) => event.id > Number(afterId || 0));
+  }
+
+  async refreshActiveTrades() {
+    if (!this.started) return;
+    let lab;
+    try {
+      lab = getPaperLab({ range: "week" });
+    } catch (error) {
+      this.publish("error", { message: error.message });
+      return;
+    }
+
+    const openTrades = lab.openTrades || [];
+    const openIds = new Set(openTrades.map((trade) => Number(trade.id)));
+
+    for (const id of Array.from(this.activeTrades.keys())) {
+      if (!openIds.has(id)) this.removeTrade(id);
+    }
+
+    if (!openTrades.length) {
+      this.publish("empty", { message: "No active paper trades to monitor." });
+      return;
+    }
+
+    if (!isMarketOpenNow()) {
+      this.publish("market_closed", {
+        message: "Market is closed. Live trigger monitoring will resume when ticks arrive.",
+        nextRefreshMs: MARKET_CLOSED_REFRESH_MS,
+      });
+    }
+
+    for (const trade of openTrades) {
+      await this.ensureTradeSubscription(trade);
+    }
+  }
+
+  async syncTrade(tradeId) {
+    const trade = (getPaperLab({ range: "week" }).openTrades || []).find((item) => Number(item.id) === Number(tradeId));
+    if (!trade) {
+      this.removeTrade(Number(tradeId));
+      return;
+    }
+    await this.ensureTradeSubscription(trade, { force: true });
+  }
+
+  removeTrade(tradeId) {
+    const id = Number(tradeId);
+    const item = this.activeTrades.get(id);
+    if (!item) return;
+    this.activeTrades.delete(id);
+    if (item.tokenKey) {
+      const ids = this.tokenToTradeIds.get(item.tokenKey) || new Set();
+      ids.delete(id);
+      if (ids.size) {
+        this.tokenToTradeIds.set(item.tokenKey, ids);
+      } else {
+        this.tokenToTradeIds.delete(item.tokenKey);
+        this.client.unsubscribe(item.tokenKey);
+      }
+    }
+    this.publish("unsubscribed", { tradeId: id, symbol: item.trade.symbol, tokenKey: item.tokenKey });
+  }
+
+  async ensureTradeSubscription(trade, options = {}) {
+    const id = Number(trade.id);
+    const existing = this.activeTrades.get(id);
+    if (existing && existing.tokenKey && !options.force) {
+      existing.trade = trade;
+      return;
+    }
+    if (this.resolving.has(id)) return;
+    this.resolving.add(id);
+
+    try {
+      const tokenKey = await this.client.resolveOptionToken(trade);
+      if (!tokenKey) {
+        this.activeTrades.set(id, {
+          trade,
+          tokenKey: null,
+          status: "token_missing",
+        });
+        this.publish("token_missing", {
+          tradeId: id,
+          symbol: trade.symbol,
+          message: "Could not resolve Upstox option token. Add UPSTOX_TOKEN:<token> in notes or check expiry/strike.",
+        });
+        return;
+      }
+
+      if (existing?.tokenKey && existing.tokenKey !== tokenKey) this.removeTrade(id);
+      this.activeTrades.set(id, {
+        ...(existing || {}),
+        trade,
+        tokenKey,
+        status: "subscribed",
+      });
+      if (!this.tokenToTradeIds.has(tokenKey)) this.tokenToTradeIds.set(tokenKey, new Set());
+      this.tokenToTradeIds.get(tokenKey).add(id);
+      this.client.subscribe(tokenKey);
+      this.publish("subscribed", { tradeId: id, symbol: trade.symbol, tokenKey });
+    } catch (error) {
+      this.activeTrades.set(id, {
+        trade,
+        tokenKey: null,
+        status: "token_error",
+        error: error.message,
+      });
+      this.publish("token_error", { tradeId: id, symbol: trade.symbol, message: error.message });
+      if (isSessionExpiredError(error)) {
+        this.publish("session_expired", { message: error.message });
+      }
+    } finally {
+      this.resolving.delete(id);
+    }
+  }
+
+  handleTick(tick) {
+    const tradeIds = this.tokenToTradeIds.get(tick.key);
+    if (!tradeIds?.size) return;
+
+    for (const id of Array.from(tradeIds)) {
+      const item = this.activeTrades.get(id);
+      if (!item || item.tokenKey !== tick.key) continue;
+      item.lastLtp = tick.ltp;
+      item.lastTickAt = tick.receivedAt;
+      this.publish("tick", {
+        tradeId: id,
+        symbol: item.trade.symbol,
+        tokenKey: tick.key,
+        ltp: tick.ltp,
+        receivedAt: tick.receivedAt,
+      });
+      this.evaluateTrigger(item.trade, tick);
+    }
+  }
+
+  evaluateTrigger(trade, tick) {
+    const id = Number(trade.id);
+    if (this.triggering.has(id)) return;
+    const target = Number(trade.targetPrice || 0);
+    const stopLoss = Number(trade.stopLoss || 0);
+    const ltp = Number(tick.ltp || 0);
+    let reason = null;
+
+    if (trade.direction === "SHORT") {
+      if (target && ltp <= target) reason = "TARGET_HIT";
+      if (!reason && stopLoss && ltp >= stopLoss) reason = "STOP_LOSS_HIT";
+    } else {
+      if (target && ltp >= target) reason = "TARGET_HIT";
+      if (!reason && stopLoss && ltp <= stopLoss) reason = "STOP_LOSS_HIT";
+    }
+
+    if (!reason) return;
+    this.triggerTrade(trade, tick, reason);
+  }
+
+  triggerTrade(trade, tick, reason) {
+    const id = Number(trade.id);
+    if (this.triggering.has(id)) return;
+    this.triggering.add(id);
+
+    try {
+      const result = markPaperTrade(id, { price: tick.ltp, reason });
+      this.removeTrade(id);
+      const eventType = reason === "TARGET_HIT" ? "target_hit" : "stop_loss_hit";
+      this.publish(eventType, {
+        tradeId: id,
+        symbol: trade.symbol,
+        ltp: tick.ltp,
+        reason,
+        exitTime: result.trade.exitDatetime,
+        pnl: result.trade.netPnl,
+        message: reason === "TARGET_HIT" ? "Target Hit" : "Stop Loss Hit",
+      });
+    } catch (error) {
+      this.publish("error", { tradeId: id, symbol: trade.symbol, message: error.message });
+    } finally {
+      this.triggering.delete(id);
+    }
+  }
+
+  publish(type, payload = {}) {
+    const event = {
+      id: ++this.lastEventId,
+      type,
+      payload,
+      createdAt: new Date().toISOString(),
+    };
+    this.events.push(event);
+    if (this.events.length > 100) this.events = this.events.slice(-100);
+    this.emit("event", event);
+    return event;
+  }
+}
+
+export const paperTradeEngine = new PaperTradeEngine();
+
+function isMarketOpenNow(date = new Date()) {
+  const ist = new Date(date.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+  const day = ist.getDay();
+  if (day === 0 || day === 6) return false;
+  const minutes = ist.getHours() * 60 + ist.getMinutes();
+  return minutes >= 9 * 60 + 15 && minutes <= 15 * 60 + 30;
+}
+
+function isSessionExpiredError(error) {
+  return /session|token|jkey|invalid|expired/i.test(String(error?.message || ""));
+}

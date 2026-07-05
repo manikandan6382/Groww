@@ -1,0 +1,892 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Portfolio Command</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/styles.css?v=live-alerts-mockup-20260705" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">P</div>
+          <span>PortfolioX</span>
+        </div>
+
+        <div class="profile-card">
+          <div class="profile-avatar">M</div>
+          <div>
+            <small>@zerodha</small>
+            <strong>Manikandan</strong>
+          </div>
+          <span class="pro-pill">PRO</span>
+        </div>
+
+        <nav class="nav-list" aria-label="Main navigation">
+          <button class="nav-item active" data-view-target="dashboard" data-view-path="/dashboard" type="button"><span>01</span> My Stocks</button>
+          <button class="nav-item" data-view-target="paper" data-view-path="/paper-lab" type="button"><span>02</span> Live Alerts</button>
+          <button class="nav-item" data-view-target="foreign" data-view-path="/foreign-stocks" type="button"><span>03</span> Foreign Stocks</button>
+        </nav>
+
+        <div class="market-data-card">
+          <div class="card-title">
+            <span class="live-dot-pulse"></span> Market Data <span class="live-tag">Live</span>
+          </div>
+          <div class="feed-type">NSE Options</div>
+          <div class="connection-status-row">
+            <span class="connection-status" id="syncStatus">Connected</span>
+            <button id="refreshBtn" class="refresh-sync-btn" title="Refresh Sync" type="button">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="pro-upgrade-card">
+          <div class="pro-header">
+            <svg class="pro-icon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" />
+            </svg>
+            <strong>Upgrade to Pro</strong>
+          </div>
+          <p>Unlock advanced alerts, analytics & more.</p>
+          <button class="upgrade-btn" type="button">Upgrade Now</button>
+        </div>
+
+        <div class="sidebar-footer">
+          <div class="theme-mode-toggle">
+            <span>Dark Mode</span>
+            <label class="switch-toggle">
+              <input type="checkbox" id="darkModeCheckbox" checked>
+              <span class="slider-round"></span>
+            </label>
+          </div>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div class="market-title">Market Overview</div>
+          <div class="ticker-strip">
+            <div class="ticker-card">
+              <span>NIFTY</span>
+              <strong id="niftyMini">--</strong>
+              <canvas id="niftyMiniChart" width="86" height="26" aria-hidden="true"></canvas>
+            </div>
+            <div class="ticker-card">
+              <span>BANKNIFTY</span>
+              <strong id="bankniftyMini">--</strong>
+              <canvas id="bankniftyMiniChart" width="86" height="26" aria-hidden="true"></canvas>
+            </div>
+            <div class="ticker-card">
+              <span>INDIAVIX</span>
+              <strong id="vixMini">--</strong>
+              <canvas id="vixMiniChart" width="86" height="26" aria-hidden="true"></canvas>
+            </div>
+          </div>
+          <label class="search-box">
+            <span>Search</span>
+            <input id="searchInput" type="search" placeholder="Search holdings..." />
+          </label>
+          <div class="theme-switcher" aria-label="Theme selector">
+            <span>Theme</span>
+            <button class="theme-option active" data-theme="blue" aria-label="Blue theme">Blue</button>
+            <button class="theme-option" data-theme="emerald" aria-label="Emerald theme">Emerald</button>
+            <button class="theme-option" data-theme="violet" aria-label="Violet theme">Violet</button>
+            <button class="theme-option custom" id="customThemeBtn" data-theme="custom" aria-expanded="false" aria-controls="customThemePanel">Custom</button>
+            <div class="custom-theme-panel" id="customThemePanel" hidden>
+              <label>
+                <span>Accent</span>
+                <input id="customAccentColor" type="color" value="#00d5ff" />
+              </label>
+              <label>
+                <span>Background</span>
+                <input id="customBgColor" type="color" value="#020812" />
+              </label>
+              <label>
+                <span>Panel</span>
+                <input id="customPanelColor" type="color" value="#061423" />
+              </label>
+              <button id="saveCustomTheme" type="button">Apply custom</button>
+            </div>
+          </div>
+          <div class="header-actions">
+            <button class="notification" aria-label="Notifications">3</button>
+            <div class="avatar">M</div>
+          </div>
+        </header>
+
+        <div class="mobile-view-tabs" aria-label="Mobile navigation">
+          <button class="nav-item active" data-view-target="dashboard" data-view-path="/dashboard" type="button"><span>01</span> My Stocks</button>
+          <button class="nav-item" data-view-target="paper" data-view-path="/paper-lab" type="button"><span>02</span> Alerts</button>
+          <button class="nav-item" data-view-target="foreign" data-view-path="/foreign-stocks" type="button"><span>03</span> Foreign</button>
+        </div>
+
+        <div class="dashboard-grid" data-view-panel="dashboard">
+          <section class="portfolio-panel panel">
+            <div class="panel-header">
+              <h1>Portfolio Overview</h1>
+              <div class="range-tabs">
+                <button data-range="5d">5D</button>
+                <button data-range="1mo" class="selected">1M</button>
+                <button data-range="3mo">3M</button>
+                <button data-range="6mo">6M</button>
+                <button data-range="1y">1Y</button>
+              </div>
+            </div>
+
+            <div class="portfolio-hero">
+              <div class="portfolio-copy">
+                <p class="label">Total Portfolio Value</p>
+                <div id="totalValue" class="hero-value">--</div>
+                <div id="totalReturn" class="hero-gain">--</div>
+              </div>
+              <div class="chart-shell">
+                <canvas id="portfolioChart" width="620" height="220" aria-label="NIFTY 50 reference trend"></canvas>
+                <div class="chart-note">NIFTY 50 reference chart from Yahoo Finance</div>
+              </div>
+            </div>
+
+            <div class="stats-row">
+              <div class="stat-card">
+                <span>Total Invested</span>
+                <strong id="investedValue">--</strong>
+              </div>
+              <div class="stat-card">
+                <span>Total Returns</span>
+                <strong id="totalReturnPct">--</strong>
+              </div>
+              <div class="stat-card">
+                <span>Cash Buffer</span>
+                <strong id="cashBuffer">--</strong>
+              </div>
+              <div class="stat-card">
+                <span>Holdings</span>
+                <strong id="holdingCount">--</strong>
+              </div>
+            </div>
+          </section>
+
+          <section class="promo-panel panel">
+            <div class="mini-brand">PortfolioX</div>
+            <span class="new-pill">Live</span>
+            <h2>Private Wealth Command</h2>
+            <p>Your read-only Zerodha portfolio, concentration radar, allocation map, and free market references in one premium console.</p>
+            <button>Read Only Mode</button>
+            <div class="wealth-orbit" aria-hidden="true">
+              <div class="orbit-ring ring-one"></div>
+              <div class="orbit-ring ring-two"></div>
+              <div class="orbit-chip chip-one">ETF</div>
+              <div class="orbit-chip chip-two">EQ</div>
+              <div class="coin-core">&#8377;</div>
+            </div>
+          </section>
+
+          <section class="allocation-panel panel">
+            <div class="panel-header">
+              <h2>Asset Allocation</h2>
+              <span>View All</span>
+            </div>
+            <div class="allocation-content">
+              <canvas id="allocationChart" width="190" height="190" aria-label="Portfolio allocation"></canvas>
+              <div id="allocationLegend" class="legend"></div>
+            </div>
+          </section>
+
+          <section class="health-panel panel">
+            <div class="panel-header">
+              <h2>Portfolio Health</h2>
+              <span>Derived</span>
+            </div>
+            <div class="health-body">
+              <canvas id="healthChart" width="150" height="150" aria-label="Portfolio health score"></canvas>
+              <div class="health-bars">
+                <div class="health-row">
+                  <span>Diversification</span>
+                  <div><i id="diversificationBar"></i></div>
+                  <strong id="diversificationRisk">--</strong>
+                </div>
+                <div class="health-row">
+                  <span>Risk Score</span>
+                  <div><i id="riskBar"></i></div>
+                  <strong id="concentrationRisk">--</strong>
+                </div>
+                <div class="health-row">
+                  <span>Gold Exposure</span>
+                  <div><i id="goldBar"></i></div>
+                  <strong id="goldWeight">--</strong>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="insight-panel panel">
+            <div class="panel-header">
+              <h2>AI Insights</h2>
+              <button>New Insight</button>
+            </div>
+            <div class="insight-body">
+              <div class="insight-icon">i</div>
+              <div>
+                <h3>Consider diversifying your portfolio</h3>
+                <p id="goldInsight">Loading portfolio insight.</p>
+                <a href="#holdings">View Recommendation</a>
+              </div>
+            </div>
+          </section>
+
+          <section id="holdings" class="holdings-panel panel">
+            <div class="panel-header">
+              <h2>Asset Holdings</h2>
+              <span id="asOf">Loading</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Asset</th>
+                    <th>Balance</th>
+                    <th>Avg. Price</th>
+                    <th>Current Price</th>
+                    <th>Value</th>
+                    <th>Return</th>
+                    <th>Allocation</th>
+                  </tr>
+                </thead>
+                <tbody id="holdingsBody"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="watchlist-panel panel">
+            <div class="panel-header">
+              <h2>Watchlist</h2>
+              <span id="watchSource">Yahoo</span>
+            </div>
+            <div class="watch-tools">
+              <div class="stock-search-row">
+                <label class="stock-search">
+                  <span>Search stock</span>
+                  <input id="stockSearchInput" type="search" placeholder="RELIANCE, TCS, BANK..." autocomplete="off" />
+                </label>
+                <button id="clearStockSearch" class="clear-search" type="button">Clear</button>
+              </div>
+              <div id="stockSuggestions" class="stock-suggestions">
+                <div class="stock-hint">Type 2 letters to search NSE/BSE stocks.</div>
+              </div>
+              <div class="watch-meta">
+                <span id="watchCount">Selected stocks</span>
+                <span>Free quotes only for saved symbols</span>
+              </div>
+            </div>
+            <div id="watchlist" class="watchlist"></div>
+          </section>
+
+        </div>
+
+        <section id="paperLab" class="paper-lab-board live-alerts-board" data-view-panel="paper" hidden>
+          <header class="paper-page-head">
+            <div>
+              <div class="paper-title-line">
+                <h1>LIVE ALERTS</h1>
+              </div>
+              <p>Track NIFTY and BANKNIFTY option alerts with live LTP, target, stop loss, and stored P&L results.</p>
+            </div>
+            <div class="live-datetime-badge">
+              <span class="live-dot-pulse"></span> Live
+              <span class="datetime-separator">|</span>
+              <span id="liveClock">--</span>
+            </div>
+          </header>
+
+          <section class="paper-metric-strip live-alert-metrics panel" aria-label="Live alert summary">
+            <div class="paper-metric" id="cardActiveAlerts">
+              <div class="paper-metric-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0" />
+                </svg>
+              </div>
+              <div>
+                <span>Active Alerts</span>
+                <strong id="paperActiveCount">0</strong>
+                <small>Watching now</small>
+              </div>
+            </div>
+            <div class="paper-metric" id="cardTriggeredToday">
+              <div class="paper-metric-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <circle cx="12" cy="12" r="6" />
+                  <circle cx="12" cy="12" r="2" />
+                </svg>
+              </div>
+              <div>
+                <span>Triggered Today</span>
+                <strong id="paperTriggeredToday">0</strong>
+                <small>Alerts triggered</small>
+              </div>
+            </div>
+            <div class="paper-metric" id="cardTodayPnl">
+              <div class="paper-metric-icon">
+                <span class="metric-symbol">₹</span>
+              </div>
+              <div>
+                <span>Today P&L</span>
+                <strong id="paperWeekPnl">--</strong>
+                <small id="paperPnlPct">--</small>
+              </div>
+            </div>
+            <div class="paper-metric" id="cardWinRate">
+              <div class="paper-metric-icon">
+                <span class="metric-symbol">%</span>
+              </div>
+              <div>
+                <span>Win Rate</span>
+                <strong id="paperWinRate">--</strong>
+                <small id="paperTradeCount">--</small>
+              </div>
+            </div>
+            <div class="paper-metric" id="cardMarketFeed">
+              <div class="paper-metric-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M5 12a7 7 0 0 1 14 0M12 12a3 3 0 0 1 0-6" />
+                  <circle cx="12" cy="12" r="1" />
+                </svg>
+              </div>
+              <div>
+                <span>Market Feed</span>
+                <strong id="paperMarketFeedStatus">Waiting</strong>
+                <small id="paperTriggeredTotal">0 stored results</small>
+              </div>
+            </div>
+          </section>
+
+          <div class="paper-main-grid live-alert-grid">
+            <div class="live-alert-column live-alert-left">
+              <form id="paperTradeForm" class="paper-ticket panel">
+                <div class="paper-card-header">
+                  <div>
+                    <h2>Create Live Alert</h2>
+                  </div>
+                  <span id="paperFormStatus" class="form-status-pill">Ready</span>
+                </div>
+                <div class="paper-type-toggle" role="group" aria-label="Option type">
+                  <label>
+                    <input type="radio" name="optionType" value="CALL" checked />
+                    <span>CALL</span>
+                  </label>
+                  <label>
+                    <input type="radio" name="optionType" value="PUT" />
+                    <span>PUT</span>
+                  </label>
+                </div>
+                <div class="paper-form-grid">
+                  <label>
+                    <span>Underlying</span>
+                    <select name="underlyingSymbol" required>
+                      <option value="NIFTY" selected>NIFTY</option>
+                      <option value="BANKNIFTY">BANKNIFTY</option>
+                      <option value="FINNIFTY">FINNIFTY</option>
+                      <option value="SENSEX">SENSEX</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Strike</span>
+                    <div class="paper-stepper">
+                      <button data-strike-step="-50" type="button" aria-label="Decrease strike">-</button>
+                      <input name="strikePrice" type="number" step="50" placeholder="24500" value="24500" />
+                      <button data-strike-step="50" type="button" aria-label="Increase strike">+</button>
+                    </div>
+                  </label>
+                  <label>
+                    <span>Expiry</span>
+                    <input name="expiryDate" type="date" />
+                  </label>
+                  <label>
+                    <span>Live LTP</span>
+                    <input name="currentPrice" type="number" step="0.05" min="0" placeholder="30.75" required />
+                  </label>
+                  <label>
+                    <span>Target</span>
+                    <input name="targetPrice" type="number" step="0.05" min="0" placeholder="35.00" required />
+                  </label>
+                  <label>
+                    <span>Stop Loss</span>
+                    <input name="stopLoss" type="number" step="0.05" min="0" placeholder="25.00" required />
+                  </label>
+                  <label>
+                    <span>Lots</span>
+                    <div class="paper-stepper lots-stepper">
+                      <button data-lots-step="-1" type="button" aria-label="Decrease lots">-</button>
+                      <input name="quantity" type="number" step="1" min="1" value="1" required />
+                      <button data-lots-step="1" type="button" aria-label="Increase lots">+</button>
+                    </div>
+                  </label>
+                  <label class="col-span-2">
+                    <span>Note (Optional)</span>
+                    <input name="personalNotes" placeholder="e.g. Breakout above resistance" />
+                  </label>
+                </div>
+                <input name="lotSize" type="hidden" value="1" />
+                <div class="paper-lot-note" id="paperLotNote">1 lot = auto resolved quantity</div>
+                <label class="wide-field paper-reason">
+                  <span>Why this alert?</span>
+                  <textarea name="entryReason" rows="3" placeholder="Example: price broke resistance with volume, target is clear, stop loss is below support."></textarea>
+                </label>
+                <div id="paperRiskPreview" class="paper-risk-preview" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px">
+                  <div><span>Capital watched</span><strong>--</strong></div>
+                  <div><span>Max loss</span><strong>--</strong></div>
+                  <div><span>Target profit</span><strong>--</strong></div>
+                  <div><span>Reward/risk</span><strong>--</strong></div>
+                </div>
+                <button type="submit" class="paper-start-btn">Create Alert <span aria-hidden="true">&rarr;</span></button>
+              </form>
+            </div>
+
+            <div class="live-alert-column live-alert-center">
+              <section class="paper-active panel">
+                <div class="paper-card-header">
+                  <div>
+                    <h2>Live Tracking</h2>
+                  </div>
+                  <span class="active-count-badge" id="paperOpenCount">WAITING</span>
+                </div>
+                <div id="paperOpenTrades" class="paper-trade-list"></div>
+              </section>
+            </div>
+
+            <div class="live-alert-column live-alert-right">
+              <aside class="paper-alert-panel panel">
+                <div class="paper-card-header">
+                  <div>
+                    <h2>Alert Feed</h2>
+                  </div>
+                  <div class="feed-header-actions">
+                    <button class="feed-icon-btn" aria-label="Filter" type="button">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+                      </svg>
+                    </button>
+                    <button class="feed-icon-btn" aria-label="Settings" type="button">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <circle cx="12" cy="12" r="3" />
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="paper-alert-tabs" aria-label="Alert filters">
+                  <button class="active" type="button">All <span class="tab-badge" id="feedCountAll">0</span></button>
+                  <button type="button">Active <span class="tab-badge" id="feedCountActive">0</span></button>
+                  <button type="button">Triggered <span class="tab-badge" id="feedCountTriggered">0</span></button>
+                </div>
+                <div id="paperAlertList" class="paper-alert-list"></div>
+                <a class="paper-view-all-link" href="#paperAlertList">View All Alerts &rarr;</a>
+              </aside>
+            </div>
+          </div>
+
+          <div class="paper-bottom-grid">
+            <section class="paper-recent panel">
+              <div class="panel-header-row">
+                <h2>Recent Triggered Alerts</h2>
+                <a class="view-all-text-link" href="#paperClosedTrades">View All</a>
+              </div>
+              <div class="table-wrap compact-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Instrument</th>
+                      <th>Type</th>
+                      <th>Target / SL</th>
+                      <th>Result</th>
+                      <th>P&L</th>
+                    </tr>
+                  </thead>
+                  <tbody id="paperClosedTrades"></tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="paper-daily-pnl panel">
+              <div class="panel-header-row">
+                <h2>Daily P&L <span class="sub-label">(This Week)</span></h2>
+                <a class="view-all-text-link" href="#paperDailyBars">View Details</a>
+              </div>
+              <div class="daily-pnl-summary">
+                <strong id="bottomDailyPnl">--</strong>
+                <span id="bottomDailyPnlPct">--</span>
+              </div>
+              <div class="chart-container-bars">
+                <div id="paperDailyBars" class="paper-daily-bars" aria-label="Daily P&L chart"></div>
+              </div>
+            </section>
+
+            <section class="paper-weekly-summary panel">
+              <div class="panel-header-row">
+                <h2>Weekly Summary</h2>
+                <select class="summary-range-select" aria-label="Select Summary Range">
+                  <option value="week" selected>This Week</option>
+                </select>
+              </div>
+              <div class="summary-stats-grid">
+                <div class="summary-stat-box">
+                  <span class="label">Total P&L</span>
+                  <strong id="summaryTotalPnl">--</strong>
+                  <span class="sub-label" id="summaryTotalPnlPct">--</span>
+                </div>
+                <div class="summary-stat-box">
+                  <span class="label">Win Rate</span>
+                  <strong id="summaryWinRate">--</strong>
+                  <span class="sub-label" id="summaryWinLossCounts">--</span>
+                </div>
+                <div class="summary-stat-box">
+                  <span class="label">Total Trades</span>
+                  <strong id="summaryTotalTrades">--</strong>
+                  <span class="sub-label trend-up" id="summaryTotalTradesCompare">▲ 2 vs last week</span>
+                </div>
+              </div>
+              <a class="view-all-link-bottom" href="#paperLessons">View Full Analytics &rarr;</a>
+              <div id="paperLessons" hidden></div>
+              <div id="paperTradeCalendar" hidden></div>
+              <div id="paperPerfWinRate" hidden></div>
+              <div id="paperProfitFactor" hidden></div>
+              <div id="paperAvgRR" hidden></div>
+              <div id="paperBestStreak" hidden></div>
+            </section>
+
+            <section class="paper-best-worst panel">
+              <div class="panel-header-row">
+                <h2>Best / Worst Alert</h2>
+                <select class="summary-range-select" aria-label="Select Best/Worst Range">
+                  <option value="week" selected>This Week</option>
+                </select>
+              </div>
+              <div id="paperBestWorst" class="paper-bestworst-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="foreignStocks" class="foreign-board" data-view-panel="foreign" hidden>
+          <div class="foreign-hero panel">
+            <div>
+              <span class="eyebrow">Future investing desk</span>
+              <h1>Foreign Stocks Radar</h1>
+              <p>Track US leaders and ETFs before you connect any foreign broker. This page is research-only for now, so there is no buying, selling, or order action.</p>
+            </div>
+            <div class="foreign-status-card">
+              <span>Provider</span>
+              <strong>Alpha Vantage</strong>
+              <small id="foreignStatus">Free API data for research only. No foreign broker is connected.</small>
+            </div>
+          </div>
+
+          <div class="foreign-grid">
+            <section class="foreign-panel panel">
+              <div class="panel-header">
+                <h2>Watch Radar</h2>
+                <span>US market</span>
+              </div>
+              <div id="foreignList" class="foreign-list"></div>
+            </section>
+
+            <section class="panel foreign-plan-panel">
+              <div class="panel-header">
+                <h2>Before Investing</h2>
+                <span>Checklist</span>
+              </div>
+              <div class="foreign-checklist">
+                <article>
+                  <b>1</b>
+                  <div>
+                    <strong>Research first</strong>
+                    <span>Build watchlists, compare business quality, and avoid impulse buys.</span>
+                  </div>
+                </article>
+                <article>
+                  <b>2</b>
+                  <div>
+                    <strong>Broker later</strong>
+                    <span>Connect a foreign broker only when you are ready to invest real money.</span>
+                  </div>
+                </article>
+                <article>
+                  <b>3</b>
+                  <div>
+                    <strong>Track currency risk</strong>
+                    <span>USD/INR movement can change returns even when stock price is flat.</span>
+                  </div>
+                </article>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="tradingJournal" class="journal-board" data-view-panel="journal" hidden>
+          <div class="journal-hero panel">
+            <div>
+              <span class="eyebrow">Phase 1 MVP</span>
+              <h1>Trading Journal</h1>
+              <p>Capture real and paper trades, psychology, screenshots, mistakes, and clean analytics before any AI features are added.</p>
+            </div>
+            <div class="journal-actions">
+              <button class="journal-range active" data-trade-range="all" type="button">All</button>
+              <button class="journal-range" data-trade-range="today" type="button">Today</button>
+              <button class="journal-range" data-trade-range="week" type="button">Week</button>
+              <button class="journal-range" data-trade-range="month" type="button">Month</button>
+              <button class="journal-range" data-trade-range="3m" type="button">3M</button>
+              <button class="journal-range" data-trade-range="6m" type="button">6M</button>
+              <button class="journal-range" data-trade-range="1y" type="button">1Y</button>
+              <button class="journal-range" data-trade-range="custom" type="button">Custom</button>
+              <input id="tradeRangeFrom" class="range-date" type="date" aria-label="Custom range start" hidden />
+              <input id="tradeRangeTo" class="range-date" type="date" aria-label="Custom range end" hidden />
+            </div>
+          </div>
+
+          <div class="journal-layout">
+            <form id="tradeForm" class="trade-entry panel">
+              <div class="panel-header">
+                <h2>Add Trade</h2>
+                <span id="tradeFormStatus">Local SQLite</span>
+              </div>
+
+              <div class="form-section">
+                <h3>Trade Setup</h3>
+                <div class="form-grid">
+                  <label>
+                    <span>Trade mode</span>
+                    <select name="tradeMode">
+                      <option value="PAPER">Paper trade</option>
+                      <option value="REAL">Real trade</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Market</span>
+                    <select name="market">
+                      <option value="INDIA">India</option>
+                      <option value="US">US</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Instrument</span>
+                    <select name="instrumentType" id="instrumentType">
+                      <option value="STOCK">Stock</option>
+                      <option value="OPTION">Option</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Trade type</span>
+                    <select name="tradeType">
+                      <option value="SWING">Swing</option>
+                      <option value="INTRADAY">Intraday</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Direction</span>
+                    <select name="direction">
+                      <option value="LONG">Long</option>
+                      <option value="SHORT">Short</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Status</span>
+                    <select name="status">
+                      <option value="OPEN">Open</option>
+                      <option value="CLOSED">Closed</option>
+                      <option value="PLANNED">Planned</option>
+                      <option value="CANCELLED">Cancelled</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Symbol</span>
+                    <input name="symbol" placeholder="RELIANCE, AAPL, NIFTY" required />
+                  </label>
+                  <label>
+                    <span>Exchange</span>
+                    <input name="exchange" placeholder="NSE / BSE / NASDAQ" />
+                  </label>
+                </div>
+
+                <div class="form-grid option-fields" id="optionFields" hidden>
+                  <label>
+                    <span>Option type</span>
+                    <select name="optionType">
+                      <option value="CALL">Call</option>
+                      <option value="PUT">Put</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Underlying</span>
+                    <input name="underlyingSymbol" placeholder="NIFTY, BANKNIFTY" />
+                  </label>
+                  <label>
+                    <span>Strike price</span>
+                    <input name="strikePrice" type="number" step="0.01" />
+                  </label>
+                  <label>
+                    <span>Expiry date</span>
+                    <input name="expiryDate" type="date" />
+                  </label>
+                  <label>
+                    <span>Lot size</span>
+                    <input name="lotSize" type="number" step="1" min="1" value="1" />
+                  </label>
+                </div>
+              </div>
+
+              <div class="form-section">
+                <h3>Price, Risk & Reward</h3>
+                <div class="form-grid">
+                  <label>
+                    <span>Entry date/time</span>
+                    <input name="entryDatetime" id="entryDatetime" type="datetime-local" required />
+                  </label>
+                  <label>
+                    <span>Exit date/time</span>
+                    <input name="exitDatetime" type="datetime-local" />
+                  </label>
+                  <label>
+                    <span>Entry price</span>
+                    <input name="entryPrice" type="number" step="0.01" min="0" required />
+                  </label>
+                  <label>
+                    <span>Exit price</span>
+                    <input name="exitPrice" type="number" step="0.01" min="0" />
+                  </label>
+                  <label>
+                    <span>Quantity</span>
+                    <input name="quantity" type="number" step="0.01" min="0" required />
+                  </label>
+                  <label>
+                    <span>Capital used</span>
+                    <input name="capitalUsed" type="number" step="0.01" min="0" placeholder="Auto calculated" />
+                  </label>
+                  <label>
+                    <span>Target price</span>
+                    <input name="targetPrice" type="number" step="0.01" min="0" />
+                  </label>
+                  <label>
+                    <span>Stop loss</span>
+                    <input name="stopLoss" type="number" step="0.01" min="0" />
+                  </label>
+                  <label>
+                    <span>Charges</span>
+                    <input name="charges" type="number" step="0.01" min="0" placeholder="Brokerage/taxes" />
+                  </label>
+                </div>
+
+                <div id="tradePlanPreview" class="plan-preview">
+                  <div><span>Position size</span><strong>--</strong></div>
+                  <div><span>Risk amount</span><strong>--</strong></div>
+                  <div><span>Risk %</span><strong>--</strong></div>
+                  <div><span>Expected reward</span><strong>--</strong></div>
+                  <div><span>Reward/risk</span><strong>--</strong></div>
+                </div>
+              </div>
+
+              <div class="form-section">
+                <h3>Psychology & Evidence</h3>
+                <div class="form-grid">
+                  <label>
+                    <span>Strategy tags</span>
+                    <input name="strategyTags" list="strategyTagOptions" placeholder="Breakout, Pullback" />
+                  </label>
+                  <label>
+                    <span>Mistakes made</span>
+                    <input name="mistakeTags" list="mistakeTagOptions" placeholder="FOMO, Emotional exit" />
+                  </label>
+                  <label>
+                    <span>Confidence 1-10</span>
+                    <input name="confidenceScore" type="number" min="1" max="10" value="6" />
+                  </label>
+                  <label>
+                    <span>Emotion before</span>
+                    <input name="emotionBefore" placeholder="Calm, FOMO, confident" />
+                  </label>
+                  <label>
+                    <span>Emotion after</span>
+                    <input name="emotionAfter" placeholder="Calm, regret, satisfied" />
+                  </label>
+                  <label class="check-field">
+                    <input name="followedPlan" type="checkbox" checked />
+                    <span>I followed my plan</span>
+                  </label>
+                </div>
+                <label class="wide-field">
+                  <span>Why I entered</span>
+                  <textarea name="entryReason" rows="3" placeholder="Setup, thesis, trigger, market context"></textarea>
+                </label>
+                <label class="wide-field">
+                  <span>Lessons learned</span>
+                  <textarea name="lessonsLearned" rows="3" placeholder="What should I repeat or avoid next time?"></textarea>
+                </label>
+                <label class="wide-field">
+                  <span>Personal notes</span>
+                  <textarea name="personalNotes" rows="3" placeholder="Any extra chart/context notes"></textarea>
+                </label>
+                <div class="evidence-grid">
+                  <label>
+                    <span>Entry screenshot</span>
+                    <input id="entryScreenshot" type="file" accept="image/png,image/jpeg,image/webp" />
+                  </label>
+                  <label>
+                    <span>Exit screenshot</span>
+                    <input id="exitScreenshot" type="file" accept="image/png,image/jpeg,image/webp" />
+                  </label>
+                  <label>
+                    <span>Setup image</span>
+                    <input id="setupImage" type="file" accept="image/png,image/jpeg,image/webp" />
+                  </label>
+                </div>
+              </div>
+
+              <div class="form-actions">
+                <button type="reset" class="ghost-btn">Clear</button>
+                <button type="submit" class="primary-btn">Save Trade</button>
+              </div>
+              <datalist id="strategyTagOptions"></datalist>
+              <datalist id="mistakeTagOptions"></datalist>
+            </form>
+
+            <div class="journal-side">
+              <section class="panel analytics-panel">
+                <div class="panel-header">
+                  <h2>Trade Analytics</h2>
+                  <span id="analyticsRangeLabel">All trades</span>
+                </div>
+                <div id="tradeAnalyticsCards" class="analytics-cards"></div>
+              </section>
+
+              <section class="panel trade-history-panel">
+                <div class="panel-header">
+                  <h2>Trade History</h2>
+                  <span id="tradeCountLabel">0 trades</span>
+                </div>
+                <div id="tradeHistory" class="trade-history"></div>
+              </section>
+
+              <section class="panel review-panel">
+                <div class="panel-header">
+                  <h2>Review Workflow</h2>
+                  <span>Discipline reports</span>
+                </div>
+                <div id="reviewReports" class="review-reports"></div>
+              </section>
+            </div>
+          </div>
+        </section>
+
+      </main>
+    </div>
+    <script src="/app.js" type="module"></script>
+    <script src="/js/trading-journal.js" type="module"></script>
+    <script src="/js/paper-lab.js?v=live-alerts-mockup-20260705" type="module"></script>
+  </body>
+</html>
+
