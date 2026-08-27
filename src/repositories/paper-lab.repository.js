@@ -141,27 +141,80 @@ export function deletePaperTrade(id) {
   return { deleted: true, id: trade.id };
 }
 
-function closePaperTradeInTransaction(db, trade, exitPrice, closeReason, exitDatetime) {
+export function calculateFrictionAndCharges(trade, exitPrice) {
   const units = Number(trade.quantity || 0) * Math.max(1, Number(trade.lotSize || 1));
-  const pnl = (trade.direction === "SHORT" ? trade.entryPrice - exitPrice : exitPrice - trade.entryPrice) * units;
+  const entryPrice = Number(trade.entryPrice || 0);
+  const exit = Number(exitPrice || entryPrice);
+  
+  const buyTurnover = entryPrice * units;
+  const exitTurnover = exit * units;
+  const totalTurnover = buyTurnover + exitTurnover;
+
+  // 1. Brokerage (Standard institutional/discount broker: ₹20 buy + ₹20 sell = ₹40 flat)
+  const brokerage = 40.0;
+
+  // 2. STT (Securities Transaction Tax: 0.1% on Option Sell turnover)
+  const stt = Number((exitTurnover * 0.001).toFixed(2));
+
+  // 3. Exchange Transaction Charges (NSE Options: 0.05% on total turnover)
+  const exchangeCharges = Number((totalTurnover * 0.0005).toFixed(2));
+
+  // 4. GST (18% on Brokerage + Exchange Charges)
+  const gst = Number(((brokerage + exchangeCharges) * 0.18).toFixed(2));
+
+  // 5. Stamp Duty (0.003% on buy side)
+  const stampDuty = Number((buyTurnover * 0.00003).toFixed(2));
+
+  // 6. Total statutory charges
+  const statutoryCharges = Number((brokerage + stt + exchangeCharges + gst + stampDuty).toFixed(2));
+
+  // 7. Slippage drag (0.50 pt per unit on simulated execution)
+  const slippagePts = 0.50;
+  const slippageDrag = Number((slippagePts * units).toFixed(2));
+
+  // 8. Gross P&L
+  const grossPnl = Number(((trade.direction === "SHORT" ? entryPrice - exit : exit - entryPrice) * units).toFixed(2));
+
+  // 9. Net Realized P&L
+  const totalFriction = Number((statutoryCharges + slippageDrag).toFixed(2));
+  const netPnl = Number((grossPnl - totalFriction).toFixed(2));
+
+  return {
+    units,
+    grossPnl,
+    statutoryCharges,
+    slippageDrag,
+    totalFriction,
+    netPnl,
+    brokerage,
+    stt,
+    exchangeCharges,
+    gst,
+    stampDuty,
+  };
+}
+
+function closePaperTradeInTransaction(db, trade, exitPrice, closeReason, exitDatetime) {
+  const friction = calculateFrictionAndCharges(trade, exitPrice);
   db.prepare(`
     UPDATE trades
     SET status = 'CLOSED',
         exit_datetime = ?,
         exit_price = ?,
         realized_pnl = ?,
+        charges = ?,
         net_pnl = ?,
         close_reason = ?,
         last_mark_price = ?,
         last_marked_at = ?,
         updated_at = datetime('now')
     WHERE id = ?
-  `).run(exitDatetime, exitPrice, pnl, pnl, closeReason, exitPrice, exitDatetime, trade.id);
+  `).run(exitDatetime, exitPrice, friction.grossPnl, friction.totalFriction, friction.netPnl, closeReason, exitPrice, exitDatetime, trade.id);
 
   db.prepare(`
-    INSERT INTO trade_executions(trade_id, execution_type, execution_datetime, price, quantity, notes)
-    VALUES (?, 'EXIT', ?, ?, ?, ?)
-  `).run(trade.id, exitDatetime, exitPrice, trade.quantity, closeReason.replace(/_/g, " "));
+    INSERT INTO trade_executions(trade_id, execution_type, execution_datetime, price, quantity, charges, notes)
+    VALUES (?, 'EXIT', ?, ?, ?, ?, ?)
+  `).run(trade.id, exitDatetime, exitPrice, trade.quantity, friction.totalFriction, `${closeReason.replace(/_/g, " ")} (Charges ₹${friction.statutoryCharges} + Slippage ₹${friction.slippageDrag})`);
 }
 
 function getPaperAccount(db) {
@@ -245,8 +298,7 @@ function assertPaperTrade(trade) {
 }
 
 function buildPaperSymbol(input) {
-  const raw = String(input.symbol || "").trim().toUpperCase();
-  if (raw) return raw;
+  if (input.symbol && String(input.symbol).trim()) return String(input.symbol).trim();
   const underlying = String(input.underlyingSymbol || "NIFTY").trim().toUpperCase();
   const strike = String(input.strikePrice || "").trim();
   const side = input.optionType === "PUT" ? "PE" : "CE";

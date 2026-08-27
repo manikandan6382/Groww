@@ -121,14 +121,18 @@ export class PaperTradeEngine extends EventEmitter {
     this.publish("unsubscribed", { tradeId: id, symbol: item.trade.symbol, tokenKey: item.tokenKey });
   }
 
-  async ensureTradeSubscription(trade, options = {}) {
+  async ensureTradeSubscription(trade, { force = false } = {}) {
     const id = Number(trade.id);
-    const existing = this.activeTrades.get(id);
-    if (existing && existing.tokenKey && !options.force) {
-      existing.trade = trade;
+    if (!id || this.resolving.has(id)) return;
+
+    // Isolate pure manual sandbox practice trades from Upstox live ticker overwrite
+    if (trade.personalNotes?.includes("[SANDBOX_MANUAL]") || trade.isSandbox) {
       return;
     }
-    if (this.resolving.has(id)) return;
+
+    const existing = this.activeTrades.get(id);
+    if (existing?.status === "subscribed" && !force) return;
+    
     this.resolving.add(id);
 
     try {
@@ -199,9 +203,23 @@ export class PaperTradeEngine extends EventEmitter {
     if (this.triggering.has(id)) return;
     const target = Number(trade.targetPrice || 0);
     const stopLoss = Number(trade.stopLoss || 0);
+    const entry = Number(trade.entryPrice || 0);
     const ltp = Number(tick.ltp || 0);
     let reason = null;
 
+    // --- 1. Automated Institutional Breakeven Lock ---
+    // If profit reaches >= +8.0 pts, move Stop Loss to Entry + 0.50 (guarantee risk-free trade)
+    if (trade.direction === "SHORT") {
+      if (entry > 0 && ltp <= entry - 8.0 && stopLoss > entry - 0.5) {
+        this.lockBreakeven(trade, entry - 0.5, ltp);
+      }
+    } else {
+      if (entry > 0 && ltp >= entry + 8.0 && stopLoss < entry + 0.5) {
+        this.lockBreakeven(trade, entry + 0.5, ltp);
+      }
+    }
+
+    // --- 2. Target & Stop Loss Execution ---
     if (trade.direction === "SHORT") {
       if (target && ltp <= target) reason = "TARGET_HIT";
       if (!reason && stopLoss && ltp >= stopLoss) reason = "STOP_LOSS_HIT";
@@ -212,6 +230,29 @@ export class PaperTradeEngine extends EventEmitter {
 
     if (!reason) return;
     this.triggerTrade(trade, tick, reason);
+  }
+
+  lockBreakeven(trade, newStopLoss, currentLtp) {
+    const id = Number(trade.id);
+    try {
+      import("../db/connection.js").then(({ getDb }) => {
+        const db = getDb();
+        db.prepare("UPDATE trades SET stop_loss = ?, updated_at = datetime('now') WHERE id = ?").run(newStopLoss, id);
+        trade.stopLoss = newStopLoss;
+        const item = this.activeTrades.get(id);
+        if (item) item.trade.stopLoss = newStopLoss;
+        this.publish("breakeven_locked", {
+          tradeId: id,
+          symbol: trade.symbol,
+          newStopLoss,
+          entryPrice: trade.entryPrice,
+          currentLtp,
+          message: `Breakeven Locked at ₹${newStopLoss.toFixed(2)} (+0.50 pt buffer)`,
+        });
+      });
+    } catch {
+      // Non-fatal if DB is locked
+    }
   }
 
   triggerTrade(trade, tick, reason) {

@@ -1,11 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
-import { getProjectRoot } from "../db/connection.js";
+import { getDb, getProjectRoot } from "../db/connection.js";
 import { buildReviewReports, buildTradeAnalytics } from "../services/analytics/performance-engine.js";
 import { getRangeWindow, rangeLabel } from "../services/trading/trade-calculator.js";
 import { closePaperTrade, createPaperTrade, deletePaperTrade, getPaperLab, markPaperTrade } from "../repositories/paper-lab.repository.js";
-import { createTrade, getTradingBootstrap, listTrades } from "../repositories/trades.repository.js";
+import { createTrade, getTradeById, getTradingBootstrap, listTrades } from "../repositories/trades.repository.js";
 import { paperTradeEngine } from "../services/paperTradeEngine.js";
+import { computeGexProfile } from "../services/greeksEngine.js";
 
 const evidenceRoot = path.join(getProjectRoot(), "data", "uploads", "trades");
 
@@ -15,7 +16,17 @@ export async function handleTradingRequest(req, res, url) {
     return true;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/market/gex-profile") {
+    const symbol = (url.searchParams.get("symbol") || "NIFTY").toUpperCase();
+    const spot = Number(url.searchParams.get("spot") || (symbol === "BANKNIFTY" ? 52000 : 24500));
+    const dte = Number(url.searchParams.get("dte") || 1);
+    const profile = computeGexProfile(symbol, spot, [], dte);
+    sendJson(res, profile);
+    return true;
+  }
+
   if (req.method === "GET" && ["/api/paper-lab", "/api/live-alerts"].includes(url.pathname)) {
+    ensurePaperEngineStarted();
     sendJson(res, getPaperLab({
       range: getRange(url),
       from: url.searchParams.get("from"),
@@ -24,22 +35,157 @@ export async function handleTradingRequest(req, res, url) {
     return true;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/upstox/token-status") {
+    ensurePaperEngineStarted();
+    const client = paperTradeEngine.client;
+    client.refreshAccessToken();
+    const token = client.accessToken || "";
+    let sessionAgeMinutes = null;
+    let fileExists = false;
+    try {
+      if (fs.existsSync(client.sessionFile)) {
+        fileExists = true;
+        const stat = fs.statSync(client.sessionFile);
+        sessionAgeMinutes = Math.round((Date.now() - stat.mtimeMs) / 60000);
+      }
+    } catch { /* ignore */ }
+
+    const isPreMarketReady = Boolean(token && token.length > 20);
+    sendJson(res, {
+      configured: client.isConfigured(),
+      hasToken: Boolean(token),
+      tokenLength: token.length,
+      sessionFile: path.basename(client.sessionFile),
+      sessionFileExists: fileExists,
+      sessionAgeMinutes,
+      isPreMarketReady,
+      websocketConnected: client.connected,
+      polling: Boolean(client.pollTimer),
+      lastError: client.lastError,
+      status: isPreMarketReady ? "Token Active · Feed Ready" : "Token Required · OAuth Expired",
+    });
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/upstox/set-token") {
+    const body = await readJsonBody(req);
+    const token = String(body.accessToken || body.token || "").trim();
+    if (!token) {
+      sendJson(res, { error: "accessToken is required" }, 422);
+      return true;
+    }
+    const client = paperTradeEngine.client;
+    try {
+      fs.mkdirSync(path.dirname(client.sessionFile), { recursive: true });
+      fs.writeFileSync(client.sessionFile, JSON.stringify({
+        access_token: token,
+        updated_at: new Date().toISOString(),
+      }, null, 2));
+      client.refreshAccessToken();
+      client.lastError = "";
+      if (paperTradeEngine.started) {
+        client.start();
+      }
+      sendJson(res, { success: true, message: "Upstox token saved and client reloaded successfully." });
+    } catch (error) {
+      sendJson(res, { error: `Failed to save session: ${error.message}` }, 500);
+    }
+    return true;
+  }
+
   if (req.method === "GET" && ["/api/paper-lab/live-status", "/api/live-alerts/live-status"].includes(url.pathname)) {
+    ensurePaperEngineStarted();
     sendJson(res, paperTradeEngine.getStatus());
     return true;
   }
 
   if (req.method === "GET" && ["/api/paper-lab/live-events", "/api/live-alerts/live-events"].includes(url.pathname)) {
+    ensurePaperEngineStarted();
     streamPaperEvents(req, res, url);
     return true;
   }
 
   if (req.method === "POST" && ["/api/paper-lab/trades", "/api/live-alerts/trades"].includes(url.pathname)) {
     const body = await readJsonBody(req);
-    const trade = createPaperTrade(body);
-    paperTradeEngine.syncTrade(trade.id);
-    sendJson(res, { item: trade }, 201);
+    const isSandbox = body.isSandbox === true || body.isSandbox === "true" || !body.personalNotes?.includes("UPSTOX_TOKEN");
+    const payload = {
+      ...body,
+      personalNotes: isSandbox ? `[SANDBOX_MANUAL] ${body.personalNotes || "Manual Practice Trade"}` : body.personalNotes
+    };
+    const trade = createPaperTrade(payload);
+    if (!isSandbox) {
+      ensurePaperEngineStarted();
+      await paperTradeEngine.syncTrade(trade.id);
+    }
+    paperTradeEngine.publish("trade_mutation", { action: "create", tradeId: trade.id });
+    sendJson(res, { item: trade, isSandbox }, 201);
     return true;
+  }
+
+  if (req.method === "POST" && ["/api/paper-lab/auto-deploy", "/api/live-alerts/auto-deploy"].includes(url.pathname)) {
+    try {
+      const token = paperTradeEngine.client.accessToken;
+      let spotPrice = 24151.10;
+      let optionLtp = 100.00;
+      let symbol = "NIFTY";
+      let strike = 24200;
+      let optionType = "PUT";
+      let tokenKey = "NSE_FO|46994";
+
+      // Query live Upstox quote if token is configured
+      if (token) {
+        try {
+          const quoteRes = await fetch("https://api.upstox.com/v2/market-quote/quotes?instrument_key=NSE_INDEX|Nifty 50,NSE_FO|46993,NSE_FO|46994", {
+            headers: { "Accept": "application/json", "Authorization": `Bearer ${token}` }
+          });
+          const qData = await quoteRes.json();
+          const spotData = qData?.data?.["NSE_INDEX:Nifty 50"];
+          const peData = qData?.data?.["NSE_FO:NIFTY2690124200PE"];
+          const ceData = qData?.data?.["NSE_FO:NIFTY2690124200CE"];
+          
+          if (spotData?.last_price) spotPrice = Number(spotData.last_price);
+          const netChange = Number(spotData?.net_change || 0);
+
+          if (netChange >= 0 && ceData?.last_price) {
+            optionType = "CALL";
+            optionLtp = Number(ceData.last_price);
+            tokenKey = "NSE_FO|46993";
+          } else if (peData?.last_price) {
+            optionType = "PUT";
+            optionLtp = Number(peData.last_price);
+            tokenKey = "NSE_FO|46994";
+          }
+        } catch (e) {
+          console.warn("Upstox quote fetch fallback:", e.message);
+        }
+      }
+
+      const entryPrice = Math.round(optionLtp * 20) / 20;
+      const stopLoss = Math.round((entryPrice - 4.50) * 20) / 20;
+      const targetPrice = Math.round((entryPrice + 15.00) * 20) / 20;
+
+      const trade = createPaperTrade({
+        underlyingSymbol: symbol,
+        strikePrice: strike,
+        optionType: optionType,
+        currentPrice: entryPrice,
+        entryPrice: entryPrice,
+        stopLoss: stopLoss,
+        targetPrice: targetPrice,
+        quantity: 1,
+        lotSize: 65,
+        personalNotes: `UPSTOX_TOKEN:${tokenKey} Live AI Copilot Automated Market Signal`
+      });
+
+      ensurePaperEngineStarted();
+      await paperTradeEngine.syncTrade(trade.id);
+      paperTradeEngine.publish("trade_mutation", { action: "create", tradeId: trade.id });
+      sendJson(res, { success: true, item: trade, message: `Live ${optionType} alert deployed at ₹${entryPrice.toFixed(2)}` }, 201);
+      return true;
+    } catch (err) {
+      sendJson(res, { success: false, error: err.message }, 500);
+      return true;
+    }
   }
 
   const paperMarkMatch = url.pathname.match(/^\/api\/(?:paper-lab|live-alerts)\/trades\/(\d+)\/mark$/);
@@ -47,6 +193,7 @@ export async function handleTradingRequest(req, res, url) {
     const body = await readJsonBody(req);
     const result = markPaperTrade(Number(paperMarkMatch[1]), body);
     if (result.trade.status !== "OPEN") paperTradeEngine.removeTrade(Number(paperMarkMatch[1]));
+    paperTradeEngine.publish("trade_mutation", { action: "mark", tradeId: Number(paperMarkMatch[1]) });
     sendJson(res, result);
     return true;
   }
@@ -56,7 +203,49 @@ export async function handleTradingRequest(req, res, url) {
     const body = await readJsonBody(req);
     const result = closePaperTrade(Number(paperCloseMatch[1]), body);
     paperTradeEngine.removeTrade(Number(paperCloseMatch[1]));
+    paperTradeEngine.publish("trade_mutation", { action: "close", tradeId: Number(paperCloseMatch[1]) });
     sendJson(res, result);
+    return true;
+  }
+
+  const paperStopLossMatch = url.pathname.match(/^\/api\/(?:paper-lab|live-alerts)\/trades\/(\d+)\/stop-loss$/);
+  if (["PATCH", "POST"].includes(req.method) && paperStopLossMatch) {
+    const id = Number(paperStopLossMatch[1]);
+    const body = await readJsonBody(req);
+    const stopLoss = Number(body.stopLoss || 0);
+    const db = getDb();
+    db.prepare("UPDATE trades SET stop_loss = ?, updated_at = datetime('now') WHERE id = ?").run(stopLoss, id);
+    const trade = getTradeById(id);
+    if (trade && paperTradeEngine.activeTrades.has(id)) {
+      paperTradeEngine.activeTrades.get(id).trade.stopLoss = stopLoss;
+    }
+    paperTradeEngine.publish("stop_loss_updated", {
+      tradeId: id,
+      stopLoss,
+      message: `Stop Loss updated to ₹${stopLoss.toFixed(2)}`,
+    });
+    paperTradeEngine.publish("trade_mutation", { action: "stop_loss", tradeId: id });
+    sendJson(res, { success: true, item: trade });
+    return true;
+  }
+
+  const paperTargetMatch = url.pathname.match(/^\/api\/(?:paper-lab|live-alerts)\/trades\/(\d+)\/target$/);
+  if (["PATCH", "POST"].includes(req.method) && paperTargetMatch) {
+    const id = Number(paperTargetMatch[1]);
+    const body = await readJsonBody(req);
+    const targetPrice = Number(body.targetPrice || body.target || 0);
+    const db = getDb();
+    db.prepare("UPDATE trades SET target_price = ?, updated_at = datetime('now') WHERE id = ?").run(targetPrice, id);
+    const trade = getTradeById(id);
+    if (trade && paperTradeEngine.activeTrades.has(id)) {
+      paperTradeEngine.activeTrades.get(id).trade.targetPrice = targetPrice;
+    }
+    paperTradeEngine.publish("target_updated", {
+      tradeId: id,
+      targetPrice,
+      message: `Target updated to ₹${targetPrice.toFixed(2)}`,
+    });
+    sendJson(res, { success: true, item: trade });
     return true;
   }
 
@@ -119,6 +308,10 @@ export async function handleTradingRequest(req, res, url) {
   }
 
   return false;
+}
+
+function ensurePaperEngineStarted() {
+  paperTradeEngine.start();
 }
 
 function streamPaperEvents(req, res, url) {

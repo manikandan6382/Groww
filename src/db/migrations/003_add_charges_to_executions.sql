@@ -1,0 +1,1 @@
+ALTER TABLE trade_executions ADD COLUMN charges REAL NOT NULL DEFAULT 0;

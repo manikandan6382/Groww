@@ -1,7 +1,8 @@
-﻿const paperState = {
+const paperState = {
   loaded: false,
   lab: null,
   alertFilter: "all",
+  pnlRange: "week",
 };
 
 const optionLotSizes = {
@@ -11,9 +12,8 @@ const optionLotSizes = {
   SENSEX: 20,
 };
 const previewOpenAlerts = [
-  { id: "preview-1", symbol: "NIFTY 24500 CE", optionType: "CALL", entryDatetime: "2026-07-04T10:18", entryPrice: 26.5, lastMarkPrice: 30.75, targetPrice: 35, stopLoss: 25, quantity: 1, lotSize: 75, entryReason: "Breakout above resistance with strong volume.", preview: true },
-  { id: "preview-2", symbol: "BANKNIFTY 52000 PE", optionType: "PUT", entryDatetime: "2026-07-04T10:05", entryPrice: 235.5, lastMarkPrice: 210.4, targetPrice: 185, stopLoss: 235, quantity: 1, lotSize: 35, entryReason: "Rejected intraday resistance; watching downside continuation.", preview: true },
-  { id: "preview-3", symbol: "NIFTY 24400 CE", optionType: "CALL", entryDatetime: "2026-07-04T09:52", entryPrice: 66.5, lastMarkPrice: 88.25, targetPrice: 110, stopLoss: 70, quantity: 1, lotSize: 75, entryReason: "Momentum continuation after support hold.", preview: true },
+  { id: 56, symbol: "NIFTY 24300 CE", underlyingSymbol: "NIFTY", strikePrice: 24300, optionType: "CALL", entryDatetime: new Date().toISOString(), entryPrice: 83.0, lastMarkPrice: 88.5, targetPrice: 102.0, stopLoss: 75.0, quantity: 1, lotSize: 65, entryReason: "ATM Scalp Practice · R:R 1:2.38", personalNotes: "[SANDBOX_MANUAL] Practice Sandbox", preview: true },
+  { id: 44, symbol: "BANKNIFTY 52200 PE", underlyingSymbol: "BANKNIFTY", strikePrice: 52200, optionType: "PUT", entryDatetime: new Date().toISOString(), entryPrice: 145.0, lastMarkPrice: 162.0, targetPrice: 185.0, stopLoss: 130.0, quantity: 1, lotSize: 35, entryReason: "Bearish Breakdown Scalp · R:R 1:2.67", personalNotes: "[SANDBOX_MANUAL] Practice Sandbox", preview: true },
 ];
 const previewClosedAlerts = [
   { id: "closed-1", symbol: "NIFTY 24200 CE", optionType: "CALL", entryDatetime: "2026-07-04T10:15", exitDatetime: "2026-07-04T10:15", entryPrice: 90.13, exitPrice: 95, targetPrice: 95, stopLoss: 75, netPnl: 365, closeReason: "TARGET_HIT", quantity: 1, lotSize: 75, preview: true },
@@ -56,9 +56,29 @@ const paperClosedTrades = document.getElementById("paperClosedTrades");
 const paperLiveTrackBody = document.getElementById("paperLiveTrackBody");
 const paperAlertList = document.getElementById("paperAlertList");
 let paperSse = null;
+let isDeployingOrder = false;
+let simulationInterval = null;
+
+// Expose all action handlers globally on window for inline HTML onclick handlers
+window.trailTradeStopLoss = trailTradeStopLoss;
+window.promptEditStopLoss = promptEditStopLoss;
+window.promptEditTargetPrice = promptEditTargetPrice;
+window.quickBumpTargetPrice = quickBumpTargetPrice;
+window.instantExitTrade = instantExitTrade;
+window.handleManualLtpInput = handleManualLtpInput;
+window.stepManualLtp = stepManualLtp;
+window.syncManualLtp = syncManualLtp;
+window.deletePaperTradeFromUi = deletePaperTradeFromUi;
+window.exportPracticeTradeToJournal = exportPracticeTradeToJournal;
+window.triggerVictoryConfetti = triggerVictoryConfetti;
+window.executeDeployPracticeTrade = createPaperPosition;
+window.executeFastDeploySignal = loadCopilotSetupIntoForm;
+window.fastDeployLiveSignal = loadCopilotSetupIntoForm;
+window.loadCopilotSetupIntoForm = loadCopilotSetupIntoForm;
+window.loadCopilotSetupIntoJournal = loadCopilotSetupIntoJournal;
+window.toggleSpreadMode = toggleSpreadMode;
 
 initPaperLab();
-window.deletePaperTradeFromUi = deletePaperTradeFromUi;
 
 function initPaperLab() {
   if (!paperForm) return;
@@ -72,6 +92,13 @@ function initPaperLab() {
     }, 0);
   });
   paperForm.addEventListener("submit", createPaperPosition);
+  const btnDeploy = document.getElementById("btnDeployPracticeTrade");
+  if (btnDeploy) {
+    btnDeploy.addEventListener("click", (e) => {
+      e.preventDefault();
+      createPaperPosition(e);
+    });
+  }
   document.addEventListener("click", handlePaperTradeAction);
   paperLab.addEventListener("pointerover", handlePaperTooltipOver);
   paperLab.addEventListener("pointermove", handlePaperTooltipMove);
@@ -86,8 +113,68 @@ function initPaperLab() {
     if (document.documentElement.dataset.activeView !== "paper") return;
     document.querySelector(".paper-alert-panel")?.scrollIntoView({ behavior: "smooth", block: "center" });
   });
+  const underlyingSelect = paperForm.querySelector('[name="underlyingSymbol"]');
+  try {
+    const savedUnderlying = localStorage.getItem("portfoliox_pref_underlying");
+    if (savedUnderlying && underlyingSelect) {
+      underlyingSelect.value = savedUnderlying;
+    }
+  } catch (_) {}
   syncOptionLotSize();
   renderPaperRiskPreview();
+  syncLiveDeskFromForm();
+  initLiveDeskButtons();
+  initDeskAiPresets();
+  initWeekendMarketSimulation();
+
+  paperForm.addEventListener("input", () => {
+    syncLiveDeskFromForm();
+    renderPaperRiskPreview();
+  });
+  paperForm.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      createPaperPosition();
+    }
+  });
+  paperForm.querySelectorAll("input, select").forEach((el) => {
+    el.addEventListener("change", () => {
+      syncLiveDeskFromForm();
+      renderPaperRiskPreview();
+    });
+  });
+
+  // Daily P&L Range Filter (This Week, Last Week, This Month, All Time)
+  document.querySelectorAll(".paper-pnl-range").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.querySelectorAll(".paper-pnl-range").forEach((b) => b.classList.remove("active"));
+      button.classList.add("active");
+      paperState.pnlRange = button.dataset.pnlRange || "week";
+      
+      const labelMap = {
+        week: "(This Week)",
+        last_week: "(Last Week)",
+        month: "(This Month)",
+        all: "(All Time)",
+      };
+      const labelEl = byId("dailyPnlRangeLabel");
+      if (labelEl) labelEl.textContent = labelMap[paperState.pnlRange] || "(This Week)";
+
+      if (paperState.lab) {
+        renderWeeklyVisuals(paperState.lab);
+      }
+    });
+  });
+
+  // 🏛️ Trading Copilot Pro 1-Click Handlers
+  document.getElementById("btnDeployCopilotPractice")?.addEventListener("click", loadCopilotSetupIntoForm);
+  document.getElementById("btnFastDeployLiveSignal")?.addEventListener("click", loadCopilotSetupIntoForm);
+  document.getElementById("btnDeployCopilotJournal")?.addEventListener("click", loadCopilotSetupIntoJournal);
+  window.loadCopilotSetupIntoForm = loadCopilotSetupIntoForm;
+  window.fastDeployLiveSignal = loadCopilotSetupIntoForm;
+  window.executeFastDeploySignal = loadCopilotSetupIntoForm;
+  window.executeDeployPracticeTrade = createPaperPosition;
+  window.loadCopilotSetupIntoJournal = loadCopilotSetupIntoJournal;
 
   startLiveClock();
   connectPaperSse();
@@ -96,62 +183,275 @@ function initPaperLab() {
     if (event.detail?.view === "paper") loadPaperLab();
   });
 
-  if (document.documentElement.dataset.activeView === "paper" || location.pathname === "/paper-lab") {
-    loadPaperLab();
-  }
+  // 0ms instant synchronous dummy render
+  renderOpenPaperTrades(previewOpenAlerts);
+  loadPaperLab();
 }
 
 async function loadPaperLab() {
-  if (!paperForm) return;
+  const currentForm = document.getElementById("paperTradeForm") || paperForm;
+  if (!currentForm) return;
   setPaperStatus("Loading...");
   try {
     const lab = await fetchJson("/api/live-alerts?range=week");
     paperState.lab = lab;
     paperState.loaded = true;
-    renderPaperSummary(lab);
-    renderOpenPaperTrades(lab.openTrades || []);
-    renderClosedPaperTrades(lab.closedTrades || []);
-    renderPaperLiveTrack(lab);
-    renderPaperAlerts(lab);
-    renderPaperLessons(lab);
+
+    // 1️⃣ Always render Section 3 Active Trades FIRST with zero blockage
+    try {
+      renderOpenPaperTrades(lab.openTrades || []);
+    } catch (err) {
+      console.error("Error in renderOpenPaperTrades:", err);
+    }
+
+    // 2️⃣ Render Summary & Analytics
+    try {
+      renderPaperSummary(lab);
+    } catch (err) {
+      console.error("Error in renderPaperSummary:", err);
+    }
+
+    // 3️⃣ Render Closed History Ledger
+    try {
+      renderClosedPaperTrades(lab.closedTrades || []);
+    } catch (err) {
+      console.error("Error in renderClosedPaperTrades:", err);
+    }
+
+    // 4️⃣ Render Live Track & Alerts
+    try {
+      renderPaperLiveTrack(lab);
+      renderPaperAlerts(lab);
+      renderPaperLessons(lab);
+    } catch (err) {
+      console.error("Error in live track/alerts:", err);
+    }
+
     setPaperStatus("Ready");
   } catch (error) {
+    console.error("Failed to load paper lab data:", error);
     setPaperStatus(error.message, true);
   }
 }
 
-async function createPaperPosition(event) {
-  event.preventDefault();
-  setPaperStatus("Starting...");
+// Level 3 Elite Desk: Cross-Tab Channel & Audio Micro-Feedback
+const deskChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("portfoliox_desk_sync") : null;
+if (deskChannel) {
+  deskChannel.onmessage = (event) => {
+    if (event.data?.type === "TRADE_MUTATION") {
+      loadPaperLab();
+    }
+  };
+}
+
+function playTactileChime(type = "click") {
   try {
-    const payload = Object.fromEntries(new FormData(paperForm).entries());
-    syncOptionLotSize();
-    await fetchJson("/api/live-alerts/trades", {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    const ctx = new AudioContext();
+
+    if (type === "target") {
+      // 🎯 Ascending Harmonic Major Triad (C6 -> E6 -> G6)
+      const freqs = [1046.50, 1318.51, 1567.98];
+      freqs.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freq, ctx.currentTime + idx * 0.06);
+        gain.gain.setValueAtTime(0.08, ctx.currentTime + idx * 0.06);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + idx * 0.06 + 0.15);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(ctx.currentTime + idx * 0.06);
+        osc.stop(ctx.currentTime + idx * 0.06 + 0.16);
+      });
+    } else if (type === "stop_loss") {
+      // 🛑 Low Damped Minor Tone
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(349.23, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(220.00, ctx.currentTime + 0.18);
+      gain.gain.setValueAtTime(0.12, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.19);
+    } else {
+      // ⚡ Crisp Micro-Click Stepper
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(1100, ctx.currentTime);
+      gain.gain.setValueAtTime(0.05, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.03);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.035);
+    }
+  } catch (_) {}
+}
+
+function showDeskToast(title, subtitle, icon = "⚡") {
+  let dock = document.querySelector(".desk-toast-dock");
+  if (!dock) {
+    dock = document.createElement("div");
+    dock.className = "desk-toast-dock";
+    document.body.appendChild(dock);
+  }
+
+  const toast = document.createElement("div");
+  toast.className = "desk-toast";
+  toast.innerHTML = `
+    <span class="desk-toast-icon">${icon}</span>
+    <div class="desk-toast-body">
+      <strong class="desk-toast-title">${title}</strong>
+      <span class="desk-toast-sub">${subtitle}</span>
+    </div>
+  `;
+  dock.appendChild(toast);
+
+  // Trigger animation frame for CSS spring slide-in
+  requestAnimationFrame(() => toast.classList.add("show"));
+
+  setTimeout(() => {
+    toast.classList.remove("show");
+    setTimeout(() => toast.remove(), 400);
+  }, 3500);
+}
+
+async function createPaperPosition(event) {
+  if (event) event.preventDefault();
+  if (isDeployingOrder) return;
+
+  const currentForm = document.getElementById("paperTradeForm");
+  if (!currentForm) return;
+
+  const btnDeploy = document.getElementById("btnDeployPracticeTrade");
+  const origBtnHtml = btnDeploy ? btnDeploy.innerHTML : "";
+
+  // Pre-flight risk bracket validation
+  const payload = Object.fromEntries(new FormData(currentForm).entries());
+  const entry = Number(payload.currentPrice || 0);
+  const stop = Number(payload.stopLoss || 0);
+  const target = Number(payload.targetPrice || 0);
+  const optType = payload.optionType || "CALL";
+  const sym = payload.underlyingSymbol || "NIFTY";
+  const strike = payload.strikePrice || "24200";
+  const qty = Number(payload.quantity || 1);
+  const isSpread = payload.strategyMode === "SPREAD";
+
+  if (!entry || entry <= 0) {
+    showDeskToast("⚠️ Missing Entry Price", "Please enter a valid Option Entry Price (₹).", "🛑");
+    setPaperStatus("Enter Entry Price", true);
+    return;
+  }
+
+  if (isSpread) {
+    const hedgeStrike = Number(payload.hedgeStrikePrice || (optType === "CALL" ? Number(strike) + 100 : Number(strike) - 100));
+    const hedgePrice = Number(payload.hedgePrice || (entry * 0.45));
+    const netDebit = Math.max(0.05, entry - hedgePrice);
+    const strikeWidth = Math.abs(hedgeStrike - Number(strike));
+    const spreadType = optType === "CALL" ? "Bull Call Spread" : "Bear Put Spread";
+
+    payload.symbol = `${sym} ${strike}/${hedgeStrike} ${spreadType}`;
+    payload.currentPrice = netDebit.toFixed(2);
+    payload.stopLoss = (netDebit * 0.4).toFixed(2);
+    payload.targetPrice = (strikeWidth * 0.85).toFixed(2);
+    payload.entryReason = `Vertical Defined-Risk Spread · Max Loss: ₹${(netDebit * (optionLotSizes[sym] || 65) * qty).toFixed(0)}`;
+    payload.personalNotes = `[SPREAD_BUNDLE] [SANDBOX_MANUAL] Long ${strike} @ ₹${entry.toFixed(2)} + Short ${hedgeStrike} @ ₹${hedgePrice.toFixed(2)}`;
+  } else {
+    if (stop >= entry) {
+      showDeskToast("⚠️ Risk Limit Warning", `Stop Loss (₹${stop.toFixed(2)}) must be below Entry Price (₹${entry.toFixed(2)})`, "🛑");
+      setPaperStatus("Invalid Stop Loss", true);
+      return;
+    }
+
+    if (target <= entry) {
+      showDeskToast("⚠️ Target Warning", `Target Price (₹${target.toFixed(2)}) must be above Entry Price (₹${entry.toFixed(2)})`, "🎯");
+      setPaperStatus("Invalid Target", true);
+      return;
+    }
+  }
+
+  isDeployingOrder = true;
+  if (btnDeploy) {
+    btnDeploy.disabled = true;
+    btnDeploy.classList.add("is-loading");
+    btnDeploy.innerHTML = `<span class="pad-spinner"></span> <span class="cta-text">Executing Order...</span>`;
+  }
+  setPaperStatus("Deploying...");
+
+  try {
+    payload.lotSize = optionLotSizes[String(sym).toUpperCase()] || 65;
+    payload.isSandbox = true;
+    const result = await fetchJson("/api/live-alerts/trades", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    paperForm.reset();
-    renderPaperRiskPreview();
+
+    playTactileChime();
+    const tradeItem = result?.item;
+    if (tradeItem && tradeItem.status === "CLOSED") {
+      showDeskToast(
+        "⚡ Trade Auto-Completed",
+        `${payload.symbol || sym} reached target/SL immediately at live LTP. Auto-saved to Trading Journal!`,
+        "🎯"
+      );
+      setPaperStatus("⚡ Trade Executed & Saved to Journal");
+    } else {
+      showDeskToast(
+        "⚡ Live Practice Order Deployed",
+        `${payload.symbol || sym} · ${qty} ${qty === 1 ? "Lot" : "Lots"} (Active in Section 3)`,
+        "🟢"
+      );
+      setPaperStatus("⚡ Trade Deployed Successfully!");
+    }
+    
+    // Broadcast to sync other open tabs
+    if (deskChannel) deskChannel.postMessage({ type: "TRADE_MUTATION" });
+
     await loadPaperLab();
-    setPaperStatus("Live alert created");
+    
+    // Smooth auto-scroll down to Active Trades section for instant position monitoring
+    const activeSection = document.getElementById("sectionActiveTrades");
+    if (activeSection) {
+      activeSection.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   } catch (error) {
+    showDeskToast("Execution Error", error.message, "❌");
     setPaperStatus(error.message, true);
+  } finally {
+    isDeployingOrder = false;
+    if (btnDeploy) {
+      btnDeploy.disabled = false;
+      btnDeploy.classList.remove("is-loading");
+      btnDeploy.innerHTML = origBtnHtml;
+    }
   }
 }
 
 async function handlePaperTradeAction(event) {
   if (!event.target.closest("#paperLab")) return;
   const strikeButton = event.target.closest("[data-strike-step]");
+  const hedgeStrikeButton = event.target.closest("[data-hedge-strike-step]");
   const lotsButton = event.target.closest("[data-lots-step]");
   const deleteButton = event.target.closest("[data-paper-delete]");
   const markButton = event.target.closest("[data-paper-mark]");
   const closeButton = event.target.closest("[data-paper-close]");
-  if (!strikeButton && !lotsButton && !deleteButton && !markButton && !closeButton) return;
+  if (!strikeButton && !hedgeStrikeButton && !lotsButton && !deleteButton && !markButton && !closeButton) return;
   event.preventDefault();
 
   if (strikeButton) {
     incrementStrike(Number(strikeButton.dataset.strikeStep || 0));
+    return;
+  }
+
+  if (hedgeStrikeButton) {
+    incrementHedgeStrike(Number(hedgeStrikeButton.dataset.hedgeStrikeStep || 0));
     return;
   }
 
@@ -206,16 +506,43 @@ function renderPaperSummary(lab) {
   const todayTrades = closedTrades.filter((trade) => localDateKey(parseTradeDate(trade.exitDatetime || trade.entryDatetime)) === localDateKey(new Date()));
 
   const triggeredTotal = hasRealAlerts ? Number(analytics.winningTrades || 0) + Number(analytics.losingTrades || 0) : closedTrades.length;
-  byId("paperWeekPnl").textContent = signedMoney(displayPnl);
-  byId("paperPnlPct").textContent = `${displayPnl >= 0 ? "+" : ""}${hasRealAlerts ? pnlPct.toFixed(2) : previewDisplay.pnlPct.toFixed(2)}%`;
-  byId("paperWinRate").textContent = `${paperNum.format(displayWinRate)}%`;
-  byId("paperTradeCount").textContent = hasRealAlerts ? `${analytics.winningTrades || 0} Wins / ${analytics.losingTrades || 0} Losses` : `${previewDisplay.wins} Wins / ${previewDisplay.losses} Losses`;
-  byId("paperTriggeredToday").textContent = String(hasRealAlerts ? todayTrades.length : previewDisplay.triggeredToday);
-  byId("paperTriggeredTotal").textContent = hasRealAlerts ? `${triggeredTotal} stored results` : "NSE Options";
-  byId("paperActiveCount").textContent = String(displayActive);
-  byId("paperMarketFeedStatus").textContent = hasRealAlerts || displayActive ? "Live" : "Waiting";
-  byId("paperWeekPnl").className = displayPnl >= 0 ? "gain" : "loss";
-  byId("paperPnlPct").className = displayPnl >= 0 ? "gain" : "loss";
+  const winsCount = hasRealAlerts ? Number(analytics.winningTrades || 0) : previewDisplay.wins;
+  const lossesCount = hasRealAlerts ? Number(analytics.losingTrades || 0) : previewDisplay.losses;
+  const totalCount = hasRealAlerts ? (winsCount + lossesCount) : previewDisplay.totalTrades;
+  const currentTotalVal = 100000 + displayPnl;
+
+  // 1️⃣ SECTION 1: Top Scoreboard 2-Row Updates
+  const scoreVal = byId("scoreboardCurrentValue");
+  if (scoreVal) scoreVal.textContent = paperMoney.format(currentTotalVal);
+  const scorePnl = byId("scoreboardNetPnl");
+  if (scorePnl) {
+    scorePnl.textContent = `${displayPnl >= 0 ? "+" : ""}${paperMoney.format(displayPnl)}`;
+    scorePnl.className = `score-val apple-numeral ${displayPnl >= 0 ? "text-gain" : "text-loss"}`;
+  }
+  const scorePnlPct = byId("scoreboardPnlPct");
+  if (scorePnlPct) {
+    const calcPct = (displayPnl / 100000) * 100;
+    scorePnlPct.textContent = `${calcPct >= 0 ? "+" : ""}${calcPct.toFixed(2)}%`;
+    scorePnlPct.className = `score-badge apple-pill-badge ${calcPct >= 0 ? "badge-green" : "badge-loss"}`;
+  }
+  const scoreTrades = byId("scoreboardTotalTrades");
+  if (scoreTrades) scoreTrades.textContent = String(totalCount);
+  const scoreWins = byId("scoreboardWins");
+  if (scoreWins) scoreWins.textContent = String(winsCount);
+  const scoreLosses = byId("scoreboardLosses");
+  if (scoreLosses) scoreLosses.textContent = String(lossesCount);
+  const scoreWinRate = byId("scoreboardWinRate");
+  if (scoreWinRate) scoreWinRate.textContent = `${paperNum.format(displayWinRate)}%`;
+
+  // Legacy IDs if present
+  if (byId("paperWeekPnl")) byId("paperWeekPnl").textContent = signedMoney(displayPnl);
+  if (byId("paperPnlPct")) byId("paperPnlPct").textContent = `${displayPnl >= 0 ? "+" : ""}${hasRealAlerts ? pnlPct.toFixed(2) : previewDisplay.pnlPct.toFixed(2)}%`;
+  if (byId("paperWinRate")) byId("paperWinRate").textContent = `${paperNum.format(displayWinRate)}%`;
+  if (byId("paperTradeCount")) byId("paperTradeCount").textContent = `${winsCount} Wins / ${lossesCount} Losses`;
+  if (byId("paperTriggeredToday")) byId("paperTriggeredToday").textContent = String(hasRealAlerts ? todayTrades.length : previewDisplay.triggeredToday);
+  if (byId("paperTriggeredTotal")) byId("paperTriggeredTotal").textContent = hasRealAlerts ? `${triggeredTotal} stored results` : "NSE Options";
+  if (byId("paperActiveCount")) byId("paperActiveCount").textContent = String(displayActive);
+  if (byId("paperMarketFeedStatus")) byId("paperMarketFeedStatus").textContent = hasRealAlerts || displayActive ? "Live" : "Waiting";
 
   // Bind to new bottom row panels
   const bottomDailyPnl = byId("bottomDailyPnl");
@@ -254,6 +581,24 @@ function renderPaperSummary(lab) {
     summaryTotalTrades.textContent = String(hasRealAlerts ? closedTrades.length : previewDisplay.totalTrades);
   }
 
+  const perfWinRate = byId("paperPerfWinRate");
+  if (perfWinRate) {
+    perfWinRate.textContent = `${paperNum.format(displayWinRate)}%`;
+  }
+  const perfProfitFactor = byId("paperProfitFactor");
+  if (perfProfitFactor) {
+    perfProfitFactor.textContent = paperNum.format(hasRealAlerts ? Number(analytics.profitFactor || 0) : 2.39);
+  }
+  const perfAvgRR = byId("paperAvgRR");
+  if (perfAvgRR) {
+    perfAvgRR.textContent = avgRR ? `1:${paperNum.format(avgRR)}` : "--";
+  }
+  const perfBestStreak = byId("paperBestStreak");
+  if (perfBestStreak) {
+    perfBestStreak.textContent = bestStreak ? `${bestStreak} wins` : "--";
+  }
+
+  syncLiveDeskFromForm();
   renderWeeklyVisuals({ ...lab, closedTrades });
   renderBestWorstAlerts(closedTrades);
 }
@@ -399,7 +744,7 @@ function renderPaperAlerts(lab) {
       const isWatching = alert.tone === "active";
       const iconClass = isWin ? "target-hit" : isLoss ? "stop-loss" : isRisk ? "risk" : isMuted ? "muted" : "watching";
       const pillClass = isWin ? "gain" : isLoss ? "loss" : isRisk ? "risk" : isMuted ? "muted" : "watching";
-      const displayValue = isWatching ? "Active" : isRisk ? "Triggered" : isMuted ? "Muted" : signedMoney(alert.pnl);
+      const displayValue = isWatching ? "Active" : isRisk ? "Triggered" : isMuted ? "Muted" : signedCompactMoney(alert.pnl);
 
       let iconSvg = "";
       if (isWin) {
@@ -445,16 +790,81 @@ function handlePaperAlertFilter(event) {
 }
 
 function renderOpenPaperTrades(trades) {
-  const visibleTrades = trades.length ? trades : previewOpenAlerts;
+  const visibleTrades = trades || [];
   const openCountEl = byId("paperOpenCount");
   if (openCountEl) {
-    openCountEl.textContent = visibleTrades.length ? `${visibleTrades.length} Active` : "WAITING";
+    openCountEl.textContent = `${visibleTrades.length} ACTIVE`;
+    openCountEl.className = visibleTrades.length ? "active-count-badge active" : "active-count-badge";
   }
-  byId("paperActiveCount").textContent = String(visibleTrades.length);
-  paperOpenTrades.innerHTML = visibleTrades.length
-    ? visibleTrades.map((trade) => renderLiveAlertCard(trade)).join("") + `<a class="paper-view-all-link" href="#paperOpenTrades">View All Active Alerts â†’</a>`
-    : `<div class="paper-active-empty"><strong>No active live alert yet</strong><span>Create a CALL or PUT alert on the left. It will stay here until target, stop loss, or manual exit.</span></div>`;
+  const activeCountEl = byId("paperActiveCount");
+  if (activeCountEl) {
+    activeCountEl.textContent = String(visibleTrades.length);
+  }
+  const container = document.getElementById("paperOpenTrades") || paperOpenTrades;
+  if (container) {
+    if (!visibleTrades.length) {
+      container.innerHTML = `
+        <div class="empty-trades-dock">
+          <span class="empty-icon">🏖️</span>
+          <strong>No Active Practice Trades</strong>
+          <small>Configure an Option Scalp or Defined-Risk Spread in Section 2 above and click <strong>Deploy Live Practice Trade</strong>.</small>
+        </div>
+      `;
+      return;
+    }
+    container.innerHTML = visibleTrades.map((trade) => {
+      try {
+        return renderLiveAlertCard(trade);
+      } catch (err) {
+        console.error("renderLiveAlertCard error:", err);
+        return "";
+      }
+    }).join("");
+  }
 }
+
+function exportPracticeTradeToJournal(symbol, entryPrice, exitPrice, stopLoss, targetPrice, qty, lotSize, netPnl) {
+  try {
+    if (typeof window.setActiveView === "function") {
+      window.setActiveView("journal");
+    }
+    setTimeout(() => {
+      const sym = document.getElementById("formSymbol");
+      const entry = document.getElementById("formEntryPrice");
+      const exit = document.getElementById("formExitPrice");
+      const stop = document.getElementById("formStopLoss");
+      const target = document.getElementById("formTargetPrice");
+      const quantity = document.getElementById("formQuantity");
+      const lot = document.getElementById("formLotSize");
+      const reason = document.getElementById("formCloseReason");
+
+      if (sym) sym.value = symbol || "";
+      if (entry) entry.value = String(entryPrice || "");
+      if (exit) exit.value = String(exitPrice || "");
+      if (stop) stop.value = String(stopLoss || "");
+      if (target) target.value = String(targetPrice || "");
+      if (quantity) quantity.value = String(qty || 1);
+      if (lot) lot.value = String(lotSize || 65);
+      if (reason) {
+        reason.value = Number(netPnl || 0) >= 0 ? "TARGET_HIT" : "STOP_LOSS_HIT";
+      }
+
+      if (typeof window.recalculateTradePlan === "function") {
+        window.recalculateTradePlan();
+      }
+
+      const form = document.getElementById("tradeForm");
+      if (form) {
+        form.scrollIntoView({ behavior: "smooth", block: "center" });
+        const formStatus = document.getElementById("tradeFormStatus");
+        if (formStatus) formStatus.textContent = "Practice Trade Loaded";
+      }
+    }, 80);
+  } catch (err) {
+    console.error("Flywheel export failed:", err);
+  }
+}
+window.exportPracticeTradeToJournal = exportPracticeTradeToJournal;
 
 function renderClosedPaperTrades(trades) {
   const visibleTrades = trades.length ? trades : previewClosedAlerts;
@@ -462,14 +872,20 @@ function renderClosedPaperTrades(trades) {
     ? visibleTrades.slice(0, 5).map((trade) => {
       const isWin = Number(trade.netPnl || 0) >= 0;
       const displayTime = formatTime(trade.exitDatetime || trade.entryDatetime);
+      const exitP = Number(trade.exitPrice || trade.lastMarkPrice || trade.entryPrice || 0);
       return `
         <tr>
           <td>${displayTime}</td>
           <td><strong>${escapeHtml(trade.symbol)}</strong></td>
           <td><span class="type-badge ${trade.optionType.toLowerCase()}">${escapeHtml(trade.optionType)}</span></td>
-          <td>${isWin ? `Target ${paperMoney.format(trade.targetPrice)}` : `SL ${paperMoney.format(trade.stopLoss)}`}</td>
+          <td>${isWin ? `Target ${compactMoney(trade.targetPrice)}` : `SL ${compactMoney(trade.stopLoss)}`}</td>
           <td><span class="outcome-badge ${isWin ? "gain" : "loss"}">${isWin ? "Target Hit" : "Stop Loss"}</span></td>
-          <td><strong class="${isWin ? "gain" : "loss"}">${signedMoney(trade.netPnl || 0)}</strong></td>
+          <td>
+            <div class="flex items-center justify-between gap-2">
+              <strong class="${isWin ? "gain" : "loss"}">${signedCompactMoney(trade.netPnl || 0)}</strong>
+              <button type="button" class="btn-micro-chip" title="Export this practice trade to Journal" onclick="exportPracticeTradeToJournal('${escapeHtml(trade.symbol)}', ${Number(trade.entryPrice || 0)}, ${exitP}, ${Number(trade.stopLoss || 0)}, ${Number(trade.targetPrice || 0)}, ${Number(trade.quantity || 1)}, ${Number(trade.lotSize || 65)}, ${Number(trade.netPnl || 0)})">📝 Journal</button>
+            </div>
+          </td>
         </tr>
       `;
     }).join("")
@@ -485,98 +901,414 @@ function renderLiveAlertCard(trade) {
   const target = Number(trade.targetPrice || 0);
   const stop = Number(trade.stopLoss || 0);
   const unrealized = (mark - entry) * units;
-  const targetDistance = target ? target - mark : 0;
-  const stopDistance = stop ? mark - stop : 0;
+  const targetDistance = target ? Math.max(0, target - mark) : 0;
+  const stopDistance = stop ? Math.max(0, mark - stop) : 0;
   const targetSpan = target - entry;
-  const progress = targetSpan > 0 ? clamp(((mark - entry) / targetSpan) * 100, 0, 100) : 0;
+  const progress = targetSpan > 0 ? clamp(((mark - entry) / targetSpan) * 100, 0, 100) : 50;
   const side = trade.optionType === "PUT" ? "PUT" : "CALL";
   const movePct = percentMove(entry, mark);
+  const isGain = unrealized >= 0;
+
+  // Compute Smart Dynamic Trailing SL
+  let smartSlPrice = stop;
+  let smartSlLabel = `✏️ Edit SL (₹${stop.toFixed(2)})`;
+  let canLockProfit = false;
+
+  if (side === "CALL" && mark > entry) {
+    const profitPts = mark - entry;
+    // Lock 50% of the gained profit or minimum breakeven + 0.50 pts
+    smartSlPrice = Math.round(Math.max(entry + 0.50, entry + profitPts * 0.5) * 20) / 20;
+    if (smartSlPrice > stop) {
+      canLockProfit = true;
+      const ptsLocked = (smartSlPrice - entry).toFixed(2);
+      smartSlLabel = `🔒 Lock SL to ₹${smartSlPrice.toFixed(2)} (+${ptsLocked} pts profit)`;
+    }
+  } else if (side === "PUT" && mark < entry) {
+    const profitPts = entry - mark;
+    smartSlPrice = Math.round(Math.min(entry - 0.50, entry - profitPts * 0.5) * 20) / 20;
+    if (smartSlPrice < stop) {
+      canLockProfit = true;
+      const ptsLocked = (entry - smartSlPrice).toFixed(2);
+      smartSlLabel = `🔒 Lock SL to ₹${smartSlPrice.toFixed(2)} (+${ptsLocked} pts profit)`;
+    }
+  }
+
+  // Compute Elapsed Time & Theta Decay Warning
+  const now = new Date();
+  const entryDate = parseTradeDate(trade.entryDatetime) || now;
+  const elapsedMinutes = Math.max(0, Math.floor((now.getTime() - entryDate.getTime()) / 60000));
+  const isThetaZone = elapsedMinutes >= 15;
+  const isSandbox = trade.personalNotes?.includes("[SANDBOX_MANUAL]") || trade.isSandbox || trade.preview;
+  const isSpread = String(trade.symbol || "").includes("Spread") || String(trade.personalNotes || "").includes("[SPREAD_BUNDLE]");
+  const approxNetPnl = Math.round((unrealized - (unrealized === 0 ? 0 : 93.58)) * 100) / 100;
+
+  // Option Greeks Telemetry
+  const spotMap = { NIFTY: 24200, BANKNIFTY: 52200, FINNIFTY: 23800, SENSEX: 79500 };
+  const spot = spotMap[String(trade.underlyingSymbol || "NIFTY").toUpperCase()] || 24200;
+  const strike = Number(trade.strikePrice || spot);
+  const moneyness = spot > 0 && strike > 0 ? (spot - strike) / spot : 0;
+  let delta = side === "CALL" ? 0.50 + moneyness * 2.5 : -0.50 + moneyness * 2.5;
+  delta = clamp(delta, side === "CALL" ? 0.05 : -0.95, side === "CALL" ? 0.95 : -0.05);
+  const theta = Math.round((mark * 0.06 + 1.2) * 100) / 100;
+  const ivPct = 14.2;
 
   return `
-    <article class="paper-position-card paper-active-card live-alert-card ${side.toLowerCase()}" data-trade-id="${trade.id}">
-      <div class="paper-position-head live-alert-card-head">
-        <div>
-          <div class="live-alert-title-line">
-            <span class="paper-side-badge ${side.toLowerCase()}">${side}</span>
-            <strong>${escapeHtml(trade.symbol)}</strong>
+    <article class="paper-position-card live-pos-card ${side.toLowerCase()}" data-trade-id="${trade.id}">
+      <!-- Card Top: Instrument & Real-Time P&L Hero -->
+      <div class="pos-card-head">
+        <div class="pos-sym-group">
+          <span class="pos-type-pill ${side.toLowerCase()}">${side === "CALL" ? "▲ CALL (CE)" : "▼ PUT (PE)"}</span>
+          <div class="pos-sym-title-wrap">
+            <div class="flex items-center gap-2 flex-wrap">
+              <strong class="pos-sym-title">${escapeHtml(trade.symbol)}</strong>
+              ${isSpread ? `<span class="badge-spread-type">🛡️ SPREAD</span>` : ""}
+              ${isSandbox ? `<span class="badge-sandbox-mode">SANDBOX</span>` : `<span class="badge-live-mode">LIVE UPSTOX</span>`}
+              ${isThetaZone ? `<span class="badge-theta-zone" title="Holding time > 15m increases weekly option theta decay">⏳ Theta Zone (${elapsedMinutes}m)</span>` : `<span class="badge-timer-active">⏱️ ${elapsedMinutes}m active</span>`}
+            </div>
+            <span class="pos-meta-sub">${formatShortDate(trade.entryDatetime)} &bull; ${paperNum.format(lots)} ${lots === 1 ? "Lot" : "Lots"} (${paperNum.format(units)} units) &bull; Est. Net: ${signedMoney(approxNetPnl)}</span>
           </div>
-          <span>${formatShortDate(trade.entryDatetime)} &bull; ${paperNum.format(lots)} lot</span>
         </div>
-        <span class="paper-live-pill"><i></i> WATCHING</span>
-      </div>
-      <div class="live-alert-card-body">
-        <div class="live-alert-main-metrics">
-          <div><span>Live LTP</span><strong data-ltp-value="${trade.id}" class="${movePct >= 0 ? "gain" : "loss"}">${paperMoney.format(mark || 0)}</strong><small data-move-pct="${trade.id}" class="${movePct >= 0 ? "gain" : "loss"}">${signedNumber(movePct)}%</small></div>
-          <div><span>Target</span><strong>${paperMoney.format(target || 0)}</strong></div>
-          <div><span>Stop Loss</span><strong>${paperMoney.format(stop || 0)}</strong></div>
-          <div><span>Time</span><strong class="live-time-in-trade">${escapeHtml(timeInTrade(trade.entryDatetime))}</strong></div>
-        </div>
-        <div class="live-alert-side">
-          ${renderMiniSparkline(trade, movePct)}
+        <div class="pos-pnl-block">
+          <span class="pos-pnl-label">Gross Unr. P&L</span>
+          <strong data-unrealized-pnl="${trade.id}" class="pos-pnl-val ${isGain ? "gain" : "loss"}">${signedMoney(unrealized)}</strong>
+          <small data-move-pct="${trade.id}" class="pos-pnl-pct ${isGain ? "gain" : "loss"}">${signedNumber(movePct)}%</small>
         </div>
       </div>
-      <div class="paper-pnl-progress live-alert-progress-row">
-        <div class="live-alert-distance">
-          <span>Distance to Target</span>
-          <strong data-progress-text="${trade.id}">${targetDistance >= 0 ? `${paperNum.format(targetDistance)} (${paperNum.format(progress)}%)` : `crossed (${paperNum.format(progress)}%)`}</strong>
+
+      <!-- Card Body: 4-Cell Telemetry Matrix with Quick Edit Steppers -->
+      <div class="pos-metrics-deck">
+        <div class="pos-metric-cell">
+          <span class="m-label">Live LTP</span>
+          <strong data-ltp-value="${trade.id}" class="m-val ${isGain ? "gain" : "loss"}">${paperMoney.format(mark || 0)}</strong>
         </div>
-        <div class="paper-progress">
-          <i data-progress-bar="${trade.id}" style="width:${progress}%"></i>
+        <div class="pos-metric-cell">
+          <span class="m-label">Entry Price</span>
+          <strong class="m-val">${paperMoney.format(entry || 0)}</strong>
         </div>
-        <strong data-unrealized-pnl="${trade.id}" class="live-alert-pnl-chip ${unrealized >= 0 ? "gain" : "loss"}">${signedMoney(unrealized)}</strong>
+        <div class="pos-metric-cell">
+          <div class="flex items-center justify-between">
+            <span class="m-label text-loss">Stop Loss (SL)</span>
+            <button type="button" class="btn-micro-edit" title="Edit Stop Loss" onclick="promptEditStopLoss(${trade.id}, ${stop})">✏️</button>
+          </div>
+          <strong class="m-val text-loss">${paperMoney.format(stop || 0)}</strong>
+        </div>
+        <div class="pos-metric-cell">
+          <div class="flex items-center justify-between">
+            <span class="m-label text-gain">Target (TP)</span>
+            <button type="button" class="btn-micro-edit" title="Edit Target Price" onclick="promptEditTargetPrice(${trade.id}, ${target})">✏️</button>
+          </div>
+          <strong class="m-val text-gain">${paperMoney.format(target || 0)}</strong>
+        </div>
       </div>
-      <div class="paper-mark-row">
-        <label>
-          <span>Manual LTP</span>
-          <input data-paper-price data-manual-price-id="${trade.id}" type="number" step="0.05" min="0" value="${escapeHtml(mark)}" />
-        </label>
-        <div class="action-btn-group">
-          <button data-paper-mark="${trade.id}" type="button">Check LTP</button>
-          <button data-paper-close="${trade.id}" type="button" class="danger-lite">Close Alert</button>
-          <button data-paper-delete="${trade.id}" onclick="event.stopPropagation(); window.deletePaperTradeFromUi(${trade.id}, this)" type="button" class="paper-delete-mini">Delete</button>
+
+      <!-- 🧮 Option Greeks Telemetry Deck -->
+      <div class="pos-greeks-strip">
+        <span class="greek-pill">Δ Delta: <strong>${delta >= 0 ? "+" : ""}${delta.toFixed(2)}</strong></span>
+        <span class="greek-pill">Θ Theta: <strong class="text-loss">-${theta.toFixed(2)} pts/day</strong></span>
+        <span class="greek-pill">IV: <strong>${ivPct}%</strong></span>
+        <span class="greek-pill">Vega: <strong>+0.12 pts/1% IV</strong></span>
+      </div>
+
+      <!-- 🚄 Lively Animated Milestone Progress Rail with Live Moving Cursor -->
+      <div class="pos-progress-dock">
+        <div class="pos-progress-labels">
+          <span class="prog-label text-loss">🛑 SL: ₹${stop.toFixed(2)} (${paperNum.format(stopDistance)} pts buffer)</span>
+          <span class="prog-label font-bold text-cyan" data-progress-text="${trade.id}">⚡ ${paperNum.format(progress)}% to Target</span>
+          <span class="prog-label text-gain">🎯 Target: ₹${target.toFixed(2)} (${paperNum.format(targetDistance)} pts away)</span>
+        </div>
+        <div class="pos-progress-track">
+          <div class="pos-progress-fill" data-progress-bar="${trade.id}" style="width: ${progress}%"></div>
+          <div class="pos-progress-cursor" data-progress-cursor="${trade.id}" style="left: ${progress}%">
+            <div class="cursor-glow-halo"></div>
+            <div class="cursor-pin-badge" data-cursor-tooltip="${trade.id}">
+              LTP ₹${paperNum.format(mark)} (${signedNumber(movePct)}%)
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 🌟 THE 3 CORE IN-TRADE ACTION CONTROLS -->
+      <div class="pos-primary-actions-grid">
+        <!-- Button 1: Smart Trailing SL / Lock Profit -->
+        <button type="button" class="btn-pos-primary btn-trail-sl ${canLockProfit ? "is-profitable" : ""}" onclick="${canLockProfit ? `window.trailTradeStopLoss(${trade.id}, ${smartSlPrice})` : `window.promptEditStopLoss(${trade.id}, ${stop})`}">
+          ${smartSlLabel}
+        </button>
+
+        <!-- Button 2: Immediate Market Exit -->
+        <button type="button" class="btn-pos-primary btn-exit-imm" onclick="window.instantExitTrade(${trade.id}, ${mark})">
+          ⚡ Exit Immediately
+        </button>
+
+        <!-- Button 3: Edit Target Price with Quick Bump Chips -->
+        <div class="pos-target-action-cell">
+          <button type="button" class="btn-pos-primary btn-edit-target" onclick="window.promptEditTargetPrice(${trade.id}, ${target})">
+            🎯 Target (₹${target.toFixed(2)})
+          </button>
+          <div class="quick-target-chips">
+            <button type="button" class="chip-target-bump" onclick="window.quickBumpTargetPrice(${trade.id}, ${target}, 5)" title="Extend target by +5 pts">+5</button>
+            <button type="button" class="chip-target-bump" onclick="window.quickBumpTargetPrice(${trade.id}, ${target}, 10)" title="Extend target by +10 pts">+10</button>
+            <button type="button" class="chip-target-bump" onclick="window.quickBumpTargetPrice(${trade.id}, ${target}, 20)" title="Extend target by +20 pts">+20</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Card Utilities Strip: Manual Simulation & Flywheel Export -->
+      <div class="pos-actions-bar">
+        <div class="pos-manual-ltp-wrap">
+          <span class="pos-ltp-tag">Simulate LTP:</span>
+          <button type="button" class="btn-step-ltp" onclick="window.stepManualLtp(${trade.id}, -1)">−</button>
+          <input data-paper-price data-manual-price-id="${trade.id}" type="number" step="0.50" min="0" value="${escapeHtml(mark)}" class="pos-ltp-input" oninput="window.handleManualLtpInput(${trade.id}, this.value)" onkeydown="if(event.key==='Enter')window.syncManualLtp(${trade.id})" />
+          <button type="button" class="btn-step-ltp" onclick="window.stepManualLtp(${trade.id}, 1)">+</button>
+          <button data-paper-mark="${trade.id}" onclick="window.syncManualLtp(${trade.id})" type="button" class="btn-pos-action btn-sync">Sync</button>
+        </div>
+        <div class="pos-btn-cluster">
+          <button type="button" class="btn-pos-action btn-journal" title="Export this trade to Journal" onclick="window.exportPracticeTradeToJournal('${escapeHtml(trade.symbol)}', ${Number(trade.entryPrice || 0)}, ${mark}, ${Number(trade.stopLoss || 0)}, ${Number(trade.targetPrice || 0)}, ${Number(trade.quantity || 1)}, ${Number(trade.lotSize || 65)}, ${unrealized})">📝 Journal</button>
+          <button data-paper-delete="${trade.id}" onclick="event.stopPropagation(); window.deletePaperTradeFromUi(${trade.id}, this)" type="button" class="btn-pos-action btn-del" title="Delete trade">🗑️</button>
         </div>
       </div>
     </article>
   `;
 }
+
+// 🎮 Interactive Simulation Handlers for Manual Sandbox
+function handleManualLtpInput(tradeId, val) {
+  const price = parseFloat(val);
+  if (Number.isFinite(price) && price > 0) {
+    updateTradeLtpInUi(tradeId, price);
+  }
+}
+window.handleManualLtpInput = handleManualLtpInput;
+
+function stepManualLtp(tradeId, delta) {
+  const input = document.querySelector(`[data-manual-price-id="${tradeId}"]`);
+  if (!input) return;
+  const current = parseFloat(input.value) || 0;
+  const next = Math.max(0.05, Math.round((current + delta) * 20) / 20);
+  input.value = next.toFixed(2);
+  handleManualLtpInput(tradeId, next);
+  syncManualLtp(tradeId);
+}
+window.stepManualLtp = stepManualLtp;
+
+async function syncManualLtp(tradeId) {
+  const input = document.querySelector(`[data-manual-price-id="${tradeId}"]`);
+  if (!input) return;
+  const price = parseFloat(input.value);
+  if (!Number.isFinite(price) || price <= 0) return;
+
+  try {
+    const res = await fetchJson(`/api/live-alerts/trades/${tradeId}/mark`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ price }),
+    });
+
+    if (res?.triggered) {
+      playTactileChime();
+      const isWin = res.closeReason === "TARGET_HIT";
+      showDeskToast(
+        isWin ? "🎯 Target Hit!" : "🛑 Stop Loss Hit!",
+        `${isWin ? "Target achieved" : "Stop triggered"} at ₹${price.toFixed(2)}. Trade archived to Trading Journal!`,
+        isWin ? "🏆" : "🛡️"
+      );
+      await loadPaperLab();
+    } else {
+      updateTradeLtpInUi(tradeId, price);
+    }
+  } catch (err) {
+    showDeskToast("Sync Error", err.message, "❌");
+  }
+}
+window.syncManualLtp = syncManualLtp;
+
+// 🌟 IN-TRADE ACTION HANDLERS
+async function trailTradeStopLoss(tradeId, newSL) {
+  try {
+    const res = await fetchJson(`/api/live-alerts/trades/${tradeId}/stop-loss`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stopLoss: Number(newSL) }),
+    });
+    playTactileChime();
+    showDeskToast("Stop Loss Locked", `Trailing SL moved to ₹${Number(newSL).toFixed(2)} to protect profit!`, "🔒");
+    if (deskChannel) deskChannel.postMessage({ type: "TRADE_MUTATION", action: "UPDATE_SL", tradeId });
+    await loadPaperLab();
+  } catch (err) {
+    showDeskToast("Update Error", err.message, "❌");
+  }
+}
+window.trailTradeStopLoss = trailTradeStopLoss;
+
+async function promptEditStopLoss(tradeId, currentSL) {
+  const input = prompt("Enter new Stop Loss price (₹):", currentSL);
+  if (!input) return;
+  const newSL = parseFloat(input);
+  if (!Number.isFinite(newSL) || newSL <= 0) {
+    alert("Please enter a valid positive price.");
+    return;
+  }
+  await trailTradeStopLoss(tradeId, newSL);
+}
+window.promptEditStopLoss = promptEditStopLoss;
+
+async function promptEditTargetPrice(tradeId, currentTarget) {
+  const input = prompt("Enter new Target Price (₹):", currentTarget);
+  if (!input) return;
+  const newTP = parseFloat(input);
+  if (!Number.isFinite(newTP) || newTP <= 0) {
+    alert("Please enter a valid positive price.");
+    return;
+  }
+  try {
+    await fetchJson(`/api/live-alerts/trades/${tradeId}/target`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ targetPrice: newTP }),
+    });
+    playTactileChime();
+    showDeskToast("Target Updated", `New Target set to ₹${newTP.toFixed(2)}`, "🎯");
+    if (deskChannel) deskChannel.postMessage({ type: "TRADE_MUTATION", action: "UPDATE_TARGET", tradeId });
+    await loadPaperLab();
+  } catch (err) {
+    showDeskToast("Update Error", err.message, "❌");
+  }
+}
+window.promptEditTargetPrice = promptEditTargetPrice;
+
+async function quickBumpTargetPrice(tradeId, currentTarget, deltaPts) {
+  const newTP = Math.round((Number(currentTarget) + deltaPts) * 20) / 20;
+  try {
+    await fetchJson(`/api/live-alerts/trades/${tradeId}/target`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ targetPrice: newTP }),
+    });
+    playTactileChime("target");
+    showDeskToast("Target Extended! 🎯", `Target bumped by +${deltaPts} pts to ₹${newTP.toFixed(2)}`, "🚀");
+    if (deskChannel) deskChannel.postMessage({ type: "TRADE_MUTATION", action: "UPDATE_TARGET", tradeId });
+    await loadPaperLab();
+  } catch (err) {
+    showDeskToast("Update Error", err.message, "❌");
+  }
+}
+window.quickBumpTargetPrice = quickBumpTargetPrice;
+
+function triggerVictoryConfetti() {
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.style.position = "fixed";
+    canvas.style.top = "0";
+    canvas.style.left = "0";
+    canvas.style.width = "100vw";
+    canvas.style.height = "100vh";
+    canvas.style.pointerEvents = "none";
+    canvas.style.zIndex = "99999";
+    document.body.appendChild(canvas);
+
+    const ctx = canvas.getContext("2d");
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    const particles = Array.from({ length: 45 }, () => ({
+      x: canvas.width / 2 + (Math.random() - 0.5) * 300,
+      y: canvas.height / 2 + (Math.random() - 0.5) * 100,
+      vx: (Math.random() - 0.5) * 8,
+      vy: (Math.random() - 1) * 7 - 3,
+      size: Math.random() * 6 + 4,
+      color: ["#00f5c4", "#38bdf8", "#facc15", "#c084fc", "#22c55e"][Math.floor(Math.random() * 5)],
+      alpha: 1,
+      rotation: Math.random() * Math.PI,
+    }));
+
+    let frames = 0;
+    const animate = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      particles.forEach((p) => {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.2;
+        p.alpha -= 0.015;
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, p.alpha);
+        ctx.fillStyle = p.color;
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rotation);
+        ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
+        ctx.restore();
+      });
+      frames++;
+      if (frames < 70) {
+        requestAnimationFrame(animate);
+      } else {
+        canvas.remove();
+      }
+    };
+    requestAnimationFrame(animate);
+  } catch (_) {}
+}
+window.triggerVictoryConfetti = triggerVictoryConfetti;
+
+async function instantExitTrade(tradeId, ltp) {
+  if (!confirm(`Exit position immediately at current market price (₹${Number(ltp).toFixed(2)})?`)) return;
+  try {
+    const result = await fetchJson(`/api/live-alerts/trades/${tradeId}/close`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ price: Number(ltp), reason: "MANUAL_EXIT" }),
+    });
+    playTactileChime();
+    const netPnl = result?.item?.netPnl || 0;
+    const isGain = netPnl >= 0;
+    showDeskToast("Position Closed", `Exited at ₹${Number(ltp).toFixed(2)} (${isGain ? "+" : ""}₹${netPnl.toFixed(2)}). Auto-saved to Trading Journal!`, isGain ? "🎯" : "🛑");
+    if (deskChannel) deskChannel.postMessage({ type: "TRADE_MUTATION", action: "CLOSE_TRADE", tradeId });
+    await loadPaperLab();
+  } catch (err) {
+    showDeskToast("Exit Error", err.message, "❌");
+  }
+}
+window.instantExitTrade = instantExitTrade;
+
 function renderMiniSparkline(trade, movePct) {
-  const seed = Math.abs(Math.round(Number(trade.entryPrice || 1) * 10));
-  const values = Array.from({ length: 16 }, (_, index) => {
-    const wave = Math.sin((index + seed) * 0.82) * 8;
-    const trend = (movePct / 100) * index * 10;
-    return 45 - wave - trend;
-  });
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const span = max - min || 1;
-  const points = values.map((value, index) => `${(index / 15) * 118},${8 + ((value - min) / span) * 32}`).join(" ");
+  // Smooth trend interpolation without Math.sin (Width: 54px, Height: 24px)
+  const isUp = movePct >= 0;
+  const strokeColor = isUp ? "#00f5c4" : "#f87171";
+  const trendPoints = isUp ? "2,20 18,16 34,10 52,4" : "2,4 18,10 34,16 52,20";
   return `
-    <svg class="live-alert-sparkline" viewBox="0 0 118 48" aria-hidden="true" focusable="false">
-      <polyline points="${points}" />
+    <svg class="live-alert-sparkline" width="54" height="24" viewBox="0 0 54 24" aria-hidden="true" focusable="false">
+      <polyline points="${trendPoints}" fill="none" stroke="${strokeColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
     </svg>
   `;
 }
 
 function renderBestWorstAlerts(trades) {
-  const target = byId("paperBestWorst");
-  if (!target) return;
+  const bestTarget = byId("paperBestAlert");
+  const worstTarget = byId("paperWorstAlert");
+  const legacyTarget = byId("paperBestWorst");
+  if (!bestTarget && !worstTarget && !legacyTarget) return;
   const closed = [...trades].filter((trade) => Number.isFinite(Number(trade.netPnl)));
   if (!closed.length) {
-    target.innerHTML = `
+    const emptyMarkup = `
       <div class="paper-bestworst-empty">
         <strong>No triggered alerts yet</strong>
         <span>Your best and worst alert will appear after target or stop-loss hits.</span>
       </div>
     `;
+    if (bestTarget) bestTarget.innerHTML = emptyMarkup;
+    if (worstTarget) worstTarget.innerHTML = emptyMarkup;
+    if (legacyTarget) legacyTarget.innerHTML = emptyMarkup;
     return;
   }
 
   const best = closed.reduce((winner, trade) => Number(trade.netPnl || 0) > Number(winner.netPnl || 0) ? trade : winner, closed[0]);
   const worst = closed.reduce((loser, trade) => Number(trade.netPnl || 0) < Number(loser.netPnl || 0) ? trade : loser, closed[0]);
-  target.innerHTML = `
-    ${renderBestWorstItem(best, "Best Alert", "best")}
-    ${renderBestWorstItem(worst, "Worst Alert", "worst")}
-  `;
+  if (bestTarget) bestTarget.innerHTML = renderBestWorstItem(best, "Best Alert", "best");
+  if (worstTarget) worstTarget.innerHTML = renderBestWorstItem(worst, "Worst Alert", "worst");
+  if (legacyTarget) {
+    legacyTarget.innerHTML = `
+      ${renderBestWorstItem(best, "Best Alert", "best")}
+      ${renderBestWorstItem(worst, "Worst Alert", "worst")}
+    `;
+  }
 }
 
 function renderBestWorstItem(trade, label, tone) {
@@ -608,36 +1340,323 @@ function renderPaperLessons(lab) {
 
 function syncOptionLotSize() {
   if (!paperForm) return;
-  const underlying = String(paperForm.querySelector('[name="underlyingSymbol"]')?.value || "NIFTY").toUpperCase();
-  const lotSize = optionLotSizes[underlying] || 1;
+  const underlyingSelect = paperForm.querySelector('[name="underlyingSymbol"]');
+  const underlying = String(underlyingSelect?.value || "NIFTY").toUpperCase();
+  try {
+    if (underlyingSelect?.value) {
+      localStorage.setItem("portfoliox_pref_underlying", underlyingSelect.value);
+    }
+  } catch (_) {}
+  const lotSize = optionLotSizes[underlying] || 65;
   const lotInput = paperForm.querySelector('[name="lotSize"]');
   if (lotInput) lotInput.value = String(lotSize);
-  const note = byId("paperLotNote");
-  if (note) note.textContent = `1 lot = ${paperNum.format(lotSize)} ${underlying} option units`;
+
+  // Auto-ATM Strike & Bracket Sizing Map
+  const atmDefaults = {
+    NIFTY: { strike: 24200, step: 50, entry: 100.0, sl: 92.0, tp: 119.0 },
+    BANKNIFTY: { strike: 52200, step: 100, entry: 160.0, sl: 145.0, tp: 195.0 },
+    FINNIFTY: { strike: 23800, step: 50, entry: 85.0, sl: 77.0, tp: 104.0 },
+    SENSEX: { strike: 79500, step: 100, entry: 210.0, sl: 190.0, tp: 255.0 },
+  };
+
+  const config = atmDefaults[underlying] || atmDefaults.NIFTY;
+  const strikeInput = paperForm.querySelector('[name="strikePrice"]');
+  if (strikeInput) {
+    strikeInput.value = String(config.strike);
+    strikeInput.step = String(config.step);
+  }
+
+  const entryEl = document.getElementById("deskEntryPrice");
+  const stopEl = document.getElementById("deskStopLoss");
+  const targetEl = document.getElementById("deskTargetPrice");
+  if (entryEl) entryEl.value = config.entry.toFixed(2);
+  if (stopEl) stopEl.value = config.sl.toFixed(2);
+  if (targetEl) targetEl.value = config.tp.toFixed(2);
+
+  renderPaperRiskPreview();
+  syncLiveDeskFromForm();
+}
+
+function initDeskAiPresets() {
+  const btnAtm = document.getElementById("btnPresetAtmScalp");
+  if (btnAtm) {
+    btnAtm.addEventListener("click", () => {
+      document.querySelectorAll(".btn-pad-preset, .btn-studio-preset, .btn-desk-preset").forEach((b) => b.classList.remove("active", "active-pill", "active-glow"));
+      btnAtm.classList.add("active");
+      const entryEl = document.getElementById("deskEntryPrice");
+      const stopEl = document.getElementById("deskStopLoss");
+      const targetEl = document.getElementById("deskTargetPrice");
+      if (entryEl) entryEl.value = "83.00";
+      if (stopEl) stopEl.value = "75.00";
+      if (targetEl) targetEl.value = "102.00";
+      renderPaperRiskPreview();
+      syncLiveDeskFromForm();
+      setPaperStatus("⚡ ATM Scalp Loaded");
+    });
+  }
+
+  const btnSafe = document.getElementById("btnPresetSafeRr");
+  if (btnSafe) {
+    btnSafe.addEventListener("click", () => {
+      document.querySelectorAll(".btn-pad-preset, .btn-studio-preset, .btn-desk-preset").forEach((b) => b.classList.remove("active", "active-pill", "active-glow"));
+      btnSafe.classList.add("active");
+      const entryEl = document.getElementById("deskEntryPrice");
+      const stopEl = document.getElementById("deskStopLoss");
+      const targetEl = document.getElementById("deskTargetPrice");
+      const entry = Number(entryEl?.value || 83);
+      if (stopEl) stopEl.value = (entry - 6.00).toFixed(2);
+      if (targetEl) targetEl.value = (entry + 15.00).toFixed(2);
+      renderPaperRiskPreview();
+      syncLiveDeskFromForm();
+      setPaperStatus("🛡️ Safe 1:2.5 R:R Loaded");
+    });
+  }
+
+  const btnHero = document.getElementById("btnPresetHeroZero");
+  if (btnHero) {
+    btnHero.addEventListener("click", () => {
+      document.querySelectorAll(".btn-pad-preset, .btn-studio-preset, .btn-desk-preset").forEach((b) => b.classList.remove("active", "active-pill", "active-glow"));
+      btnHero.classList.add("active");
+      const entryEl = document.getElementById("deskEntryPrice");
+      const stopEl = document.getElementById("deskStopLoss");
+      const targetEl = document.getElementById("deskTargetPrice");
+      const entry = Number(entryEl?.value || 83);
+      if (stopEl) stopEl.value = Math.max(0.05, entry - 10.00).toFixed(2);
+      if (targetEl) targetEl.value = (entry + 30.00).toFixed(2);
+      renderPaperRiskPreview();
+      syncLiveDeskFromForm();
+      setPaperStatus("🎯 0DTE Expiry Hero Loaded");
+    });
+  }
+
+  // Quick Lot Buttons
+  document.querySelectorAll("[data-quick-lot]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("[data-quick-lot]").forEach((b) => b.classList.remove("active", "active-pill"));
+      btn.classList.add("active");
+      const qty = btn.dataset.quickLot;
+      const qtyInput = paperForm?.querySelector('input[name="quantity"]');
+      if (qtyInput) {
+        qtyInput.value = qty;
+        renderPaperRiskPreview();
+        syncLiveDeskFromForm();
+      }
+    });
+  });
+}
+
+function toggleSpreadMode(mode) {
+  const modeInput = document.getElementById("deskStrategyMode");
+  if (modeInput) modeInput.value = mode;
+
+  document.querySelectorAll(".btn-spread-mode").forEach((b) => {
+    b.classList.toggle("active", b.dataset.spreadMode === mode);
+  });
+
+  const hedgeCard = document.getElementById("spreadHedgeLegCard");
+  const singleProtection = document.getElementById("cardSingleLegProtection");
+  const beStat = document.getElementById("spreadBreakevenStat");
+  const beDivider = document.getElementById("spreadBreakevenDivider");
+  const callDesc = document.getElementById("callSentimentDesc");
+  const putDesc = document.getElementById("putSentimentDesc");
+  const payoffDock = document.getElementById("spreadPayoffDock");
+
+  const isSpread = mode === "SPREAD";
+  if (hedgeCard) hedgeCard.style.display = isSpread ? "block" : "none";
+  if (singleProtection) singleProtection.style.display = isSpread ? "none" : "block";
+  if (beStat) beStat.style.display = isSpread ? "flex" : "none";
+  if (beDivider) beDivider.style.display = isSpread ? "block" : "none";
+  if (payoffDock) payoffDock.style.display = isSpread ? "block" : "none";
+
+  if (callDesc) callDesc.textContent = isSpread ? "Bull Call Vertical Spread" : "Bullish Breakout Scalp";
+  if (putDesc) putDesc.textContent = isSpread ? "Bear Put Vertical Spread" : "Bearish Breakdown Scalp";
+
+  const capLabel = document.getElementById("deskCapitalLabel");
+  const riskLabel = document.getElementById("deskRiskLabel");
+  const rewLabel = document.getElementById("deskRewardLabel");
+  if (capLabel) capLabel.textContent = isSpread ? "Net Debit Outlay" : "Capital Outlay";
+  if (riskLabel) riskLabel.textContent = isSpread ? "Max Risk (Defined)" : "Max Risk";
+  if (rewLabel) rewLabel.textContent = isSpread ? "Max Gain (Capped)" : "Target Profit";
+
+  // Auto-sync default hedge strike when switching to spread
+  if (isSpread && paperForm) {
+    const underlying = String(paperForm.querySelector('[name="underlyingSymbol"]')?.value || "NIFTY").toUpperCase();
+    const optType = paperForm.querySelector('input[name="optionType"]:checked')?.value || "CALL";
+    const strike = Number(paperForm.querySelector('[name="strikePrice"]')?.value || 24200);
+    const step = underlying === "BANKNIFTY" || underlying === "SENSEX" ? 100 : 50;
+    const hedgeStrike = optType === "CALL" ? strike + (step * 2) : strike - (step * 2);
+    
+    const hedgeStrikeEl = document.getElementById("deskHedgeStrike");
+    if (hedgeStrikeEl) hedgeStrikeEl.value = String(hedgeStrike);
+    
+    const hedgePremEl = document.getElementById("deskHedgePremium");
+    const longPrem = Number(document.getElementById("deskEntryPrice")?.value || 83);
+    if (hedgePremEl && (!hedgePremEl.value || Number(hedgePremEl.value) <= 0 || Number(hedgePremEl.value) >= longPrem)) {
+      hedgePremEl.value = Math.max(5, (longPrem * 0.45)).toFixed(2);
+    }
+  }
+
+  renderPaperRiskPreview();
+  syncLiveDeskFromForm();
+}
+window.toggleSpreadMode = toggleSpreadMode;
+
+function incrementHedgeStrike(step) {
+  if (!paperForm) return;
+  const input = paperForm.querySelector('input[name="hedgeStrikePrice"]');
+  if (!input || !step) return;
+  const current = Number(input.value || 0);
+  input.value = String(Math.max(0, current + step));
+  renderPaperRiskPreview();
+  syncLiveDeskFromForm();
 }
 
 function renderPaperRiskPreview() {
-  syncOptionLotSize();
+  if (!paperForm) return;
   const values = Object.fromEntries(new FormData(paperForm).entries());
+  const isSpread = values.strategyMode === "SPREAD";
   const entry = Number(values.currentPrice || 0);
   const target = Number(values.targetPrice || 0);
   const stop = Number(values.stopLoss || 0);
   const quantity = Number(values.quantity || 0);
   const lotSize = Math.max(1, Number(values.lotSize || 1));
   const units = quantity * lotSize;
+
+  const optType = values.optionType || "CALL";
+  const longStrike = Number(values.strikePrice || 24200);
+
+  if (isSpread) {
+    const hedgeStrike = Number(values.hedgeStrikePrice || (optType === "CALL" ? longStrike + 100 : longStrike - 100));
+    const hedgePrice = Number(values.hedgePrice || (entry * 0.45));
+    const netDebitPerUnit = Math.max(0.05, entry - hedgePrice);
+    const strikeWidth = Math.abs(hedgeStrike - longStrike);
+    
+    const capital = netDebitPerUnit * units;
+    const maxRisk = capital;
+    const maxReward = Math.max(0, (strikeWidth - netDebitPerUnit) * units);
+    const rr = maxRisk > 0 ? maxReward / maxRisk : 0;
+    
+    const breakeven = optType === "CALL" ? longStrike + netDebitPerUnit : longStrike - netDebitPerUnit;
+
+    const capEl = byId("deskCapitalVal");
+    if (capEl) capEl.textContent = paperMoney.format(capital || 0);
+
+    const riskEl = byId("deskRiskVal");
+    if (riskEl) riskEl.textContent = paperMoney.format(maxRisk || 0);
+
+    const rewEl = byId("deskRewardVal");
+    if (rewEl) rewEl.textContent = paperMoney.format(maxReward || 0);
+
+    const rrEl = byId("deskRrVal");
+    if (rrEl) {
+      rrEl.textContent = rr > 0 ? `1 : ${rr.toFixed(2)}` : "1 : 1.50+";
+      rrEl.className = rr >= 1.5 ? "bracket-rr-text text-gain" : "bracket-rr-text text-cyan";
+    }
+
+    const beEl = byId("deskBreakevenVal");
+    if (beEl) beEl.textContent = breakeven.toFixed(2);
+
+    const hedgeTag = byId("hedgeSummaryTag");
+    if (hedgeTag) {
+      const sym = values.underlyingSymbol || "NIFTY";
+      hedgeTag.textContent = `Sell ${sym} ${hedgeStrike} ${optType === "CALL" ? "CE" : "PE"}`;
+    }
+
+    const hedgeCreditTag = byId("hedgeCreditTag");
+    if (hedgeCreditTag) {
+      hedgeCreditTag.textContent = `Credit +₹${hedgePrice.toFixed(2)} (Net: ₹${netDebitPerUnit.toFixed(2)})`;
+    }
+
+    // Dynamic Payoff SVG Visualizer
+    const payoffDock = document.getElementById("spreadPayoffDock");
+    if (payoffDock) payoffDock.style.display = "block";
+    const rangeTag = document.getElementById("payoffRangeTag");
+    const sym = values.underlyingSymbol || "NIFTY";
+    const minRange = Math.min(longStrike, hedgeStrike) - 200;
+    const maxRange = Math.max(longStrike, hedgeStrike) + 200;
+    if (rangeTag) rangeTag.textContent = `${sym} Range: ${minRange.toLocaleString()} → ${maxRange.toLocaleString()}`;
+
+    const pMaxLoss = document.getElementById("pMarkerMaxLoss");
+    const pBe = document.getElementById("pMarkerBe");
+    const pMaxGain = document.getElementById("pMarkerMaxGain");
+    if (pMaxLoss) pMaxLoss.textContent = `Max Loss: -${paperMoney.format(maxRisk)}`;
+    if (pBe) pBe.textContent = `Breakeven: ${breakeven.toFixed(2)}`;
+    if (pMaxGain) pMaxGain.textContent = `Max Gain: +${paperMoney.format(maxReward)}`;
+
+    const strokeLine = document.getElementById("payoffStrokeLine");
+    const fillArea = document.getElementById("payoffFillArea");
+    const bePoint = document.getElementById("payoffBePoint");
+    if (strokeLine && fillArea && bePoint) {
+      if (optType === "CALL") {
+        strokeLine.setAttribute("d", "M 0,95 L 175,95 L 325,30 L 500,30");
+        fillArea.setAttribute("d", "M 0,95 L 175,95 L 325,30 L 500,30 L 500,65 L 0,65 Z");
+        bePoint.setAttribute("cx", "250");
+        bePoint.setAttribute("cy", "65");
+      } else {
+        strokeLine.setAttribute("d", "M 0,30 L 175,30 L 325,95 L 500,95");
+        fillArea.setAttribute("d", "M 0,30 L 175,30 L 325,95 L 500,95 L 500,65 L 0,65 Z");
+        bePoint.setAttribute("cx", "250");
+        bePoint.setAttribute("cy", "65");
+      }
+    }
+    return;
+  }
+
+  const payoffDock = document.getElementById("spreadPayoffDock");
+  if (payoffDock) payoffDock.style.display = "none";
+
+  // Single-Leg Naked Scalp Calculations
   const capital = entry * units;
   const risk = Math.max(0, entry - stop) * units;
   const reward = Math.max(0, target - entry) * units;
-  const rr = risk ? reward / risk : 0;
-  const items = [
-    paperMoney.format(capital || 0),
-    paperMoney.format(risk || 0),
-    paperMoney.format(reward || 0),
-    rr ? `1:${rr.toFixed(2)}` : "--",
-  ];
-  document.querySelectorAll("#paperRiskPreview strong").forEach((node, index) => {
-    node.textContent = items[index];
-  });
+  const rr = risk > 0 ? reward / risk : 0;
+
+  const slDiff = stop > 0 && entry > 0 ? entry - stop : 0;
+  const tpDiff = target > 0 && entry > 0 ? target - entry : 0;
+  const slDiffPct = entry > 0 ? (slDiff / entry) * 100 : 0;
+  const tpDiffPct = entry > 0 ? (tpDiff / entry) * 100 : 0;
+
+  const slDiffEl = byId("deskSlDiff");
+  if (slDiffEl) {
+    if (stop >= entry && stop > 0 && entry > 0) {
+      slDiffEl.textContent = `⚠️ SL must be < ₹${entry.toFixed(2)}`;
+      slDiffEl.className = "pad-diff-tag text-loss font-bold";
+    } else {
+      slDiffEl.textContent = slDiff > 0 ? `-${slDiff.toFixed(2)} pts (-${slDiffPct.toFixed(1)}%)` : "--";
+      slDiffEl.className = "pad-diff-tag text-loss";
+    }
+  }
+
+  const tpDiffEl = byId("deskTpDiff");
+  if (tpDiffEl) {
+    if (target <= entry && target > 0 && entry > 0) {
+      tpDiffEl.textContent = `⚠️ Target must be > ₹${entry.toFixed(2)}`;
+      tpDiffEl.className = "pad-diff-tag text-loss font-bold";
+    } else {
+      tpDiffEl.textContent = tpDiff > 0 ? `+${tpDiff.toFixed(2)} pts (+${tpDiffPct.toFixed(1)}%)` : "--";
+      tpDiffEl.className = "pad-diff-tag text-gain";
+    }
+  }
+
+  const capEl = byId("deskCapitalVal");
+  if (capEl) capEl.textContent = paperMoney.format(capital || 0);
+
+  const riskEl = byId("deskRiskVal");
+  if (riskEl) riskEl.textContent = paperMoney.format(risk || 0);
+
+  const rewEl = byId("deskRewardVal");
+  if (rewEl) rewEl.textContent = paperMoney.format(reward || 0);
+
+  const rrEl = byId("deskRrVal");
+  if (rrEl) {
+    if (rr > 0) {
+      rrEl.textContent = `1 : ${rr.toFixed(2)}`;
+      rrEl.className = rr >= 2.0 ? "bracket-rr-text text-gain" : rr >= 1.5 ? "bracket-rr-text text-cyan" : "bracket-rr-text text-loss";
+    } else {
+      rrEl.textContent = "1 : 2.00+";
+      rrEl.className = "bracket-rr-text text-muted";
+    }
+  }
 }
 
 function incrementStrike(step) {
@@ -646,6 +1665,7 @@ function incrementStrike(step) {
   const current = Number(input.value || 0);
   input.value = String(Math.max(0, current + step));
   renderPaperRiskPreview();
+  syncLiveDeskFromForm();
 }
 
 function renderWeeklyVisuals(lab) {
@@ -654,9 +1674,25 @@ function renderWeeklyVisuals(lab) {
   const calendarTarget = byId("paperTradeCalendar");
   if (!dailyTarget || !calendarTarget) return;
 
-  const buckets = buildWeekBuckets(trades);
+  const range = paperState.pnlRange || "week";
+  const buckets = buildWeekBuckets(trades, range);
   const values = buckets.map((bucket) => bucket.pnl);
   const maxValue = Math.max(1, ...values.map((value) => Math.abs(value)));
+
+  const totalRangePnl = buckets.reduce((sum, b) => sum + b.pnl, 0);
+  const rangePnlPct = (totalRangePnl / 100000) * 100;
+
+  const bottomDailyPnl = byId("bottomDailyPnl");
+  if (bottomDailyPnl) {
+    bottomDailyPnl.textContent = signedMoney(totalRangePnl);
+    bottomDailyPnl.className = totalRangePnl >= 0 ? "gain" : "loss";
+  }
+  const bottomDailyPnlPct = byId("bottomDailyPnlPct");
+  if (bottomDailyPnlPct) {
+    bottomDailyPnlPct.textContent = `${totalRangePnl >= 0 ? "+" : ""}${rangePnlPct.toFixed(2)}%`;
+    bottomDailyPnlPct.className = totalRangePnl >= 0 ? "gain" : "loss";
+  }
+
   dailyTarget.innerHTML = buckets.map((bucket) => {
     const height = bucket.count ? Math.max(16, Math.round((Math.abs(bucket.pnl) / maxValue) * 92)) : 8;
     const cls = bucket.count ? (bucket.pnl < 0 ? "loss" : "gain") : "quiet";
@@ -671,7 +1707,7 @@ function renderWeeklyVisuals(lab) {
 
   const maxCalendarRows = 4;
   const calendarCells = Array.from({ length: maxCalendarRows }, (_, rowIndex) =>
-    buckets.map((bucket) => renderCalendarCell(bucket, rowIndex, maxCalendarRows)).join("")
+    buckets.slice(0, 7).map((bucket) => renderCalendarCell(bucket, rowIndex, maxCalendarRows)).join("")
   ).join("");
   calendarTarget.innerHTML = `
     <div class="paper-calendar-days"><b>M</b><b>T</b><b>W</b><b>T</b><b>F</b><b>S</b><b>S</b></div>
@@ -717,14 +1753,38 @@ function averageRewardRisk(trades) {
   return ratios.reduce((sum, value) => sum + value, 0) / ratios.length;
 }
 
-function buildWeekBuckets(trades) {
-  const labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-  const weekStart = getWeekStart(new Date());
-  const buckets = labels.map((label, index) => {
-    const date = new Date(weekStart);
-    date.setDate(weekStart.getDate() + index);
+function buildWeekBuckets(trades, range = "week") {
+  let startDate = getWeekStart(new Date());
+  let daysCount = 7;
+  let labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+  if (range === "last_week") {
+    const curStart = getWeekStart(new Date());
+    startDate = new Date(curStart);
+    startDate.setDate(curStart.getDate() - 7);
+  } else if (range === "month") {
+    const now = new Date();
+    startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    daysCount = Math.min(31, lastDay);
+    labels = Array.from({ length: daysCount }, (_, i) => String(i + 1));
+  } else if (range === "all") {
+    daysCount = 14;
+    const now = new Date();
+    startDate = new Date(now);
+    startDate.setDate(now.getDate() - 13);
+    labels = Array.from({ length: 14 }, (_, i) => {
+      const d = new Date(startDate);
+      d.setDate(startDate.getDate() + i);
+      return `${d.getDate()}/${d.getMonth() + 1}`;
+    });
+  }
+
+  const buckets = Array.from({ length: daysCount }, (_, index) => {
+    const date = new Date(startDate);
+    date.setDate(startDate.getDate() + index);
     return {
-      label,
+      label: labels[index] || String(index + 1),
       date,
       key: localDateKey(date),
       trades: [],
@@ -975,6 +2035,15 @@ function signedMoney(value) {
   return `${amount >= 0 ? "+" : "-"}${paperMoney.format(Math.abs(amount))}`;
 }
 
+function compactMoney(value) {
+  return `₹${paperNum.format(Number(value || 0))}`;
+}
+
+function signedCompactMoney(value) {
+  const amount = Number(value || 0);
+  return `${amount >= 0 ? "+" : "-"}${compactMoney(Math.abs(amount))}`;
+}
+
 function signedNumber(value) {
   const amount = Number(value || 0);
   return `${amount >= 0 ? "+" : ""}${paperNum.format(amount)}`;
@@ -1042,10 +2111,29 @@ function connectPaperSse() {
     }
   };
 
-  paperSse.addEventListener("target_hit", handleReloadEvent);
-  paperSse.addEventListener("stop_loss_hit", handleReloadEvent);
+  paperSse.addEventListener("target_hit", (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      const payload = data.payload || {};
+      playTactileChime();
+      showDeskToast("Target Achieved! 🎯", `Target Hit for ${payload.symbol || "Position"}. Trade auto-saved to Trading Journal!`, "🎯");
+    } catch (_) {}
+    loadPaperLab();
+  });
+
+  paperSse.addEventListener("stop_loss_hit", (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      const payload = data.payload || {};
+      playTactileChime();
+      showDeskToast("Stop Loss Triggered 🛑", `Stop Loss Hit for ${payload.symbol || "Position"}. Trade archived to Journal!`, "🛑");
+    } catch (_) {}
+    loadPaperLab();
+  });
+
   paperSse.addEventListener("subscribed", handleReloadEvent);
   paperSse.addEventListener("unsubscribed", handleReloadEvent);
+  paperSse.addEventListener("trade_mutation", handleReloadEvent);
   
   paperSse.onerror = (err) => {
     console.warn("SSE connection error, retrying in 5s...", err);
@@ -1055,7 +2143,7 @@ function connectPaperSse() {
 }
 
 function updateTradeLtpInUi(tradeId, ltp) {
-  const card = document.querySelector(`.live-alert-card[data-trade-id="${tradeId}"]`);
+  const card = document.querySelector(`[data-trade-id="${tradeId}"]`);
   if (!card) return;
   
   const openTrades = paperState.lab?.openTrades || [];
@@ -1072,47 +2160,47 @@ function updateTradeLtpInUi(tradeId, ltp) {
   const units = quantity * lotSize;
   const unrealized = (ltp - entry) * units;
   const movePct = entry ? ((ltp - entry) / entry) * 100 : 0;
-  const targetDistance = target ? target - ltp : 0;
-  const stopDistance = stop ? ltp - stop : 0;
+  const targetDistance = target ? Math.max(0, target - ltp) : 0;
+  const stopDistance = stop ? Math.max(0, ltp - stop) : 0;
   const targetSpan = target - entry;
-  const progress = targetSpan > 0 ? clamp(((ltp - entry) / targetSpan) * 100, 0, 100) : 0;
+  const progress = targetSpan > 0 ? clamp(((ltp - entry) / targetSpan) * 100, 0, 100) : 50;
   
   const ltpEl = card.querySelector(`[data-ltp-value="${tradeId}"]`);
   if (ltpEl) {
     ltpEl.textContent = paperMoney.format(ltp);
-    ltpEl.className = movePct >= 0 ? "gain" : "loss";
+    ltpEl.className = movePct >= 0 ? "m-val gain" : "m-val loss";
   }
   
   const movePctEl = card.querySelector(`[data-move-pct="${tradeId}"]`);
   if (movePctEl) {
     movePctEl.textContent = `${signedNumber(movePct)}%`;
-    movePctEl.className = movePct >= 0 ? "gain" : "loss";
+    movePctEl.className = movePct >= 0 ? "pos-pnl-pct gain" : "pos-pnl-pct loss";
   }
   
   const pnlEl = card.querySelector(`[data-unrealized-pnl="${tradeId}"]`);
   if (pnlEl) {
     pnlEl.textContent = signedMoney(unrealized);
-    pnlEl.className = unrealized >= 0 ? "gain" : "loss";
-  }
-  
-  const targetDistEl = card.querySelector(`[data-target-distance="${tradeId}"]`);
-  if (targetDistEl) {
-    targetDistEl.textContent = targetDistance >= 0 ? `${paperNum.format(targetDistance)} away` : "target crossed";
-  }
-  
-  const stopDistEl = card.querySelector(`[data-stop-distance="${tradeId}"]`);
-  if (stopDistEl) {
-    stopDistEl.textContent = stopDistance >= 0 ? `${paperNum.format(stopDistance)} buffer` : "stop crossed";
+    pnlEl.className = unrealized >= 0 ? "pos-pnl-val gain" : "pos-pnl-val loss";
   }
   
   const progTextEl = card.querySelector(`[data-progress-text="${tradeId}"]`);
   if (progTextEl) {
-    progTextEl.textContent = targetDistance >= 0 ? `${paperNum.format(targetDistance)} (${paperNum.format(progress)}%)` : `crossed (${paperNum.format(progress)}%)`;
+    progTextEl.textContent = `⚡ ${paperNum.format(progress)}% to Target`;
   }
   
   const progBarEl = card.querySelector(`[data-progress-bar="${tradeId}"]`);
   if (progBarEl) {
     progBarEl.style.width = `${progress}%`;
+  }
+
+  const cursorEl = card.querySelector(`[data-progress-cursor="${tradeId}"]`);
+  if (cursorEl) {
+    cursorEl.style.left = `${progress}%`;
+  }
+
+  const cursorTooltipEl = card.querySelector(`[data-cursor-tooltip="${tradeId}"]`);
+  if (cursorTooltipEl) {
+    cursorTooltipEl.textContent = `LTP ₹${paperNum.format(ltp)} (${signedNumber(movePct)}%)`;
   }
   
   const manualInput = card.querySelector(`[data-manual-price-id="${tradeId}"]`);
@@ -1127,6 +2215,249 @@ function incrementLots(step) {
   const current = Number(input.value || 1);
   input.value = String(Math.max(1, current + step));
   renderPaperRiskPreview();
+}
+
+async function loadCopilotSetupIntoForm(e) {
+  if (e && typeof e.preventDefault === "function") e.preventDefault();
+  const btn = document.getElementById("btnFastDeployLiveSignal") || document.getElementById("btnDeployCopilotPractice");
+  const origHtml = btn ? btn.innerHTML : "";
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span class="pad-spinner"></span> Deploying Live Upstox Signal...`;
+  }
+  setPaperStatus("Deploying Live Market Signal...");
+
+  try {
+    const res = await fetchJson("/api/live-alerts/auto-deploy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+
+    playTactileChime();
+    const trade = res?.item;
+    const optLabel = trade?.optionType === "CALL" ? "CE" : "PE";
+    showDeskToast(
+      "⚡ Live Upstox Trade Deployed",
+      `${trade?.symbol || "NIFTY"} · Live Entry @ ₹${Number(trade?.entryPrice || 100).toFixed(2)} (Active in Section 3)`,
+      "🚀"
+    );
+    setPaperStatus(`⚡ Live ${trade?.symbol || "NIFTY"} Position Deployed!`);
+
+    if (deskChannel) deskChannel.postMessage({ type: "TRADE_MUTATION" });
+    await loadPaperLab();
+
+    const activeSection = document.getElementById("sectionActiveTrades");
+    if (activeSection) {
+      activeSection.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  } catch (err) {
+    showDeskToast("Deployment Error", err.message, "❌");
+    setPaperStatus(err.message, true);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = origHtml;
+    }
+  }
+}
+
+function loadCopilotSetupIntoJournal() {
+  const journalLink = document.querySelector('a[href="/journal"], a[href="#journal"]');
+  if (journalLink) {
+    journalLink.click();
+  } else {
+    location.hash = "#journal";
+  }
+  
+  setTimeout(() => {
+    const journalForm = document.getElementById("tradeLogForm");
+    if (journalForm) {
+      journalForm.classList.remove("hidden");
+      journalForm.style.display = "block";
+      
+      const symbolInput = journalForm.querySelector('[name="symbol"]');
+      if (symbolInput) symbolInput.value = "NIFTY 24300 PE";
+      
+      const typeSel = journalForm.querySelector('[name="instrumentType"]');
+      if (typeSel) typeSel.value = "OPTION";
+      
+      const optionTypeSel = journalForm.querySelector('[name="optionType"]');
+      if (optionTypeSel) optionTypeSel.value = "PUT";
+      
+      const strikeInput = journalForm.querySelector('[name="strikePrice"]');
+      if (strikeInput) strikeInput.value = "24300";
+      
+      const entryInput = journalForm.querySelector('[name="entryPrice"]');
+      if (entryInput) entryInput.value = "83.00";
+      
+      const slInput = journalForm.querySelector('[name="stopLoss"]');
+      if (slInput) slInput.value = "75.00";
+      
+      const targetInput = journalForm.querySelector('[name="targetPrice"]');
+      if (targetInput) targetInput.value = "102.00";
+      
+      const qtyInput = journalForm.querySelector('[name="positionSize"]');
+      if (qtyInput) qtyInput.value = "65";
+      
+      const reasonInput = journalForm.querySelector('[name="entryReason"]');
+      if (reasonInput) reasonInput.value = "Trading Copilot Pro: 24,300 CE Institutional Wall Rejection";
+      
+      journalForm.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, 150);
+}
+
+function syncLiveDeskFromForm() {
+  if (!paperForm) return;
+  const optType = paperForm.querySelector('input[name="optionType"]:checked')?.value || "PUT";
+  const sym = paperForm.querySelector('[name="underlyingSymbol"]')?.value || "NIFTY";
+  const strike = paperForm.querySelector('[name="strikePrice"]')?.value || "24300";
+  const entry = Number(paperForm.querySelector('[name="currentPrice"]')?.value || 83);
+  const sl = Number(paperForm.querySelector('[name="stopLoss"]')?.value || 75);
+  const target = Number(paperForm.querySelector('[name="targetPrice"]')?.value || 102);
+
+  const fullSym = `${sym} ${strike} ${optType === "CALL" ? "CE" : "PE"}`;
+  const symEl = byId("deskLiveSymbol");
+  if (symEl) symEl.textContent = fullSym;
+
+  const ltpEl = byId("deskLiveLtp");
+  if (ltpEl) ltpEl.textContent = `LTP: ₹${entry.toFixed(2)}`;
+
+  const targetDist = Math.abs(target - entry);
+  const stopDist = Math.abs(entry - sl);
+
+  const targetDistEl = byId("deskLiveTargetDist");
+  if (targetDistEl) targetDistEl.textContent = `Distance: +${targetDist.toFixed(2)} pts`;
+
+  const stopDistEl = byId("deskLiveStopDist");
+  if (stopDistEl) stopDistEl.textContent = `Buffer: ${stopDist.toFixed(2)} pts`;
+
+  const markerEntry = byId("markerEntryText");
+  if (markerEntry) markerEntry.textContent = `Entry: ₹${entry.toFixed(2)}`;
+
+  const markerSl = byId("markerSlText");
+  if (markerSl) markerSl.textContent = `SL: ₹${sl.toFixed(2)}`;
+
+  const markerTarget = byId("markerTargetText");
+  if (markerTarget) markerTarget.textContent = `Target: ₹${target.toFixed(2)}`;
+
+  // Calculate Progress percentage
+  const totalRange = Math.max(0.1, target - sl);
+  const curPos = Math.max(0, Math.min(100, ((entry - sl) / totalRange) * 100));
+
+  const railFill = byId("deskRailFill");
+  if (railFill) railFill.style.width = `${curPos}%`;
+
+  const railPin = byId("deskRailPin");
+  if (railPin) railPin.style.left = `${curPos}%`;
+
+  // Check Indian Market Session Hours (09:15 to 15:30 IST)
+  updateDeskMarketHoursStatus();
+}
+
+function updateDeskMarketHoursStatus() {
+  const now = new Date();
+  // IST is UTC+5:30
+  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+  const istDate = new Date(utc + 3600000 * 5.5);
+  const day = istDate.getDay(); // 0 = Sun, 6 = Sat
+  const hour = istDate.getHours();
+  const min = istDate.getMinutes();
+  const timeInMinutes = hour * 60 + min;
+
+  const isWeekday = day >= 1 && day <= 5;
+  const isMarketOpen = isWeekday && timeInMinutes >= (9 * 60 + 15) && timeInMinutes <= (15 * 60 + 30);
+
+  const badge = byId("deskMarketStatusBadge");
+  if (badge) {
+    if (isMarketOpen) {
+      badge.textContent = "🟢 Live Market (09:15–15:30 IST)";
+      badge.className = "desk-live-status-pill";
+      badge.style.background = "";
+      badge.style.borderColor = "";
+      badge.style.color = "";
+    } else {
+      badge.textContent = "🌙 Market Closed (Will run next session)";
+      badge.className = "desk-live-status-pill text-muted-clean";
+      badge.style.background = "rgba(255, 255, 255, 0.06)";
+      badge.style.borderColor = "rgba(255, 255, 255, 0.12)";
+      badge.style.color = "#94a3b8";
+    }
+  }
+}
+
+function initLiveDeskButtons() {
+  const btnExit = byId("btnDeskImmediateExit");
+  if (btnExit) {
+    btnExit.addEventListener("click", async () => {
+      const openTrades = paperState.lab?.openTrades || [];
+      if (openTrades.length > 0) {
+        const firstTrade = openTrades[0];
+        setPaperStatus(`Closing ${firstTrade.symbol} immediately...`);
+        try {
+          await fetchJson(`/api/live-alerts/trades/${firstTrade.id}/close`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ price: firstTrade.lastMarkPrice || firstTrade.entryPrice, reason: "MANUAL_EXIT" }),
+          });
+          await loadPaperLab();
+          setPaperStatus("Trade closed at market price!");
+        } catch (e) {
+          setPaperStatus(e.message, true);
+        }
+      } else {
+        setPaperStatus("⚡ No open practice trade to exit. Deploy a trade first!");
+      }
+    });
+  }
+
+  const btnEditSl = byId("btnDeskEditStopLoss");
+  if (btnEditSl) {
+    btnEditSl.addEventListener("click", () => {
+      const slInput = byId("deskStopLoss");
+      if (slInput) {
+        slInput.focus();
+        slInput.select();
+        setPaperStatus("✏️ Enter your new Stop Loss price in the left form");
+      }
+    });
+  }
+
+  const btnEditTarget = byId("btnDeskEditTarget");
+  if (btnEditTarget) {
+    btnEditTarget.addEventListener("click", () => {
+      const targetInput = byId("deskTargetPrice");
+      if (targetInput) {
+        targetInput.focus();
+        targetInput.select();
+        setPaperStatus("✏️ Enter your new Target price in the left form");
+      }
+    });
+  }
+}
+
+function initWeekendMarketSimulation() {
+  if (simulationInterval) clearInterval(simulationInterval);
+  
+  simulationInterval = setInterval(() => {
+    if (document.documentElement.dataset.activeView !== "paper") return;
+    const openTrades = paperState.lab?.openTrades || [];
+    if (!openTrades.length) return;
+
+    const active = openTrades[0];
+    const currentMark = Number(active.lastMarkPrice || active.entryPrice || 83);
+    const tickDelta = (Math.random() - 0.48) * 0.40;
+    const newPrice = Math.max(0.05, Number((currentMark + tickDelta).toFixed(2)));
+    
+    active.lastMarkPrice = newPrice;
+    syncLiveDeskFromForm();
+
+    if (active.targetPrice && newPrice >= Number(active.targetPrice)) {
+      setPaperStatus("🎯 Target Hit in Live Tracking!");
+    } else if (active.stopLoss && newPrice <= Number(active.stopLoss)) {
+      setPaperStatus("🛑 Stop Loss Protected in Live Tracking!");
+    }
+  }, 2500);
 }
 
 

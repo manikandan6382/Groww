@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -11,11 +12,14 @@ const publicDir = path.join(projectRoot, "public");
 
 loadDotEnv(path.join(projectRoot, ".env"));
 
-const port = Number(process.env.PORT || 3000);
+const port = Number(process.env.PORT || 3003);
 const kiteApiBase = "https://api.kite.trade";
 const alphaApiBase = "https://www.alphavantage.co/query";
+const upstoxTokenUrl = "https://api.upstox.com/v2/login/authorization/token";
 const sessionFile = path.resolve(projectRoot, process.env.KITE_SESSION_FILE || ".zerodha-session.json");
+const upstoxSessionFile = path.resolve(projectRoot, process.env.UPSTOX_SESSION_FILE || path.join("data", "upstox-session.json"));
 const alphaCache = new Map();
+const quotesCache = new Map();
 const instrumentCache = { savedAt: 0, payload: null };
 
 const mimeTypes = {
@@ -58,6 +62,10 @@ const server = http.createServer(async (req, res) => {
       await sendUpstoxCallback(res, url);
       return;
     }
+    if (url.pathname === "/kite/callback" || url.pathname === "/callback" || (url.searchParams.has("request_token") && url.pathname === "/")) {
+      await sendKiteCallback(res, url);
+      return;
+    }
     await serveStatic(url.pathname, res);
   } catch (error) {
     await sendJson(res, { error: error.message }, error.status || 500);
@@ -69,17 +77,28 @@ server.listen(port, () => {
 });
 
 async function getPortfolio() {
-  const [holdings, positions, margins] = await Promise.all([
-    kiteRequest("/portfolio/holdings"),
-    kiteRequest("/portfolio/positions"),
-    kiteRequest("/user/margins/equity"),
-  ]);
-  return {
-    updatedAt: new Date().toISOString(),
-    holdings: holdings.data,
-    positions: positions.data,
-    margins: margins.data,
-  };
+  try {
+    const [holdings, positions, margins] = await Promise.all([
+      kiteRequest("/portfolio/holdings"),
+      kiteRequest("/portfolio/positions"),
+      kiteRequest("/user/margins/equity"),
+    ]);
+    return {
+      updatedAt: new Date().toISOString(),
+      holdings: holdings.data || [],
+      positions: positions.data || [],
+      margins: margins.data || { net: 100000, available: 100000, utilised: 0 },
+    };
+  } catch (error) {
+    return {
+      updatedAt: new Date().toISOString(),
+      holdings: [],
+      positions: [],
+      margins: { net: 100000, available: 100000, utilised: 0 },
+      isKiteOffline: true,
+      message: error.message,
+    };
+  }
 }
 
 async function getYahooChart(url) {
@@ -95,29 +114,39 @@ async function getYahooChart(url) {
 
 async function getYahooQuotes(url) {
   const symbols = url.searchParams.get("symbols") || "^NSEI,^BSESN,RELIANCE.NS,HDFCBANK.NS,TCS.NS,INFY.NS";
+  const now = Date.now();
+  const rawList = symbols
+    .split(",")
+    .map((symbol) => symbol.trim())
+    .filter(Boolean);
+
   const settled = await Promise.allSettled(
-    symbols
-      .split(",")
-      .map((symbol) => symbol.trim())
-      .filter(Boolean)
-      .map(async (symbol) => {
-        const endpoint = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`);
-        endpoint.searchParams.set("range", "5d");
-        endpoint.searchParams.set("interval", "1d");
-        const data = await fetchJson(endpoint);
-        const chart = data.chart?.result?.[0];
-        const meta = chart?.meta || {};
-        const closes = chart?.indicators?.quote?.[0]?.close?.filter((value) => typeof value === "number") || [];
-        const last = Number(meta.regularMarketPrice ?? closes.at(-1) ?? 0);
-        const previous = Number(meta.chartPreviousClose ?? closes.at(-2) ?? last);
-        const change = last - previous;
-        return {
-          symbol,
-          regularMarketPrice: last,
-          regularMarketChange: change,
-          regularMarketChangePercent: previous ? (change / previous) * 100 : 0,
-        };
-      }),
+    rawList.map(async (symbol) => {
+      const cached = quotesCache.get(symbol);
+      if (cached && now - cached.savedAt < 3500) {
+        return cached.data;
+      }
+      const endpoint = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`);
+      endpoint.searchParams.set("range", "5d");
+      endpoint.searchParams.set("interval", "1d");
+      const data = await fetchJson(endpoint);
+      const chart = data.chart?.result?.[0];
+      const meta = chart?.meta || {};
+      const closes = chart?.indicators?.quote?.[0]?.close?.filter((value) => typeof value === "number") || [];
+      const last = Number(meta.regularMarketPrice ?? closes.at(-1) ?? 0);
+      const previous = Number(meta.chartPreviousClose ?? closes.at(-2) ?? last);
+      const change = last - previous;
+      const quoteObj = {
+        symbol,
+        regularMarketPrice: last,
+        regularMarketChange: change,
+        regularMarketChangePercent: previous ? (change / previous) * 100 : 0,
+      };
+      if (last > 0) {
+        quotesCache.set(symbol, { savedAt: now, data: quoteObj });
+      }
+      return quoteObj;
+    }),
   );
   const result = settled.filter((item) => item.status === "fulfilled").map((item) => item.value);
   return { quoteResponse: { result } };
@@ -188,12 +217,22 @@ async function searchStocks(url) {
   const query = normalizeSearch(url.searchParams.get("q") || "");
   const limit = Math.max(1, Math.min(Number(url.searchParams.get("limit") || 20), 50));
   const universe = await getStockUniverse();
-  const ranked = universe.items
+  const ranked = (universe.items || [])
     .map((item) => ({ item, score: scoreStockMatch(item, query) }))
     .filter((entry) => (query ? entry.score < 99 : true))
     .sort((a, b) => a.score - b.score || a.item.tradingsymbol.localeCompare(b.item.tradingsymbol))
     .slice(0, limit)
     .map((entry) => entry.item);
+
+  // If query is valid and not already in ranked list, offer direct symbol addition
+  if (query && query.length >= 2 && !ranked.some(item => item.tradingsymbol.toUpperCase() === query)) {
+    ranked.push({
+      tradingsymbol: query,
+      name: `${query} (Direct NSE Ticker)`,
+      exchange: "NSE",
+      yahooSymbol: `${query}.NS`,
+    });
+  }
 
   return {
     source: universe.source,
@@ -205,6 +244,21 @@ async function searchStocks(url) {
 async function sendUpstoxCallback(res, url) {
   const code = url.searchParams.get("code") || "";
   const error = url.searchParams.get("error") || url.searchParams.get("message") || "";
+  let status = "";
+  let statusTone = "ok";
+  let tokenSaved = false;
+
+  if (code && !error) {
+    try {
+      await exchangeUpstoxCode(code);
+      tokenSaved = true;
+      status = "Access token saved. Live Alerts can now watch Upstox LTP automatically.";
+    } catch (callbackError) {
+      statusTone = "error";
+      status = callbackError.message;
+    }
+  }
+
   const escapedCode = escapeHtml(code);
   const body = `<!doctype html>
 <html lang="en">
@@ -216,6 +270,7 @@ async function sendUpstoxCallback(res, url) {
       body{margin:0;min-height:100vh;display:grid;place-items:center;background:#020812;color:#f4f8ff;font-family:Inter,Segoe UI,Arial,sans-serif}
       main{width:min(620px,calc(100vw - 32px));border:1px solid rgba(0,213,255,.28);border-radius:18px;padding:28px;background:linear-gradient(145deg,rgba(8,28,48,.94),rgba(3,13,24,.96));box-shadow:0 24px 70px rgba(0,0,0,.42)}
       span{display:inline-flex;border-radius:999px;padding:7px 10px;color:#00f5c4;background:rgba(0,245,196,.1);font-size:12px;font-weight:800}
+      .error{color:#ff5570;background:rgba(255,85,112,.12)}
       h1{margin:14px 0 10px;font-size:32px}
       p{color:#9cafc4;line-height:1.6}
       code{display:block;margin-top:16px;border:1px solid rgba(0,213,255,.22);border-radius:12px;padding:14px;background:#050b14;color:#00d5ff;font-size:20px;word-break:break-all}
@@ -224,10 +279,10 @@ async function sendUpstoxCallback(res, url) {
   </head>
   <body>
     <main>
-      <span>${error ? "Upstox error" : "Upstox login"}</span>
-      <h1>${error ? "Authorization failed" : "Authorization code received"}</h1>
-      <p>${error ? escapeHtml(error) : "Copy this short-lived code and use it to generate the Upstox access token. Do not share your API secret."}</p>
-      ${code ? `<code>${escapedCode}</code>` : ""}
+      <span class="${error || statusTone === "error" ? "error" : ""}">${error ? "Upstox error" : tokenSaved ? "Upstox connected" : "Upstox login"}</span>
+      <h1>${error || statusTone === "error" ? "Authorization needs attention" : tokenSaved ? "Live alerts are ready" : "Authorization code received"}</h1>
+      <p>${error ? escapeHtml(error) : status ? escapeHtml(status) : "Code received, but token exchange did not run. Check your Upstox env values."}</p>
+      ${code && !tokenSaved ? `<code>${escapedCode}</code>` : ""}
       <a href="/paper-lab">Return to Trade Lab</a>
     </main>
   </body>
@@ -236,8 +291,154 @@ async function sendUpstoxCallback(res, url) {
   res.end(body);
 }
 
+async function exchangeUpstoxCode(code) {
+  const apiKey = requiredEnv("UPSTOX_API_KEY");
+  const apiSecret = requiredEnv("UPSTOX_API_SECRET");
+  const redirectUri = process.env.UPSTOX_REDIRECT_URI || "http://127.0.0.1:3003/upstox/callback";
+  const body = new URLSearchParams({
+    code,
+    client_id: apiKey,
+    client_secret: apiSecret,
+    redirect_uri: redirectUri,
+    grant_type: "authorization_code",
+  });
+
+  const data = await fetchJson(upstoxTokenUrl, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: body.toString(),
+  });
+
+  if (!data?.access_token) {
+    throw new Error("Upstox did not return an access token. Check API key, secret, and redirect URL.");
+  }
+
+  const session = {
+    access_token: data.access_token,
+    token_type: data.token_type || "Bearer",
+    user_id: data.user_id || "",
+    created_at: new Date().toISOString(),
+    source: "upstox_oauth",
+  };
+  fs.mkdirSync(path.dirname(upstoxSessionFile), { recursive: true });
+  fs.writeFileSync(upstoxSessionFile, JSON.stringify(session, null, 2));
+  process.env.UPSTOX_ACCESS_TOKEN = data.access_token;
+  return session;
+}
+
+async function sendKiteCallback(res, url) {
+  const requestToken = url.searchParams.get("request_token") || "";
+  const statusParam = url.searchParams.get("status") || "";
+  const errorParam = url.searchParams.get("message") || "";
+  let message = "";
+  let statusTone = "ok";
+  let tokenSaved = false;
+  let sessionData = null;
+
+  if (statusParam === "error" || errorParam) {
+    statusTone = "error";
+    message = errorParam || "Kite authorization was denied or failed.";
+  } else if (requestToken) {
+    try {
+      sessionData = await exchangeKiteRequestToken(requestToken);
+      tokenSaved = true;
+      message = `Access token saved for ${sessionData.user_name || sessionData.user_id || "Zerodha User"}. Live portfolio and holdings are now connected!`;
+    } catch (err) {
+      statusTone = "error";
+      message = err.message;
+    }
+  }
+
+  const escapedToken = escapeHtml(requestToken);
+  const body = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Zerodha Kite Callback - PortfolioX</title>
+    <style>
+      body{margin:0;min-height:100vh;display:grid;place-items:center;background:#020812;color:#f4f8ff;font-family:Inter,Segoe UI,Arial,sans-serif}
+      main{width:min(620px,calc(100vw - 32px));border:1px solid rgba(0,213,255,.28);border-radius:18px;padding:28px;background:linear-gradient(145deg,rgba(8,28,48,.94),rgba(3,13,24,.96));box-shadow:0 24px 70px rgba(0,0,0,.42)}
+      span{display:inline-flex;border-radius:999px;padding:7px 10px;color:#00f5c4;background:rgba(0,245,196,.1);font-size:12px;font-weight:800}
+      .error{color:#ff5570;background:rgba(255,85,112,.12)}
+      h1{margin:14px 0 10px;font-size:32px}
+      p{color:#9cafc4;line-height:1.6}
+      code{display:block;margin-top:16px;border:1px solid rgba(0,213,255,.22);border-radius:12px;padding:14px;background:#050b14;color:#00d5ff;font-size:16px;word-break:break-all}
+      a{display:inline-flex;margin-top:18px;color:#00d5ff;text-decoration:none;font-weight:bold;padding:10px 18px;border:1px solid #00d5ff;border-radius:8px}
+    </style>
+  </head>
+  <body>
+    <main>
+      <span class="${statusTone === "error" ? "error" : ""}">${statusTone === "error" ? "Zerodha Error" : tokenSaved ? "Zerodha Connected" : "Zerodha Login"}</span>
+      <h1>${statusTone === "error" ? "Authorization needs attention" : tokenSaved ? "Zerodha Portfolio Ready" : "Request Token Received"}</h1>
+      <p>${escapeHtml(message || "Token received, but token exchange did not run.")}</p>
+      ${requestToken && !tokenSaved ? `<code>${escapedToken}</code>` : ""}
+      <a href="/">Open Portfolio Dashboard</a>
+    </main>
+  </body>
+</html>`;
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  res.end(body);
+}
+
+async function exchangeKiteRequestToken(requestToken) {
+  const apiKey = requiredEnv("KITE_API_KEY");
+  const apiSecret = requiredEnv("KITE_API_SECRET");
+  const checksum = crypto
+    .createHash("sha256")
+    .update(`${apiKey}${requestToken}${apiSecret}`)
+    .digest("hex");
+
+  const body = new URLSearchParams({
+    api_key: apiKey,
+    request_token: requestToken,
+    checksum,
+  });
+
+  const response = await fetch(`${kiteApiBase}/session/token`, {
+    method: "POST",
+    headers: {
+      "X-Kite-Version": "3",
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+      "User-Agent": "Mozilla/5.0 finance-dashboard",
+    },
+    body: body.toString(),
+  });
+
+  const text = await response.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = { raw: text };
+  }
+
+  if (!response.ok || data?.status === "error" || !data?.data?.access_token) {
+    throw new Error(data?.message || response.statusText || "Failed to exchange Kite request_token for access_token.");
+  }
+
+  const session = {
+    api_key: apiKey,
+    access_token: data.data.access_token,
+    public_token: data.data.public_token,
+    user_id: data.data.user_id,
+    user_name: data.data.user_name,
+    login_time: data.data.login_time,
+    saved_at: new Date().toISOString(),
+  };
+
+  fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+  fs.writeFileSync(sessionFile, JSON.stringify(session, null, 2));
+  process.env.KITE_ACCESS_TOKEN = data.data.access_token;
+  return session;
+}
+
 async function getStockUniverse() {
-  if (instrumentCache.payload && Date.now() - instrumentCache.savedAt < 12 * 60 * 60 * 1000) {
+  if (instrumentCache.payload && Array.isArray(instrumentCache.payload.items) && instrumentCache.payload.items.length > 0 && Date.now() - instrumentCache.savedAt < 12 * 60 * 60 * 1000) {
     return { ...instrumentCache.payload, cached: true };
   }
 
@@ -265,7 +466,7 @@ async function getStockUniverse() {
   }
 
   const fallback = {
-    source: "Built-in free fallback",
+    source: "Built-in NSE/BSE Universe",
     items: fallbackStocks.map((item) => ({
       ...item,
       yahooSymbol: toYahooInstrumentSymbol(item.tradingsymbol, item.exchange),
@@ -491,6 +692,36 @@ const fallbackStocks = [
   { tradingsymbol: "NIFTYBEES", name: "Nippon India ETF Nifty BeES", exchange: "NSE" },
   { tradingsymbol: "BANKBEES", name: "Nippon India ETF Bank BeES", exchange: "NSE" },
   { tradingsymbol: "JUNIORBEES", name: "Nippon India ETF Junior BeES", exchange: "NSE" },
+  { tradingsymbol: "ZOMATO", name: "Zomato Limited", exchange: "NSE" },
+  { tradingsymbol: "PAYTM", name: "One 97 Communications", exchange: "NSE" },
+  { tradingsymbol: "JIOFIN", name: "Jio Financial Services", exchange: "NSE" },
+  { tradingsymbol: "HAL", name: "Hindustan Aeronautics", exchange: "NSE" },
+  { tradingsymbol: "BEL", name: "Bharat Electronics", exchange: "NSE" },
+  { tradingsymbol: "VEDL", name: "Vedanta Limited", exchange: "NSE" },
+  { tradingsymbol: "TRENT", name: "Trent Limited", exchange: "NSE" },
+  { tradingsymbol: "IRCTC", name: "Indian Railway Catering and Tourism Corp", exchange: "NSE" },
+  { tradingsymbol: "IRFC", name: "Indian Railway Finance Corporation", exchange: "NSE" },
+  { tradingsymbol: "RVNL", name: "Rail Vikas Nigam Limited", exchange: "NSE" },
+  { tradingsymbol: "IREDA", name: "Indian Renewable Energy Development Agency", exchange: "NSE" },
+  { tradingsymbol: "SUZLON", name: "Suzlon Energy", exchange: "NSE" },
+  { tradingsymbol: "YESBANK", name: "Yes Bank", exchange: "NSE" },
+  { tradingsymbol: "IDEA", name: "Vodafone Idea", exchange: "NSE" },
+  { tradingsymbol: "CDSL", name: "Central Depository Services (India)", exchange: "NSE" },
+  { tradingsymbol: "BSE", name: "BSE Limited", exchange: "NSE" },
+  { tradingsymbol: "BHEL", name: "Bharat Heavy Electricals", exchange: "NSE" },
+  { tradingsymbol: "SAIL", name: "Steel Authority of India", exchange: "NSE" },
+  { tradingsymbol: "NHPC", name: "NHPC Limited", exchange: "NSE" },
+  { tradingsymbol: "SJVN", name: "SJVN Limited", exchange: "NSE" },
+  { tradingsymbol: "PFC", name: "Power Finance Corporation", exchange: "NSE" },
+  { tradingsymbol: "RECLTD", name: "REC Limited", exchange: "NSE" },
+  { tradingsymbol: "DMART", name: "Avenue Supermarts", exchange: "NSE" },
+  { tradingsymbol: "POLYCAB", name: "Polycab India", exchange: "NSE" },
+  { tradingsymbol: "VBL", name: "Varun Beverages", exchange: "NSE" },
+  { tradingsymbol: "CHOLAFIN", name: "Cholamandalam Investment and Finance", exchange: "NSE" },
+  { tradingsymbol: "PIDILITIND", name: "Pidilite Industries", exchange: "NSE" },
+  { tradingsymbol: "HAVELLS", name: "Havells India", exchange: "NSE" },
+  { tradingsymbol: "DLF", name: "DLF Limited", exchange: "NSE" },
+  { tradingsymbol: "GODREJCP", name: "Godrej Consumer Products", exchange: "NSE" },
   { tradingsymbol: "KTKBANK", name: "Karnataka Bank", exchange: "NSE" },
   { tradingsymbol: "SOUTHBANK", name: "The South Indian Bank", exchange: "NSE" },
 ];
