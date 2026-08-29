@@ -1,0 +1,24 @@
+// ==========================================
+// Master Styles: index.scss
+// Modern Sass @use Partials + Tailwind Directives
+// ==========================================
+
+// 1. SCSS Partials (Must be at the very top of the stylesheet)
+@use "./partials/variables" as *;
+@use "./partials/glass" as *;
+@use "./partials/typography" as *;
+@use "./partials/animations" as *;
+@use "./partials/layout" as *;
+
+// 2. Tailwind Directives
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+// 3. Global Base Reset
+body {
+  background-color: var(--bg-obsidian);
+  color: #f8fafc;
+  min-height: 100vh;
+  overflow-x: hidden;
+}

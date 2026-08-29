@@ -1,0 +1,65 @@
+// ==========================================
+// SCSS Partial: _typography.scss
+// Monospace Tabular Figures & Type System
+// ==========================================
+
+body {
+  font-family: "Outfit", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+// Financial Tabular Figures Invariant (Prevents number shaking/jitter on ticks)
+.tabular-nums,
+.font-mono,
+[data-tabular="true"] {
+  font-family: "Roboto Mono", "SF Mono", "Fira Code", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.kpi-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #94a3b8;
+}
+
+.kpi-value {
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1.2;
+  color: #f8fafc;
+}
+
+.financial-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 700;
+  font-family: "Roboto Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+
+  &.gain {
+    background: var(--signal-gain-bg);
+    color: var(--signal-gain);
+    border: 1px solid var(--signal-gain-border);
+  }
+
+  &.loss {
+    background: var(--signal-loss-bg);
+    color: var(--signal-loss);
+    border: 1px solid var(--signal-loss-border);
+  }
+
+  &.warn {
+    background: var(--signal-warn-bg);
+    color: var(--signal-warn);
+    border: 1px solid var(--signal-warn-border);
+  }
+}

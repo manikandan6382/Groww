@@ -1,0 +1,100 @@
+// ==========================================
+// SCSS Partial: _layout.scss
+// AppShell, Flex Budgeting, Mobile iOS Ergonomics
+// ==========================================
+
+// Global Mobile Native Optimization
+html, body {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  overscroll-behavior-y: contain;
+}
+
+// Custom Obsidian Scrollbar
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(7, 11, 20, 0.5);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-full);
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.22);
+  }
+}
+
+// Topbar Ticker Strip Budget (Enforce zero wrap & zero overflow)
+.ticker-strip-dock {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+
+  .ticker-badge-capsule {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+}
+
+// 12-Column Rapid Keyboard Layout
+.rapid-logger-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 12px;
+}
+
+// Clean Empty State Container (Prevents phantom cards collision)
+.empty-trades-dock {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  text-align: center;
+  border-radius: var(--radius-lg);
+  border: 1px dashed var(--border-subtle);
+  background: rgba(255, 255, 255, 0.01);
+}
+
+// Apple Spatial Studio Spotlight & Safe Areas
+.apple-spatial-shell {
+  min-height: 100dvh;
+  background-color: var(--bg-obsidian);
+  background-image: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(56, 189, 248, 0.12), transparent 70%);
+  padding-bottom: max(80px, env(safe-area-inset-bottom));
+  padding-top: max(12px, env(safe-area-inset-top));
+}
+
+// Apple Native iOS Touch Compression
+.ios-touch-item {
+  transition: transform 0.16s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.16s ease;
+  will-change: transform;
+  
+  &:active {
+    transform: scale(0.95);
+    opacity: 0.85;
+  }
+}
+
+// Floating Mobile Glass Tab Bar
+.ios-floating-tab-bar {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  backdrop-filter: blur(28px) saturate(190%);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  background: rgba(10, 15, 28, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}

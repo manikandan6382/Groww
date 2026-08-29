@@ -9,6 +9,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, "..");
 const publicDir = path.join(projectRoot, "public");
+const distDir = path.join(projectRoot, "dist");
+const staticDir = fs.existsSync(path.join(distDir, "index.html")) ? distDir : publicDir;
 
 loadDotEnv(path.join(projectRoot, ".env"));
 
@@ -728,14 +730,14 @@ const fallbackStocks = [
 
 async function serveStatic(pathname, res) {
   const safePath = pathname === "/" ? "/index.html" : decodeURIComponent(pathname);
-  const filePath = path.resolve(publicDir, `.${safePath}`);
-  if (!filePath.startsWith(publicDir)) {
+  const filePath = path.resolve(staticDir, `.${safePath}`);
+  if (!filePath.startsWith(staticDir)) {
     res.writeHead(403);
     res.end("Forbidden");
     return;
   }
   const exists = fs.existsSync(filePath) && fs.statSync(filePath).isFile();
-  const target = exists ? filePath : path.join(publicDir, "index.html");
+  const target = exists ? filePath : path.join(staticDir, "index.html");
   const extension = path.extname(target);
   res.writeHead(200, {
     "Content-Type": mimeTypes[extension] || "application/octet-stream",

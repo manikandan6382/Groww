@@ -1,0 +1,111 @@
+// PortfolioX Elite Spatial Design System Tokens
+:root {
+  color-scheme: dark;
+  --bg: #070b14;
+  --sidebar: #0b1120;
+  --panel: #0e172a;
+  --panel-2: #14223e;
+  --panel-glass: rgba(14, 23, 42, 0.85);
+  --line: rgba(255, 255, 255, 0.08);
+  --line-soft: rgba(255, 255, 255, 0.04);
+  --text: #f8fafc;
+  --text-muted: #94a3b8;
+  --text-dim: #64748b;
+  --cyan: #38bdf8;
+  --blue: #3b82f6;
+  --green: #10b981;
+  --green-glow: #34d399;
+  --red: #f43f5e;
+  --red-glow: #fb7185;
+  --gold: #f59e0b;
+  --purple: #8b5cf6;
+  --accent-rgb: 56, 189, 248;
+  --green-rgb: 16, 185, 129;
+  --red-rgb: 244, 63, 94;
+  --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #38bdf8 100%);
+  --gain-gradient: linear-gradient(135deg, #10b981 0%, #34d399 100%);
+  --shadow-main: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 20px 50px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 30px rgba(56, 189, 248, 0.15);
+  --radius-lg: 20px;
+  --radius-md: 14px;
+  --radius-sm: 8px;
+  --radius-pill: 9999px;
+  --font-sans: "Outfit", "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: "Roboto Mono", "SF Mono", monospace;
+}
+
+:root[data-theme="emerald"] {
+  --bg: #04120e;
+  --sidebar: #061914;
+  --panel: #0a241d;
+  --panel-2: #0f332a;
+  --panel-glass: rgba(10, 36, 29, 0.85);
+  --line: rgba(52, 211, 153, 0.18);
+  --line-soft: rgba(52, 211, 153, 0.06);
+  --cyan: #34d399;
+  --blue: #10b981;
+  --green: #6ee7b7;
+  --accent-rgb: 52, 211, 153;
+  --accent-gradient: linear-gradient(135deg, #059669 0%, #34d399 100%);
+  --shadow-glow: 0 0 30px rgba(52, 211, 153, 0.15);
+}
+
+:root[data-theme="violet"] {
+  --bg: #0b0818;
+  --sidebar: #100c22;
+  --panel: #171233;
+  --panel-2: #211a47;
+  --panel-glass: rgba(23, 18, 51, 0.85);
+  --line: rgba(168, 85, 247, 0.18);
+  --line-soft: rgba(168, 85, 247, 0.06);
+  --cyan: #c084fc;
+  --blue: #818cf8;
+  --green: #34d399;
+  --accent-rgb: 192, 132, 252;
+  --accent-gradient: linear-gradient(135deg, #6366f1 0%, #c084fc 100%);
+  --shadow-glow: 0 0 30px rgba(192, 132, 252, 0.15);
+}
+
+// Micro-animations and pulse utilities
+.pulse-beacon {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  animation: pulseBeacon 2s infinite;
+}
+
+@keyframes pulseBeacon {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+.price-tick-flash-up {
+  animation: flashGreen 0.4s ease-out;
+}
+
+.price-tick-flash-down {
+  animation: flashRed 0.4s ease-out;
+}
+
+@keyframes flashGreen {
+  0% { color: #34d399; text-shadow: 0 0 8px rgba(52, 211, 153, 0.6); }
+  100% { color: inherit; text-shadow: none; }
+}
+
+@keyframes flashRed {
+  0% { color: #fb7185; text-shadow: 0 0 8px rgba(251, 113, 133, 0.6); }
+  100% { color: inherit; text-shadow: none; }
+}
