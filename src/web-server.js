@@ -764,3 +764,29 @@ function loadDotEnv(filePath) {
     if (!process.env[key]) process.env[key] = value;
   }
 }
+
+server.on("error", (err) => {
+  console.error("🛑 Server HTTP Error:", err);
+});
+
+process.stdin.resume();
+
+process.on("exit", (code) => {
+  console.log(`🛑 Node Process exiting with code: ${code}`);
+});
+
+process.on("SIGINT", () => {
+  console.log("🛑 SIGINT received");
+});
+
+process.on("SIGTERM", () => {
+  console.log("🛑 SIGTERM received");
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("⚠️ Unhandled Rejection at:", promise, "reason:", reason);
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("🛑 Uncaught Exception:", error);
+});

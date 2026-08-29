@@ -107,18 +107,57 @@ export async function handleTradingRequest(req, res, url) {
 
   if (req.method === "POST" && ["/api/paper-lab/trades", "/api/live-alerts/trades"].includes(url.pathname)) {
     const body = await readJsonBody(req);
-    const isSandbox = body.isSandbox === true || body.isSandbox === "true" || !body.personalNotes?.includes("UPSTOX_TOKEN");
+    const feedMode = String(body.feedMode || (body.isManual ? "MANUAL" : "LIVE")).toUpperCase();
+    const isManual = feedMode === "MANUAL";
+    const modeTag = isManual ? "[MANUAL_ONLY]" : "[LIVE_FEED]";
+    const cleanNotes = (body.personalNotes || "").replace(/\[(?:SANDBOX_MANUAL|MANUAL_ONLY|LIVE_FEED)\]/g, "").trim();
+    
     const payload = {
       ...body,
-      personalNotes: isSandbox ? `[SANDBOX_MANUAL] ${body.personalNotes || "Manual Practice Trade"}` : body.personalNotes
+      feedMode,
+      personalNotes: `${modeTag} ${cleanNotes || (isManual ? "Manual Simulator Trade" : "Live Upstox Practice Trade")}`.trim()
     };
+    
     const trade = createPaperTrade(payload);
-    if (!isSandbox) {
-      ensurePaperEngineStarted();
+    ensurePaperEngineStarted();
+    
+    if (!isManual) {
       await paperTradeEngine.syncTrade(trade.id);
     }
-    paperTradeEngine.publish("trade_mutation", { action: "create", tradeId: trade.id });
-    sendJson(res, { item: trade, isSandbox }, 201);
+    
+    paperTradeEngine.publish("trade_mutation", { action: "create", tradeId: trade.id, feedMode });
+    sendJson(res, { item: trade, feedMode, isManual }, 201);
+    return true;
+  }
+
+  const paperToggleModeMatch = url.pathname.match(/^\/api\/(?:paper-lab|live-alerts)\/trades\/(\d+)\/toggle-mode$/);
+  if (req.method === "POST" && paperToggleModeMatch) {
+    const id = Number(paperToggleModeMatch[1]);
+    const trade = getTradeById(id);
+    if (!trade) {
+      sendJson(res, { error: "Trade not found" }, 404);
+      return true;
+    }
+    const currentNotes = trade.personalNotes || "";
+    const isCurrentlyManual = currentNotes.includes("[MANUAL_ONLY]");
+    const newMode = isCurrentlyManual ? "LIVE" : "MANUAL";
+    const newTag = isCurrentlyManual ? "[LIVE_FEED]" : "[MANUAL_ONLY]";
+    const updatedNotes = `${newTag} ${currentNotes.replace(/\[(?:SANDBOX_MANUAL|MANUAL_ONLY|LIVE_FEED)\]/g, "").trim()}`.trim();
+    
+    const db = getDb();
+    db.prepare("INSERT INTO trade_journal (trade_id, personal_notes, updated_at) VALUES (?, ?, datetime('now')) ON CONFLICT(trade_id) DO UPDATE SET personal_notes = excluded.personal_notes, updated_at = datetime('now')").run(id, updatedNotes);
+    trade.personalNotes = updatedNotes;
+    trade.feedMode = newMode;
+    
+    ensurePaperEngineStarted();
+    if (newMode === "LIVE") {
+      await paperTradeEngine.ensureTradeSubscription(trade, { force: true });
+    } else {
+      paperTradeEngine.removeTrade(id);
+    }
+    
+    paperTradeEngine.publish("trade_mutation", { action: "toggle_mode", tradeId: id, feedMode: newMode });
+    sendJson(res, { success: true, id, feedMode: newMode, message: `Switched to ${newMode === "LIVE" ? "🟢 Live Upstox Stream" : "🎮 Manual Simulator"}` });
     return true;
   }
 
@@ -198,6 +237,25 @@ export async function handleTradingRequest(req, res, url) {
     return true;
   }
 
+  if (req.method === "POST" && ["/api/paper-lab/square-off-all", "/api/live-alerts/square-off-all"].includes(url.pathname)) {
+    const db = getDb();
+    const openTrades = db.prepare("SELECT * FROM trades WHERE trade_mode = 'PAPER' AND status = 'OPEN'").all();
+    const closedResults = [];
+    for (const trade of openTrades) {
+      try {
+        const markPrice = Number(trade.last_mark_price || trade.entry_price);
+        const result = closePaperTrade(trade.id, { price: markPrice, reason: "MANUAL_EXIT" });
+        paperTradeEngine.removeTrade(trade.id);
+        closedResults.push(result);
+      } catch (err) {
+        console.warn(`Failed to close trade ${trade.id}:`, err.message);
+      }
+    }
+    paperTradeEngine.publish("trade_mutation", { action: "square_off_all", count: closedResults.length });
+    sendJson(res, { success: true, count: closedResults.length, items: closedResults });
+    return true;
+  }
+
   const paperCloseMatch = url.pathname.match(/^\/api\/(?:paper-lab|live-alerts)\/trades\/(\d+)\/close$/);
   if (req.method === "POST" && paperCloseMatch) {
     const body = await readJsonBody(req);
@@ -264,6 +322,30 @@ export async function handleTradingRequest(req, res, url) {
     const result = deletePaperTrade(id);
     paperTradeEngine.removeTrade(id);
     sendJson(res, result);
+    return true;
+  }
+
+  const journalDeleteMatch = url.pathname.match(/^\/api\/trades\/(\d+)(?:\/delete)?$/);
+  if (["DELETE", "POST"].includes(req.method) && journalDeleteMatch) {
+    const id = Number(journalDeleteMatch[1]);
+    const db = getDb();
+    db.exec("PRAGMA foreign_keys = ON;");
+    db.exec("BEGIN;");
+    try {
+      db.prepare("DELETE FROM trade_executions WHERE trade_id = ?").run(id);
+      db.prepare("DELETE FROM trade_journal WHERE trade_id = ?").run(id);
+      db.prepare("DELETE FROM trade_strategy_tags WHERE trade_id = ?").run(id);
+      db.prepare("DELETE FROM trade_mistake_tags WHERE trade_id = ?").run(id);
+      db.prepare("DELETE FROM trade_attachments WHERE trade_id = ?").run(id);
+      db.prepare("DELETE FROM trades WHERE id = ?").run(id);
+      db.exec("COMMIT;");
+    } catch (e) {
+      db.exec("ROLLBACK;");
+      throw e;
+    }
+    paperTradeEngine.removeTrade(id);
+    paperTradeEngine.publish("trade_mutation", { action: "delete", tradeId: id });
+    sendJson(res, { success: true, deleted: true, id });
     return true;
   }
 

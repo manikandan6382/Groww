@@ -362,6 +362,9 @@
                   </div>
                   <div class="tv-chart-badges">
                     <span class="badge-live-feed">⚡ TradingView Canvas 60 FPS</span>
+                    <button type="button" class="btn-popout-chart" onclick="window.openPopoutChart()" title="Open detached TradingView chart in a dedicated multi-monitor window">
+                      🪟 Pop-Out
+                    </button>
                   </div>
                 </div>
                 <div id="tradingviewChartContainer" class="tv-chart-container" style="width: 100%; min-height: 280px;"></div>
@@ -682,9 +685,20 @@
                   </div>
                   <small class="text-slate-400">Scans live Upstox ticks &amp; option chain automatically. Zero manual math needed.</small>
                 </div>
-                <button type="button" onclick="window.executeFastDeploySignal(event)" class="btn-fast-deploy" id="btnFastDeployLiveSignal">
+                <button type="button" class="btn-fast-deploy" id="btnFastDeployLiveSignal">
                   🚀 1-Click Auto-Deploy Live Signal
                 </button>
+              </div>
+
+              <!-- 🔌 EXECUTION FEED MODE SWITCHER (Live Automated vs Manual Sandbox) -->
+              <div class="pad-feed-mode-switcher">
+                <button type="button" class="btn-feed-mode active" data-feed-mode="LIVE" onclick="window.toggleFeedMode('LIVE')">
+                  🟢 Live Upstox Auto-Exit (Continuous Market Feed)
+                </button>
+                <button type="button" class="btn-feed-mode" data-feed-mode="MANUAL" onclick="window.toggleFeedMode('MANUAL')">
+                  🎮 Manual Sandbox Simulator (Offline Testing)
+                </button>
+                <input type="hidden" name="feedMode" id="deskFeedMode" value="LIVE" />
               </div>
 
               <!-- 🛡️ STRATEGY STRUCTURE SWITCHER -->
@@ -696,6 +710,19 @@
                   🛡️ Defined-Risk Spread (Vertical 2-Legs)
                 </button>
                 <input type="hidden" name="strategyMode" id="deskStrategyMode" value="NAKED" />
+              </div>
+
+              <!-- 🛡️ REAL-WORLD EXECUTION & SLIPPAGE GUARD -->
+              <div class="pad-slippage-guard-bar">
+                <label class="slippage-toggle-wrap" data-paper-tooltip="Simulates real exchange spread slippage (-0.50 pts entry / -0.50 pts exit) to prove strategy expectancy against live market maker spread toxicity.">
+                  <input type="checkbox" id="checkSimulateSlippage" onchange="window.toggleSlippageSimulation(this.checked)" />
+                  <span class="slippage-checkbox-custom"></span>
+                  <div class="slippage-toggle-text">
+                    <strong class="text-white">🛡️ Simulate Real Broker Slippage</strong>
+                    <small class="text-slate-400">Applies -0.50 pt bid-ask spread penalty on fills</small>
+                  </div>
+                </label>
+                <span class="apple-pill-badge badge-neutral" id="slippageStatusBadge">Ideal 0ms Fills</span>
               </div>
 
               <!-- Step 1: Sentiment Switcher (Buy Call vs Buy Put) -->
@@ -906,7 +933,12 @@
                 <h2>3️⃣ My Active Practice Trades</h2>
                 <span class="sub-label">Real-time profit/loss tracking with automatic execution</span>
               </div>
-              <span class="active-count-badge active" id="paperOpenCount">0 ACTIVE</span>
+              <div class="header-action-dock">
+                <button type="button" id="btnSquareOffAll" class="btn-killswitch" tabindex="0" data-paper-tooltip="Emergency Circuit Breaker: Instantly market-close all active practice positions">
+                  <span class="kill-icon">⚡</span> Square Off All
+                </button>
+                <span class="active-count-badge active" id="paperOpenCount">0 ACTIVE</span>
+              </div>
             </div>
             <div id="paperOpenTrades" class="paper-trade-list">
               <div class="empty-trades-dock">
@@ -917,110 +949,241 @@
             </div>
           </section>
 
-          <!-- 4️⃣ SECTION 4: PERFORMANCE & TIMELINE SUMMARY -->
-          <section class="live-alert-analytics-grid" id="sectionWeeklyPerformance">
-            <!-- Daily P&L Bars -->
-            <section class="paper-daily-pnl panel apple-ceramic-card">
-              <div class="panel-header-row">
-                <div>
-                  <h2>Daily P&amp;L <span class="sub-label" id="dailyPnlRangeLabel">(This Week)</span></h2>
+          <!-- 4️⃣ UNIFIED PERFORMANCE & TRADE REVIEW STUDIO -->
+          <section class="performance-alpha-studio panel apple-ceramic-card" id="sectionPerformanceAlphaStudio">
+            <!-- Studio Master Header & KPI Ticker Bar -->
+            <div class="studio-master-header">
+              <div class="studio-title-block">
+                <div class="studio-eyebrow-row">
+                  <span class="studio-eyebrow">PORTFOLIO INTELLIGENCE &amp; EDGE AUDIT</span>
+                  <div id="paperStreamStatus" class="stream-pulse-badge live" tabindex="0" data-paper-tooltip="Real-Time Execution Engine Stream: Connected (SSE active)">
+                    <span class="pulse-dot"></span>
+                    <span class="pulse-label">LIVE STREAM</span>
+                  </div>
                 </div>
-                <div class="apple-segmented-control range-selector-dock" role="tablist">
-                  <button class="paper-pnl-range active" data-pnl-range="week" type="button">This Week</button>
-                  <button class="paper-pnl-range" data-pnl-range="last_week" type="button">Last Week</button>
-                  <button class="paper-pnl-range" data-pnl-range="month" type="button">This Month</button>
-                  <button class="paper-pnl-range" data-pnl-range="all" type="button">All Time</button>
-                </div>
-                <div class="daily-pnl-summary">
-                  <strong id="bottomDailyPnl">--</strong>
-                  <span id="bottomDailyPnlPct">--</span>
-                </div>
+                <h2 class="studio-title">Performance &amp; Trade Review Studio</h2>
               </div>
-              <div class="chart-container-bars">
-                <div id="paperDailyBars" class="paper-daily-bars" aria-label="Daily P&L chart"></div>
-              </div>
-            </section>
-
-            <!-- Weekly Summary -->
-            <section class="paper-weekly-summary panel apple-ceramic-card">
-              <div class="panel-header-row">
-                <h2>Weekly Summary</h2>
-                <span class="badge-subtle">Week To Date</span>
-              </div>
-              <div class="summary-stats-grid">
-                <div class="summary-stat-box">
-                  <span class="label">Total P&amp;L</span>
-                  <strong id="summaryTotalPnl">--</strong>
-                  <span class="sub-label" id="summaryTotalPnlPct">--</span>
+              
+              <div class="studio-header-stats">
+                <div class="studio-header-kpi" tabindex="0" data-paper-tooltip="Total realized net profit/loss across all closed paper trades including estimated STT &amp; transaction friction.">
+                  <span class="kpi-label">Realized Net P&amp;L</span>
+                  <div class="kpi-val-group">
+                    <strong id="summaryTotalPnl" class="apple-numeral">₹0.00</strong>
+                    <span id="summaryTotalPnlPct" class="apple-pill-badge badge-neutral">0.00%</span>
+                  </div>
                 </div>
-                <div class="summary-stat-box">
-                  <span class="label">Win Rate</span>
-                  <strong id="summaryWinRate">--</strong>
-                  <span class="sub-label" id="summaryWinLossCounts">--</span>
+                
+                <div class="studio-header-kpi" tabindex="0" data-paper-tooltip="Win Rate: (Winning Trades ÷ Total Closed Trades) * 100&#10;Target: &gt;= 50% with strict 1:2 R:R.">
+                  <span class="kpi-label">Win Rate</span>
+                  <div class="kpi-val-group">
+                    <strong id="summaryWinRate" class="apple-numeral">0.0%</strong>
+                    <span id="summaryWinLossCounts" class="kpi-sub">0W / 0L</span>
+                  </div>
                 </div>
-                <div class="summary-stat-box">
-                  <span class="label">Total Trades</span>
-                  <strong id="summaryTotalTrades">--</strong>
-                  <span class="sub-label trend-up" id="summaryTotalTradesCompare">▲ 1:2 R:R Guardrail</span>
+                
+                <div class="studio-header-kpi" tabindex="0" data-paper-tooltip="Total resolved practice trades logged and archived in database.">
+                  <span class="kpi-label">Total Closed</span>
+                  <div class="kpi-val-group">
+                    <strong id="summaryTotalTrades" class="apple-numeral">0</strong>
+                    <span id="summaryTotalTradesCompare" class="kpi-sub text-cyan">1:2 R:R Target</span>
+                  </div>
                 </div>
               </div>
-              <div id="paperLessons" hidden></div>
-            </section>
-
-            <!-- Performance Overview & Heatmap -->
-            <section class="paper-performance-overview panel apple-ceramic-card">
-              <div class="panel-header-row">
-                <h2>Performance Overview</h2>
-                <span class="badge-subtle">Discipline Matrix</span>
-              </div>
-              <div class="performance-overview-grid">
-                <div class="performance-stat">
-                  <span>Win Rate</span>
-                  <strong id="paperPerfWinRate">--</strong>
-                </div>
-              </div>
-              <div id="paperTradeCalendar" class="paper-calendar-panel"></div>
-            </section>
-          </section>
-
-          <!-- 5️⃣ SECTION 5: BEST ALERT & WORST ALERT (Learning Review) -->
-          <section class="live-alert-insights-grid" id="sectionBestWorstAlerts">
-            <section class="paper-best-alert panel apple-ceramic-card">
-              <div class="panel-header-row">
-                <h2>🏆 Best Alert (Top Performer)</h2>
-                <span class="badge-green">Biggest Win</span>
-              </div>
-              <div id="paperBestAlert" class="paper-bestworst-list single"></div>
-            </section>
-
-            <section class="paper-worst-alert panel apple-ceramic-card">
-              <div class="panel-header-row">
-                <h2>🛡️ Worst Alert (Lesson Learned)</h2>
-                <span class="badge-loss">Disciplined Stop</span>
-              </div>
-              <div id="paperWorstAlert" class="paper-bestworst-list single"></div>
-            </section>
-          </section>
-
-          <!-- Triggered Practice History Ledger (Collapsible / Clean) -->
-          <section class="paper-recent panel apple-ceramic-card">
-            <div class="panel-header-row">
-              <div>
-                <h2>Triggered Trade History</h2>
-                <span class="sub-label">Resolved Trades &amp; Realized P&amp;L</span>
-              </div>
-              <a class="view-all-text-link" href="#paperClosedTrades">View All</a>
             </div>
-            <div class="table-wrap compact-table">
-              <table>
+
+            <!-- Studio 2-Wing Body Layout -->
+            <div class="studio-wings-grid">
+              <!-- Left Wing: Daily P&L Timeline & Discipline Heatmap (60% Desktop) -->
+              <div class="studio-wing-timeline">
+                <!-- Timeline Subhead with Timeframe Switcher & Day Total Pill -->
+                <div class="timeline-subhead">
+                  <div>
+                    <h3 class="timeline-title">Daily P&amp;L Timeline <small id="dailyPnlRangeLabel">(This Week)</small></h3>
+                    <span class="timeline-desc">Day-by-day realized equity distribution &amp; trend volume</span>
+                  </div>
+                  <div class="timeline-right-dock">
+                    <div class="apple-segmented-control" role="tablist">
+                      <button class="paper-pnl-range active" data-pnl-range="week" type="button">This Week</button>
+                      <button class="paper-pnl-range" data-pnl-range="last_week" type="button">Last Week</button>
+                      <button class="paper-pnl-range" data-pnl-range="month" type="button">This Month</button>
+                      <button class="paper-pnl-range" data-pnl-range="all" type="button">All Time</button>
+                    </div>
+                    <div class="timeline-pnl-pill">
+                      <strong id="bottomDailyPnl" class="apple-numeral">₹0.00</strong>
+                      <span id="bottomDailyPnlPct" class="apple-pill-badge badge-neutral">0.00%</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Daily Equity Bars -->
+                <div class="chart-container-bars">
+                  <div id="paperDailyBars" class="paper-daily-bars" aria-label="Daily P&L chart"></div>
+                </div>
+
+                <!-- Discipline & Edge Matrix Footer Strip -->
+                <div class="discipline-matrix-dock">
+                  <div class="discipline-metrics-strip">
+                    <div class="disc-kpi" tabindex="0" data-paper-tooltip="Win Rate % = (Winning Trades ÷ Total Closed Trades) * 100">
+                      <span class="disc-label">Win Rate</span>
+                      <strong id="paperPerfWinRate" class="apple-numeral">0.0%</strong>
+                    </div>
+                    <div class="disc-kpi" tabindex="0" data-paper-tooltip="Profit Factor: Gross Profits ÷ Gross Losses.&#10;&gt; 1.5 indicates a robust, profitable trading edge.">
+                      <span class="disc-label">Profit Factor</span>
+                      <strong id="paperProfitFactor" class="apple-numeral">0.00</strong>
+                    </div>
+                    <div class="disc-kpi" tabindex="0" data-paper-tooltip="Avg R:R: Average realized Reward-to-Risk ratio across all logged trades.">
+                      <span class="disc-label">Avg R:R</span>
+                      <strong id="paperAvgRR" class="apple-numeral">1:2.0</strong>
+                    </div>
+                    <div class="disc-kpi" tabindex="0" data-paper-tooltip="Best Streak: Longest consecutive winning streak in your trading history.">
+                      <span class="disc-label">Best Streak</span>
+                      <strong id="paperBestStreak" class="apple-numeral">0 wins</strong>
+                    </div>
+                  </div>
+                  <div id="paperTradeCalendar" class="paper-calendar-panel"></div>
+                </div>
+              </div>
+
+              <!-- Right Wing: Trade Post-Mortem & Alpha Intelligence (40% Desktop) -->
+              <div class="studio-wing-reviews">
+                <div class="review-subhead">
+                  <div>
+                    <h3 class="timeline-title">Post-Mortem &amp; Edge Review</h3>
+                    <span class="timeline-desc">Realized execution extremes &amp; tactical lessons</span>
+                  </div>
+                </div>
+                
+                <!-- Best Alert (Top Alpha Performer) -->
+                <div class="review-slot-box best-slot">
+                  <div class="review-slot-header">
+                    <div class="review-slot-left">
+                      <span class="slot-icon">🏆</span>
+                      <div>
+                        <strong class="slot-title">Best Alert</strong>
+                        <small class="slot-subtitle">Top Realized Gain</small>
+                      </div>
+                    </div>
+                    <span class="apple-pill-badge badge-green">Alpha Play</span>
+                  </div>
+                  <div id="paperBestAlert" class="paper-bestworst-list single"></div>
+                </div>
+
+                <!-- Worst Alert (Lesson Learned) -->
+                <div class="review-slot-box worst-slot">
+                  <div class="review-slot-header">
+                    <div class="review-slot-left">
+                      <span class="slot-icon">🛡️</span>
+                      <div>
+                        <strong class="slot-title">Worst Alert</strong>
+                        <small class="slot-subtitle">Disciplined Stop Loss</small>
+                      </div>
+                    </div>
+                    <span class="apple-pill-badge badge-loss">Risk Defense</span>
+                  </div>
+                  <div id="paperWorstAlert" class="paper-bestworst-list single"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 🎓 Live Capital Readiness & Graduation Gate -->
+            <div class="graduation-gate-dock" id="paperGraduationGate">
+              <div class="grad-head-row">
+                <div class="grad-title-group">
+                  <span class="grad-eyebrow">STAGE AUDIT</span>
+                  <strong class="grad-title">🎓 Live Capital Readiness &amp; Micro-Lot Graduation Gate</strong>
+                </div>
+                <span id="gradBadgeStatus" class="apple-pill-badge badge-subtle">Phase 1: Practice Audit (0/30)</span>
+              </div>
+              <div class="grad-steps-grid">
+                <div class="grad-step-box" id="gradStepTrades" data-paper-tooltip="Requirement: Minimum 30 closed practice trades to prove statistical significance.">
+                  <div class="grad-step-top">
+                    <span class="grad-step-num">1</span>
+                    <strong class="grad-step-name">Sample Size</strong>
+                    <span class="grad-step-check" id="gradCheckTrades">0 / 30</span>
+                  </div>
+                  <div class="grad-progress-bar"><div class="grad-fill" id="gradFillTrades" style="width: 0%;"></div></div>
+                </div>
+                <div class="grad-step-box" id="gradStepPf" data-paper-tooltip="Requirement: Profit Factor &gt;= 1.50 (Gross Profits ÷ Gross Losses).">
+                  <div class="grad-step-top">
+                    <span class="grad-step-num">2</span>
+                    <strong class="grad-step-name">Profit Factor</strong>
+                    <span class="grad-step-check" id="gradCheckPf">0.00 (Target: &ge;1.5)</span>
+                  </div>
+                  <div class="grad-progress-bar"><div class="grad-fill" id="gradFillPf" style="width: 0%;"></div></div>
+                </div>
+                <div class="grad-step-box" id="gradStepDiscipline" data-paper-tooltip="Requirement: 100% Stop Loss compliance with zero emotional overrides.">
+                  <div class="grad-step-top">
+                    <span class="grad-step-num">3</span>
+                    <strong class="grad-step-name">SL Discipline</strong>
+                    <span class="grad-step-check" id="gradCheckDiscipline">100% Adherence ✅</span>
+                  </div>
+                  <div class="grad-progress-bar"><div class="grad-fill bg-gain" id="gradFillDiscipline" style="width: 100%;"></div></div>
+                </div>
+              </div>
+            </div>
+            
+            <div id="paperLessons" hidden></div>
+          </section>
+
+          <!-- 5️⃣ TRIGGERED PRACTICE HISTORY & AUDIT LEDGER (APPLE OBSIDIAN LUXURY) -->
+          <section class="paper-recent panel apple-ceramic-card ledger-audit-dock" id="sectionTriggeredTradeHistory">
+            <!-- Master Header Row with Summary Telemetry -->
+            <div class="ledger-master-head">
+              <div class="ledger-title-group">
+                <div class="ledger-eyebrow-row">
+                  <span class="ledger-eyebrow">AUDIT TRAIL &amp; SETTLEMENT LEDGER</span>
+                  <span class="apple-pill-badge badge-neutral" id="ledgerTradeCountBadge">0 Closed Trades</span>
+                </div>
+                <h2 class="ledger-title">Triggered Trade History</h2>
+                <p class="ledger-subtitle">Resolved practice executions, verified execution timestamps, and net realized P&amp;L after statutory friction.</p>
+              </div>
+
+              <!-- Realized Performance Telemetry Strip -->
+              <div class="ledger-stat-strip">
+                <div class="ledger-mini-kpi">
+                  <span class="kpi-micro-label">Net Realized</span>
+                  <strong class="kpi-micro-val text-neutral" id="ledgerNetRealizedVal">₹0.00</strong>
+                </div>
+                <div class="ledger-mini-kpi">
+                  <span class="kpi-micro-label">Win / Stop Ratio</span>
+                  <span class="kpi-micro-pill" id="ledgerWinRatioVal">0W · 0L</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Action & Filter Navigation Toolbar -->
+            <div class="ledger-toolbar">
+              <div class="apple-segmented-control small" role="tablist">
+                <button class="ledger-filter-btn active" data-ledger-filter="all" type="button">
+                  All Trades <span class="tab-count-bubble" id="filterCountAll">0</span>
+                </button>
+                <button class="ledger-filter-btn" data-ledger-filter="win" type="button">
+                  🎯 Winners <span class="tab-count-bubble" id="filterCountWin">0</span>
+                </button>
+                <button class="ledger-filter-btn" data-ledger-filter="loss" type="button">
+                  🛡️ Protected Stops <span class="tab-count-bubble" id="filterCountLoss">0</span>
+                </button>
+              </div>
+
+              <div class="ledger-actions-cluster">
+                <button type="button" id="btnExportLedgerCsv" class="apple-ghost-btn btn-export-csv" data-paper-tooltip="Export full ledger with all execution timestamps, gross P&amp;L, and statutory friction breakdown to CSV">
+                  📥 Export CSV Ledger
+                </button>
+              </div>
+            </div>
+
+            <!-- Luxury Financial Data Table -->
+            <div class="table-wrap luxury-ledger-table-wrap">
+              <table class="luxury-ledger-table">
                 <thead>
                   <tr>
-                    <th>Time</th>
-                    <th>Instrument</th>
-                    <th>Type</th>
-                    <th>Target / SL</th>
-                    <th>Result</th>
-                    <th>Realized P&amp;L</th>
+                    <th style="width: 160px;">Timing &amp; Duration</th>
+                    <th>Contract</th>
+                    <th>Execution Journey</th>
+                    <th>Plan (TP / SL)</th>
+                    <th>Resolution</th>
+                    <th style="text-align: right;">Realized Net P&amp;L</th>
+                    <th style="width: 100px; text-align: center;">Audit</th>
                   </tr>
                 </thead>
                 <tbody id="paperClosedTrades"></tbody>
@@ -1665,9 +1828,9 @@
     </dialog>
 
     <!-- Scripts -->
-    <script src="/vendor/lightweight-charts.js?v=3.7.0"></script>
-    <script src="/app.js?v=3.7.0" type="module"></script>
-    <script src="/js/trading-journal.js?v=3.7.0" type="module"></script>
-    <script src="/js/paper-lab.js?v=3.7.0" type="module"></script>
+    <script src="/vendor/lightweight-charts.js?v=3.8.0"></script>
+    <script src="/app.js?v=3.8.0" type="module"></script>
+    <script src="/js/trading-journal.js?v=3.8.0" type="module"></script>
+    <script src="/js/paper-lab.js?v=3.8.0" type="module"></script>
   </body>
 </html>

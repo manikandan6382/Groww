@@ -259,3 +259,13 @@ export class TradingViewTerminal {
     this.chart = null;
   }
 }
+
+export function openPopoutChart(symbol = "NIFTY 50") {
+  const url = `/chart-popout.html?symbol=${encodeURIComponent(symbol)}`;
+  const win = window.open(url, "PortfolioXChartPopout", "width=1200,height=800,menubar=no,toolbar=no,location=no,status=no");
+  if (win) {
+    win.focus();
+  }
+}
+window.openPopoutChart = openPopoutChart;
+

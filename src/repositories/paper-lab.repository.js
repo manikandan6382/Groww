@@ -128,8 +128,14 @@ export function deletePaperTrade(id) {
   const trade = getTradeById(id);
   assertPaperTrade(trade);
 
+  db.exec("PRAGMA foreign_keys = ON;");
   db.exec("BEGIN;");
   try {
+    db.prepare("DELETE FROM trade_executions WHERE trade_id = ?").run(trade.id);
+    db.prepare("DELETE FROM trade_journal WHERE trade_id = ?").run(trade.id);
+    db.prepare("DELETE FROM trade_strategy_tags WHERE trade_id = ?").run(trade.id);
+    db.prepare("DELETE FROM trade_mistake_tags WHERE trade_id = ?").run(trade.id);
+    db.prepare("DELETE FROM trade_attachments WHERE trade_id = ?").run(trade.id);
     db.prepare("DELETE FROM trades WHERE id = ?").run(trade.id);
     refreshPaperCapital(db);
     db.exec("COMMIT;");

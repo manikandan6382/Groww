@@ -734,8 +734,32 @@ function renderStoryTradeCard(trade) {
   const stratTag = rawStrat === "0DTE Scalp" ? "Same-Day Expiry Scalp" : rawStrat;
   const isCall = trade.direction === "LONG" || String(trade.symbol).toUpperCase().includes("CE");
 
+  const entryDate = trade.entryDatetime ? new Date(trade.entryDatetime) : null;
+  const exitDate = trade.exitDatetime ? new Date(trade.exitDatetime) : null;
+  const entryStr = formatDateTime(trade.entryDatetime);
+  const exitStr = trade.exitDatetime ? formatDateTime(trade.exitDatetime) : null;
+  
+  const entryTimeOnly = entryDate && !isNaN(entryDate.getTime())
+    ? entryDate.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false })
+    : (entryStr.split(" ")[1] || entryStr);
+  const exitTimeOnly = exitDate && !isNaN(exitDate.getTime())
+    ? exitDate.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false })
+    : (exitStr ? (exitStr.split(" ")[1] || exitStr) : null);
+
+  let elapsedDuration = "";
+  if (entryDate && exitDate && !isNaN(entryDate.getTime()) && !isNaN(exitDate.getTime())) {
+    const diffMins = Math.max(0, Math.round((exitDate.getTime() - entryDate.getTime()) / 60000));
+    elapsedDuration = diffMins >= 60 
+      ? `(${Math.floor(diffMins / 60)}h ${diffMins % 60}m held)` 
+      : `(${diffMins}m held)`;
+  }
+
+  const timingMeta = exitTimeOnly
+    ? `<span>🗓️ ${escapeHtml(entryStr)} ➔ ⏱️ Exit ${escapeHtml(exitTimeOnly)} <small class="text-cyan font-bold">${elapsedDuration}</small></span>`
+    : `<span>🗓️ ${escapeHtml(entryStr)}</span>`;
+
   return `
-    <article class="story-trade-card panel apple-ceramic-card ${statusCls} ios-touch-item">
+    <article class="story-trade-card panel apple-ceramic-card ${statusCls} ios-touch-item" data-story-trade-id="${trade.id}">
       <!-- Top Row: Asset Identity + Financial P&L -->
       <div class="story-card-top-row">
         <div class="story-identity-group">
@@ -749,7 +773,7 @@ function renderStoryTradeCard(trade) {
               <span class="apple-pill-badge ${isWin ? 'text-gain' : isLoss ? 'text-loss' : ''}">${rBadge}</span>
             </div>
             <div class="story-subtitle-meta">
-              <span>🗓️ ${escapeHtml(formatDateTime(trade.entryDatetime))}</span>
+              ${timingMeta}
               <span class="meta-dot">·</span>
               <span>📦 ${trade.quantity || 1} Lot (${totalUnits} Qty)</span>
               <span class="meta-dot">·</span>
@@ -761,8 +785,13 @@ function renderStoryTradeCard(trade) {
         </div>
 
         <div class="story-financial-group">
-          <div class="story-net-pnl ${isWin ? 'text-gain' : isLoss ? 'text-loss' : 'text-neutral'} apple-numeral">
-            ${net >= 0 ? "+" : ""}${inr.format(net)}
+          <div class="flex items-center justify-end gap-2">
+            <div class="story-net-pnl ${isWin ? 'text-gain' : isLoss ? 'text-loss' : 'text-neutral'} apple-numeral">
+              ${net >= 0 ? "+" : ""}${inr.format(net)}
+            </div>
+            <button type="button" class="btn-story-delete" title="Delete this trade record" onclick="event.stopPropagation(); window.deleteJournalTrade(${trade.id})">
+              🗑️
+            </button>
           </div>
           <div class="story-sub-breakdown">
             <span>Gross: ${gross >= 0 ? "+" : ""}${inr.format(gross)}</span>
@@ -777,6 +806,7 @@ function renderStoryTradeCard(trade) {
         <div class="journey-node start">
           <span class="node-label">Bought Entry</span>
           <strong class="node-price">₹${buyPrice}</strong>
+          <small class="node-time">⏱️ ${escapeHtml(entryTimeOnly)}</small>
         </div>
 
         <div class="journey-vector-track ${isWin ? 'gain' : isLoss ? 'loss' : 'neutral'}">
@@ -787,13 +817,14 @@ function renderStoryTradeCard(trade) {
             <span class="pill-change ${Number(priceChangePct) >= 0 ? 'gain' : 'loss'}">
               ${Number(priceChangePct) >= 0 ? '▲ +' : '▼ '}${priceChangePct}% (${priceDiff >= 0 ? '+' : ''}${priceDiff.toFixed(2)} pts)
             </span>
-            <span class="pill-context">${outcomeTitle}</span>
+            <span class="pill-context">${outcomeTitle}${elapsedDuration ? ' · ' + elapsedDuration : ''}</span>
           </div>
         </div>
 
         <div class="journey-node end ${isWin ? 'target' : 'stop'}">
           <span class="node-label">${isWin ? 'Target Sold' : 'Stop Cut'}</span>
           <strong class="node-price">₹${sellPrice}</strong>
+          <small class="node-time">⏱️ ${escapeHtml(exitTimeOnly || '--')}</small>
         </div>
       </div>
     </article>
@@ -1103,3 +1134,56 @@ function exportTaxAuditCsv() {
   link.click();
   document.body.removeChild(link);
 }
+
+async function deleteJournalTrade(tradeId) {
+  const id = Number(tradeId);
+  if (!id) return;
+  if (!confirm(`Are you sure you want to permanently delete Trade #${id} from your Trading Journal?\n\nThis will remove the story audit log and recalculate your overall portfolio P&L.`)) {
+    return;
+  }
+
+  // 1. Optimistic DOM exit animation
+  const card = document.querySelector(`[data-story-trade-id="${id}"]`);
+  if (card) {
+    card.style.transition = "opacity 0.2s ease, transform 0.2s ease";
+    card.style.opacity = "0";
+    card.style.transform = "scale(0.96)";
+    setTimeout(() => { try { card.remove(); } catch(_) {} }, 200);
+  }
+
+  // 2. Optimistic in-memory recalculation
+  if (Array.isArray(tradeState.trades)) {
+    tradeState.trades = tradeState.trades.filter((t) => Number(t.id) !== id);
+    renderTradeHistory(tradeState.trades);
+    renderMasterKPIDeck(tradeState.trades, tradeState.analytics);
+    renderDailyStreakStrip(tradeState.trades);
+    renderStrategyMatrix(tradeState.trades);
+  }
+
+  showToast("Trade Deleted", `Trade #${id} permanently removed from journal.`, "🗑️");
+
+  // 3. Cross-view & tab sync
+  document.dispatchEvent(new CustomEvent("portfoliox:trade-deleted", { detail: { tradeId: id } }));
+  if (typeof BroadcastChannel !== "undefined") {
+    try {
+      const channel = new BroadcastChannel("portfoliox_desk_sync");
+      channel.postMessage({ type: "TRADE_MUTATION", action: "delete", tradeId: id });
+    } catch (_) {}
+  }
+
+  try {
+    await fetchJson(`/api/trades/${id}/delete`, { method: "POST" });
+    await loadTradingJournal(); // background re-sync with precise server analytics
+  } catch (err) {
+    showToast("Delete Error", err.message, "❌");
+    await loadTradingJournal(); // Rollback on error
+  }
+}
+window.deleteJournalTrade = deleteJournalTrade;
+
+// Cross-view sync listeners
+document.addEventListener("portfoliox:trade-deleted", () => {
+  if (document.getElementById("tradeForm")) {
+    loadTradingJournal();
+  }
+});

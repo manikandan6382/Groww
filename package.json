@@ -17,5 +17,8 @@
   "devDependencies": {
     "sass": "^1.83.4",
     "tailwindcss": "^3.4.17"
+  },
+  "dependencies": {
+    "lightweight-charts": "^5.2.1"
   }
 }

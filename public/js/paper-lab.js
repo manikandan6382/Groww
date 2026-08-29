@@ -2,7 +2,8 @@ const paperState = {
   loaded: false,
   lab: null,
   alertFilter: "all",
-  pnlRange: "week",
+  ledgerFilter: "all",
+  pnlRange: "all",
 };
 
 const optionLotSizes = {
@@ -57,9 +58,13 @@ const paperLiveTrackBody = document.getElementById("paperLiveTrackBody");
 const paperAlertList = document.getElementById("paperAlertList");
 let paperSse = null;
 let isDeployingOrder = false;
+let isSquaringOff = false;
+let isAutoDeploying = false;
+let isSlippageSimulationEnabled = false;
 let simulationInterval = null;
 
 // Expose all action handlers globally on window for inline HTML onclick handlers
+window.toggleSlippageSimulation = toggleSlippageSimulation;
 window.trailTradeStopLoss = trailTradeStopLoss;
 window.promptEditStopLoss = promptEditStopLoss;
 window.promptEditTargetPrice = promptEditTargetPrice;
@@ -77,6 +82,8 @@ window.fastDeployLiveSignal = loadCopilotSetupIntoForm;
 window.loadCopilotSetupIntoForm = loadCopilotSetupIntoForm;
 window.loadCopilotSetupIntoJournal = loadCopilotSetupIntoJournal;
 window.toggleSpreadMode = toggleSpreadMode;
+window.toggleFeedMode = toggleFeedMode;
+window.toggleTradeFeedMode = toggleTradeFeedMode;
 
 initPaperLab();
 
@@ -100,14 +107,11 @@ function initPaperLab() {
     });
   }
   document.addEventListener("click", handlePaperTradeAction);
-  paperLab.addEventListener("pointerover", handlePaperTooltipOver);
-  paperLab.addEventListener("pointermove", handlePaperTooltipMove);
-  paperLab.addEventListener("pointerout", handlePaperTooltipOut);
-  paperLab.addEventListener("mouseover", handlePaperTooltipOver);
-  paperLab.addEventListener("mousemove", handlePaperTooltipMove);
-  paperLab.addEventListener("mouseout", handlePaperTooltipOut);
-  paperLab.addEventListener("focusin", handlePaperTooltipFocus);
-  paperLab.addEventListener("focusout", hidePaperHoverToast);
+  document.addEventListener("mouseover", handlePaperTooltipOver, { passive: true });
+  document.addEventListener("mousemove", handlePaperTooltipMove, { passive: true });
+  document.addEventListener("mouseout", handlePaperTooltipOut, { passive: true });
+  document.addEventListener("focusin", handlePaperTooltipFocus);
+  document.addEventListener("focusout", hidePaperHoverToast);
   paperLab.addEventListener("click", handlePaperAlertFilter);
   document.querySelector(".notification")?.addEventListener("click", () => {
     if (document.documentElement.dataset.activeView !== "paper") return;
@@ -183,8 +187,7 @@ function initPaperLab() {
     if (event.detail?.view === "paper") loadPaperLab();
   });
 
-  // 0ms instant synchronous dummy render
-  renderOpenPaperTrades(previewOpenAlerts);
+  // Initial load
   loadPaperLab();
 }
 
@@ -193,7 +196,7 @@ async function loadPaperLab() {
   if (!currentForm) return;
   setPaperStatus("Loading...");
   try {
-    const lab = await fetchJson("/api/live-alerts?range=week");
+    const lab = await fetchJson("/api/live-alerts?range=all");
     paperState.lab = lab;
     paperState.loaded = true;
 
@@ -361,7 +364,7 @@ async function createPaperPosition(event) {
     payload.stopLoss = (netDebit * 0.4).toFixed(2);
     payload.targetPrice = (strikeWidth * 0.85).toFixed(2);
     payload.entryReason = `Vertical Defined-Risk Spread · Max Loss: ₹${(netDebit * (optionLotSizes[sym] || 65) * qty).toFixed(0)}`;
-    payload.personalNotes = `[SPREAD_BUNDLE] [SANDBOX_MANUAL] Long ${strike} @ ₹${entry.toFixed(2)} + Short ${hedgeStrike} @ ₹${hedgePrice.toFixed(2)}`;
+    payload.personalNotes = `[SPREAD_BUNDLE] Long ${strike} @ ₹${entry.toFixed(2)} + Short ${hedgeStrike} @ ₹${hedgePrice.toFixed(2)}`;
   } else {
     if (stop >= entry) {
       showDeskToast("⚠️ Risk Limit Warning", `Stop Loss (₹${stop.toFixed(2)}) must be below Entry Price (₹${entry.toFixed(2)})`, "🛑");
@@ -385,8 +388,19 @@ async function createPaperPosition(event) {
   setPaperStatus("Deploying...");
 
   try {
+    const chosenMode = payload.feedMode || document.getElementById("deskFeedMode")?.value || "LIVE";
+    payload.feedMode = chosenMode;
     payload.lotSize = optionLotSizes[String(sym).toUpperCase()] || 65;
-    payload.isSandbox = true;
+    payload.isSandbox = chosenMode === "MANUAL";
+    
+    if (isSlippageSimulationEnabled) {
+      const adverseSlippage = 0.50;
+      const adjustedEntry = Number((entry + adverseSlippage).toFixed(2));
+      payload.currentPrice = adjustedEntry.toFixed(2);
+      payload.entryPrice = adjustedEntry.toFixed(2);
+      payload.personalNotes = `${payload.personalNotes || ""} [SLIPPAGE: -0.50pt spread penalty applied (Entry: ₹${adjustedEntry})]`.trim();
+    }
+    
     const result = await fetchJson("/api/live-alerts/trades", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -403,12 +417,13 @@ async function createPaperPosition(event) {
       );
       setPaperStatus("⚡ Trade Executed & Saved to Journal");
     } else {
+      const isLive = chosenMode === "LIVE";
       showDeskToast(
-        "⚡ Live Practice Order Deployed",
-        `${payload.symbol || sym} · ${qty} ${qty === 1 ? "Lot" : "Lots"} (Active in Section 3)`,
-        "🟢"
+        isLive ? "🟢 Live Upstox Stream Active" : "🎮 Manual Sandbox Active",
+        `${payload.symbol || sym} · ${qty} ${qty === 1 ? "Lot" : "Lots"} (${isLive ? "Continuous auto-exit monitoring" : "Manual LTP simulation ready"})`,
+        isLive ? "🟢" : "🎮"
       );
-      setPaperStatus("⚡ Trade Deployed Successfully!");
+      setPaperStatus(isLive ? "🟢 Live Stream Connected & Monitoring" : "🎮 Manual Sandbox Ready");
     }
     
     // Broadcast to sync other open tabs
@@ -490,112 +505,149 @@ async function handlePaperTradeAction(event) {
 }
 
 function renderPaperSummary(lab) {
-  const analytics = lab.analytics || {};
-  const hasRealAlerts = Boolean((lab.openTrades || []).length || (lab.closedTrades || []).length);
-  const openTrades = hasRealAlerts ? (lab.openTrades || []) : previewOpenAlerts;
-  const closedTrades = hasRealAlerts ? (lab.closedTrades || []) : previewClosedAlerts;
-  const pnlPct = analytics.startingCapital ? (Number(analytics.totalPnl || 0) / Number(analytics.startingCapital)) * 100 : 0;
-  const previewPnl = closedTrades.reduce((sum, trade) => sum + Number(trade.netPnl || 0), 0);
-  const previewWins = closedTrades.filter((trade) => Number(trade.netPnl || 0) > 0).length;
-  const previewLosses = closedTrades.filter((trade) => Number(trade.netPnl || 0) < 0).length;
-  const displayPnl = hasRealAlerts ? Number(analytics.totalPnl || 0) : previewDisplay.totalPnl;
-  const displayWinRate = hasRealAlerts ? Number(analytics.winRate || 0) : previewDisplay.winRate;
-  const displayActive = hasRealAlerts ? Number(analytics.activeTrades || 0) : previewDisplay.active;
+  const openTrades = Array.isArray(lab.openTrades) ? lab.openTrades : [];
+  const closedTrades = Array.isArray(lab.closedTrades) ? lab.closedTrades : [];
+  
+  // Real dynamic mathematical calculations from actual database trades:
+  const totalClosed = closedTrades.length;
+  const wins = closedTrades.filter((t) => Number(t.netPnl || 0) > 0);
+  const losses = closedTrades.filter((t) => Number(t.netPnl || 0) < 0);
+  
+  const winsCount = wins.length;
+  const lossesCount = losses.length;
+  const winRate = totalClosed > 0 ? (winsCount / totalClosed) * 100 : 0;
+  
+  const totalPnl = closedTrades.reduce((sum, t) => sum + Number(t.netPnl || 0), 0);
+  const startingCapital = Number(lab.account?.starting_capital || 100000);
+  const currentTotalVal = startingCapital + totalPnl;
+  const pnlPct = (totalPnl / startingCapital) * 100;
+  
+  const grossWins = wins.reduce((sum, t) => sum + Number(t.netPnl || 0), 0);
+  const grossLosses = Math.abs(losses.reduce((sum, t) => sum + Number(t.netPnl || 0), 0));
+  const profitFactor = grossLosses > 0 ? (grossWins / grossLosses) : grossWins > 0 ? (winsCount > 0 ? 99.0 : 0.0) : 0.0;
+  
   const avgRR = averageRewardRisk([...openTrades, ...closedTrades]);
   const bestStreak = bestWinStreak(closedTrades);
-  const todayTrades = closedTrades.filter((trade) => localDateKey(parseTradeDate(trade.exitDatetime || trade.entryDatetime)) === localDateKey(new Date()));
+  const todayKey = localDateKey(new Date());
+  const todayTrades = closedTrades.filter((t) => localDateKey(parseTradeDate(t.exitDatetime || t.entryDatetime)) === todayKey);
 
-  const triggeredTotal = hasRealAlerts ? Number(analytics.winningTrades || 0) + Number(analytics.losingTrades || 0) : closedTrades.length;
-  const winsCount = hasRealAlerts ? Number(analytics.winningTrades || 0) : previewDisplay.wins;
-  const lossesCount = hasRealAlerts ? Number(analytics.losingTrades || 0) : previewDisplay.losses;
-  const totalCount = hasRealAlerts ? (winsCount + lossesCount) : previewDisplay.totalTrades;
-  const currentTotalVal = 100000 + displayPnl;
-
-  // 1️⃣ SECTION 1: Top Scoreboard 2-Row Updates
+  // 1️⃣ Top Scoreboard 2-Row Updates
   const scoreVal = byId("scoreboardCurrentValue");
   if (scoreVal) scoreVal.textContent = paperMoney.format(currentTotalVal);
+  
   const scorePnl = byId("scoreboardNetPnl");
   if (scorePnl) {
-    scorePnl.textContent = `${displayPnl >= 0 ? "+" : ""}${paperMoney.format(displayPnl)}`;
-    scorePnl.className = `score-val apple-numeral ${displayPnl >= 0 ? "text-gain" : "text-loss"}`;
+    scorePnl.textContent = `${totalPnl >= 0 ? "+" : ""}${paperMoney.format(totalPnl)}`;
+    scorePnl.className = `score-val apple-numeral ${totalPnl >= 0 ? "text-gain" : "text-loss"}`;
   }
+  
   const scorePnlPct = byId("scoreboardPnlPct");
   if (scorePnlPct) {
-    const calcPct = (displayPnl / 100000) * 100;
-    scorePnlPct.textContent = `${calcPct >= 0 ? "+" : ""}${calcPct.toFixed(2)}%`;
-    scorePnlPct.className = `score-badge apple-pill-badge ${calcPct >= 0 ? "badge-green" : "badge-loss"}`;
+    scorePnlPct.textContent = `${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(2)}%`;
+    scorePnlPct.className = `score-badge apple-pill-badge ${pnlPct >= 0 ? "badge-green" : "badge-loss"}`;
   }
+  
   const scoreTrades = byId("scoreboardTotalTrades");
-  if (scoreTrades) scoreTrades.textContent = String(totalCount);
+  if (scoreTrades) scoreTrades.textContent = String(totalClosed);
+  
   const scoreWins = byId("scoreboardWins");
   if (scoreWins) scoreWins.textContent = String(winsCount);
+  
   const scoreLosses = byId("scoreboardLosses");
   if (scoreLosses) scoreLosses.textContent = String(lossesCount);
+  
   const scoreWinRate = byId("scoreboardWinRate");
-  if (scoreWinRate) scoreWinRate.textContent = `${paperNum.format(displayWinRate)}%`;
+  if (scoreWinRate) scoreWinRate.textContent = `${paperNum.format(winRate)}%`;
 
-  // Legacy IDs if present
-  if (byId("paperWeekPnl")) byId("paperWeekPnl").textContent = signedMoney(displayPnl);
-  if (byId("paperPnlPct")) byId("paperPnlPct").textContent = `${displayPnl >= 0 ? "+" : ""}${hasRealAlerts ? pnlPct.toFixed(2) : previewDisplay.pnlPct.toFixed(2)}%`;
-  if (byId("paperWinRate")) byId("paperWinRate").textContent = `${paperNum.format(displayWinRate)}%`;
-  if (byId("paperTradeCount")) byId("paperTradeCount").textContent = `${winsCount} Wins / ${lossesCount} Losses`;
-  if (byId("paperTriggeredToday")) byId("paperTriggeredToday").textContent = String(hasRealAlerts ? todayTrades.length : previewDisplay.triggeredToday);
-  if (byId("paperTriggeredTotal")) byId("paperTriggeredTotal").textContent = hasRealAlerts ? `${triggeredTotal} stored results` : "NSE Options";
-  if (byId("paperActiveCount")) byId("paperActiveCount").textContent = String(displayActive);
-  if (byId("paperMarketFeedStatus")) byId("paperMarketFeedStatus").textContent = hasRealAlerts || displayActive ? "Live" : "Waiting";
-
-  // Bind to new bottom row panels
+  // 2️⃣ Section 4: Daily P&L summary badge
   const bottomDailyPnl = byId("bottomDailyPnl");
   if (bottomDailyPnl) {
-    bottomDailyPnl.textContent = signedMoney(displayPnl);
-    bottomDailyPnl.className = displayPnl >= 0 ? "gain" : "loss";
+    bottomDailyPnl.textContent = `${totalPnl >= 0 ? "+" : ""}${paperMoney.format(totalPnl)}`;
+    bottomDailyPnl.className = totalPnl >= 0 ? "apple-numeral text-gain" : "apple-numeral text-loss";
   }
   const bottomDailyPnlPct = byId("bottomDailyPnlPct");
   if (bottomDailyPnlPct) {
-    bottomDailyPnlPct.textContent = `${displayPnl >= 0 ? "+" : ""}${hasRealAlerts ? pnlPct.toFixed(2) : previewDisplay.pnlPct.toFixed(2)}%`;
-    bottomDailyPnlPct.className = displayPnl >= 0 ? "gain" : "loss";
+    bottomDailyPnlPct.textContent = `${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(2)}%`;
+    bottomDailyPnlPct.className = `apple-pill-badge ${pnlPct >= 0 ? "badge-green" : "badge-loss"}`;
   }
 
+  // 3️⃣ Section 4: Weekly Summary Card
   const summaryTotalPnl = byId("summaryTotalPnl");
   if (summaryTotalPnl) {
-    summaryTotalPnl.textContent = signedMoney(displayPnl);
-    summaryTotalPnl.className = displayPnl >= 0 ? "gain" : "loss";
+    summaryTotalPnl.textContent = `${totalPnl >= 0 ? "+" : ""}${paperMoney.format(totalPnl)}`;
+    summaryTotalPnl.className = totalPnl >= 0 ? "apple-numeral text-gain" : "apple-numeral text-loss";
   }
   const summaryTotalPnlPct = byId("summaryTotalPnlPct");
   if (summaryTotalPnlPct) {
-    summaryTotalPnlPct.textContent = `${displayPnl >= 0 ? "+" : ""}${hasRealAlerts ? pnlPct.toFixed(2) : previewDisplay.pnlPct.toFixed(2)}%`;
-    summaryTotalPnlPct.className = displayPnl >= 0 ? "gain" : "loss";
+    summaryTotalPnlPct.textContent = `${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(2)}% Account Growth`;
+    summaryTotalPnlPct.className = totalPnl >= 0 ? "sub-label text-gain" : "sub-label text-loss";
   }
 
   const summaryWinRate = byId("summaryWinRate");
   if (summaryWinRate) {
-    summaryWinRate.textContent = `${paperNum.format(displayWinRate)}%`;
+    summaryWinRate.textContent = `${paperNum.format(winRate)}%`;
+    summaryWinRate.className = `apple-numeral ${winRate >= 50 ? "text-gain" : winRate > 0 ? "text-cyan" : ""}`;
   }
   const summaryWinLossCounts = byId("summaryWinLossCounts");
   if (summaryWinLossCounts) {
-    summaryWinLossCounts.textContent = hasRealAlerts ? `${analytics.winningTrades || 0} Wins / ${analytics.losingTrades || 0} Losses` : `${previewDisplay.wins} Wins / ${previewDisplay.losses} Losses`;
+    summaryWinLossCounts.textContent = `${winsCount} Wins / ${lossesCount} Losses`;
   }
 
   const summaryTotalTrades = byId("summaryTotalTrades");
   if (summaryTotalTrades) {
-    summaryTotalTrades.textContent = String(hasRealAlerts ? closedTrades.length : previewDisplay.totalTrades);
+    summaryTotalTrades.textContent = String(totalClosed);
   }
 
+  // 4️⃣ Section 4: Performance Overview Card
   const perfWinRate = byId("paperPerfWinRate");
   if (perfWinRate) {
-    perfWinRate.textContent = `${paperNum.format(displayWinRate)}%`;
+    perfWinRate.textContent = `${paperNum.format(winRate)}%`;
   }
   const perfProfitFactor = byId("paperProfitFactor");
   if (perfProfitFactor) {
-    perfProfitFactor.textContent = paperNum.format(hasRealAlerts ? Number(analytics.profitFactor || 0) : 2.39);
+    perfProfitFactor.textContent = profitFactor > 0 ? profitFactor.toFixed(2) : "0.00";
   }
   const perfAvgRR = byId("paperAvgRR");
   if (perfAvgRR) {
-    perfAvgRR.textContent = avgRR ? `1:${paperNum.format(avgRR)}` : "--";
+    perfAvgRR.textContent = avgRR ? `1:${avgRR.toFixed(2)}` : "1:2.0";
   }
   const perfBestStreak = byId("paperBestStreak");
   if (perfBestStreak) {
-    perfBestStreak.textContent = bestStreak ? `${bestStreak} wins` : "--";
+    perfBestStreak.textContent = `${bestStreak} win${bestStreak === 1 ? "" : "s"}`;
+  }
+
+  // 5️⃣ Live Capital Readiness & Graduation Gate Calculations
+  const gradBadge = byId("gradBadgeStatus");
+  const gradCheckTrades = byId("gradCheckTrades");
+  const gradFillTrades = byId("gradFillTrades");
+  const gradCheckPf = byId("gradCheckPf");
+  const gradFillPf = byId("gradFillPf");
+
+  if (gradCheckTrades) gradCheckTrades.textContent = `${totalClosed} / 30`;
+  if (gradFillTrades) gradFillTrades.style.width = `${Math.min(100, (totalClosed / 30) * 100)}%`;
+
+  if (gradCheckPf) {
+    if (profitFactor >= 1.5) {
+      gradCheckPf.textContent = `${profitFactor.toFixed(2)} (≥1.5) ✅`;
+      gradCheckPf.className = "grad-step-check text-gain";
+    } else {
+      gradCheckPf.textContent = `${profitFactor.toFixed(2)} (Target: ≥1.5)`;
+      gradCheckPf.className = "grad-step-check text-loss";
+    }
+  }
+  if (gradFillPf) {
+    gradFillPf.style.width = `${Math.min(100, (profitFactor / 1.5) * 100)}%`;
+    gradFillPf.className = profitFactor >= 1.5 ? "grad-fill bg-gain" : "grad-fill bg-loss";
+  }
+
+  if (gradBadge) {
+    if (totalClosed >= 30 && profitFactor >= 1.5) {
+      gradBadge.textContent = "🟢 Ready for Micro-Lot Live Bridge!";
+      gradBadge.className = "apple-pill-badge badge-green font-bold";
+    } else {
+      gradBadge.textContent = `Phase 1: Practice Audit (${totalClosed}/30)`;
+      gradBadge.className = "apple-pill-badge badge-subtle";
+    }
   }
 
   syncLiveDeskFromForm();
@@ -867,30 +919,233 @@ function exportPracticeTradeToJournal(symbol, entryPrice, exitPrice, stopLoss, t
 window.exportPracticeTradeToJournal = exportPracticeTradeToJournal;
 
 function renderClosedPaperTrades(trades) {
-  const visibleTrades = trades.length ? trades : previewClosedAlerts;
-  paperClosedTrades.innerHTML = visibleTrades.length
-    ? visibleTrades.slice(0, 5).map((trade) => {
-      const isWin = Number(trade.netPnl || 0) >= 0;
-      const displayTime = formatTime(trade.exitDatetime || trade.entryDatetime);
-      const exitP = Number(trade.exitPrice || trade.lastMarkPrice || trade.entryPrice || 0);
+  const visibleTrades = Array.isArray(trades) ? trades : [];
+  const filter = paperState.ledgerFilter || "all";
+  
+  // Calculate Counts & Metrics
+  const winTrades = visibleTrades.filter(t => Number(t.netPnl || 0) >= 0);
+  const lossTrades = visibleTrades.filter(t => Number(t.netPnl || 0) < 0);
+  const totalRealized = visibleTrades.reduce((sum, t) => sum + Number(t.netPnl || 0), 0);
+  const winRate = visibleTrades.length ? Math.round((winTrades.length / visibleTrades.length) * 100) : 0;
+
+  // Update Header Telemetry
+  const countBadge = byId("ledgerTradeCountBadge");
+  if (countBadge) countBadge.textContent = `${visibleTrades.length} Closed Trades`;
+
+  const netRealizedEl = byId("ledgerNetRealizedVal");
+  if (netRealizedEl) {
+    netRealizedEl.textContent = `${totalRealized >= 0 ? "+" : ""}${paperMoney.format(totalRealized)}`;
+    netRealizedEl.className = `kpi-micro-val ${totalRealized >= 0 ? "text-gain" : "text-loss"}`;
+  }
+
+  const winRatioEl = byId("ledgerWinRatioVal");
+  if (winRatioEl) {
+    winRatioEl.textContent = `${winTrades.length}W · ${lossTrades.length}L (${winRate}%)`;
+    winRatioEl.className = `kpi-micro-pill ${winRate >= 50 ? "badge-green" : "badge-loss"}`;
+  }
+
+  // Update Filter Bubble Counters
+  const countAll = byId("filterCountAll");
+  if (countAll) countAll.textContent = visibleTrades.length;
+  const countWin = byId("filterCountWin");
+  if (countWin) countWin.textContent = winTrades.length;
+  const countLoss = byId("filterCountLoss");
+  if (countLoss) countLoss.textContent = lossTrades.length;
+
+  let filtered = visibleTrades;
+  if (filter === "win") {
+    filtered = winTrades;
+  } else if (filter === "loss") {
+    filtered = lossTrades;
+  }
+
+  const targetTbody = byId("paperClosedTrades") || paperClosedTrades;
+  if (!targetTbody) return;
+
+  targetTbody.innerHTML = filtered.length
+    ? filtered.slice(0, 30).map((trade) => {
+      const net = Number(trade.netPnl || 0);
+      const gross = Number(trade.realizedPnl || net);
+      const charges = Number(trade.charges || (gross - net) || 0);
+      const isWin = net >= 0;
+      const entry = Number(trade.entryPrice || 0);
+      const exitP = Number(trade.exitPrice || trade.lastMarkPrice || entry);
+      const target = Number(trade.targetPrice || 0);
+      const stop = Number(trade.stopLoss || 0);
+      const lots = Number(trade.quantity || 1);
+      const lotSize = Math.max(1, Number(trade.lotSize || 65));
+      const units = lots * lotSize;
+      const side = trade.optionType === "PUT" ? "PUT" : "CALL";
+      const isCall = side === "CALL";
+
+      // Time and Duration
+      const entryDate = trade.entryDatetime ? new Date(trade.entryDatetime) : null;
+      const exitDate = trade.exitDatetime ? new Date(trade.exitDatetime) : null;
+      const entryTime = formatTime(trade.entryDatetime);
+      const exitTime = formatTime(trade.exitDatetime || trade.entryDatetime);
+      let durationStr = "";
+      if (entryDate && exitDate && !isNaN(entryDate.getTime()) && !isNaN(exitDate.getTime())) {
+        const diffMins = Math.max(0, Math.round((exitDate.getTime() - entryDate.getTime()) / 60000));
+        durationStr = diffMins >= 60 ? `${Math.floor(diffMins / 60)}h ${diffMins % 60}m` : `${diffMins}m`;
+      }
+
+      // Price Movement & Outcome
+      const priceDiff = exitP - entry;
+      const movePct = entry > 0 ? ((priceDiff / entry) * 100).toFixed(1) : "0.0";
+      const rr = Number(trade.riskRewardRatio || 2).toFixed(1);
+      const closeReason = trade.closeReason || (isWin ? "TARGET_HIT" : "STOP_LOSS_HIT");
+      const outcomeLabel = closeReason === "TARGET_HIT" ? "🎯 Target Hit" : closeReason === "STOP_LOSS_HIT" ? "🛡️ Stop Cut" : "⚡ Closed";
+
       return `
-        <tr>
-          <td>${displayTime}</td>
-          <td><strong>${escapeHtml(trade.symbol)}</strong></td>
-          <td><span class="type-badge ${trade.optionType.toLowerCase()}">${escapeHtml(trade.optionType)}</span></td>
-          <td>${isWin ? `Target ${compactMoney(trade.targetPrice)}` : `SL ${compactMoney(trade.stopLoss)}`}</td>
-          <td><span class="outcome-badge ${isWin ? "gain" : "loss"}">${isWin ? "Target Hit" : "Stop Loss"}</span></td>
-          <td>
-            <div class="flex items-center justify-between gap-2">
-              <strong class="${isWin ? "gain" : "loss"}">${signedCompactMoney(trade.netPnl || 0)}</strong>
-              <button type="button" class="btn-micro-chip" title="Export this practice trade to Journal" onclick="exportPracticeTradeToJournal('${escapeHtml(trade.symbol)}', ${Number(trade.entryPrice || 0)}, ${exitP}, ${Number(trade.stopLoss || 0)}, ${Number(trade.targetPrice || 0)}, ${Number(trade.quantity || 1)}, ${Number(trade.lotSize || 65)}, ${Number(trade.netPnl || 0)})">📝 Journal</button>
+        <tr class="luxury-ledger-row ${isWin ? "row-win" : "row-loss"}" data-closed-trade-id="${trade.id}">
+          <!-- 1. Timing & Duration -->
+          <td class="col-timing">
+            <div class="timing-time-row">
+              <span class="timing-entry">${entryTime}</span>
+              <span class="timing-arrow">➔</span>
+              <span class="timing-exit font-bold">${exitTime}</span>
+            </div>
+            ${durationStr ? `<span class="badge-duration-held">⏱️ ${durationStr} held</span>` : `<span class="badge-duration-held">⏱️ Intraday</span>`}
+          </td>
+
+          <!-- 2. Contract & Position -->
+          <td class="col-contract">
+            <div class="contract-flex">
+              <strong class="contract-symbol">${escapeHtml(trade.symbol)}</strong>
+              <div class="contract-sub-tags">
+                <span class="pos-type-pill ${side.toLowerCase()} mini">${isCall ? "▲ CE" : "▼ PE"}</span>
+                <span class="contract-units-badge">${lots} Lot (${units} Qty)</span>
+              </div>
+            </div>
+          </td>
+
+          <!-- 3. Execution Journey -->
+          <td class="col-journey">
+            <div class="journey-execution-box">
+              <div class="journey-prices">
+                <span>₹${entry.toFixed(2)}</span>
+                <span class="text-slate-500">➔</span>
+                <strong class="text-white">₹${exitP.toFixed(2)}</strong>
+              </div>
+              <span class="journey-move-pill ${priceDiff >= 0 ? "gain" : "loss"}">
+                ${priceDiff >= 0 ? "▲ +" : "▼ "}${priceDiff.toFixed(2)} pts (${movePct}%)
+              </span>
+            </div>
+          </td>
+
+          <!-- 4. Plan (TP / SL) -->
+          <td class="col-plan">
+            <div class="plan-bracket">
+              <div class="plan-levels">
+                <span class="text-gain" title="Target Price">TP ₹${target.toFixed(1)}</span>
+                <span class="text-slate-600">/</span>
+                <span class="text-loss" title="Stop Loss Price">SL ₹${stop.toFixed(1)}</span>
+              </div>
+              <span class="rr-tag">1:${rr} R:R</span>
+            </div>
+          </td>
+
+          <!-- 5. Resolution Outcome -->
+          <td class="col-outcome">
+            <span class="ledger-outcome-badge ${isWin ? "gain" : "loss"}">
+              ${outcomeLabel}
+            </span>
+          </td>
+
+          <!-- 6. Realized Net P&L -->
+          <td class="col-pnl" style="text-align: right;">
+            <div class="pnl-stack">
+              <strong class="ledger-pnl-num ${isWin ? "text-gain" : "text-loss"} apple-numeral">
+                ${net >= 0 ? "+" : ""}${paperMoney.format(net)}
+              </strong>
+              <span class="friction-sub">
+                Gross: ${gross >= 0 ? "+" : ""}${compactMoney(gross)} · Fees: ₹${charges.toFixed(0)}
+              </span>
+            </div>
+          </td>
+
+          <!-- 7. Audit Actions -->
+          <td class="col-actions" style="text-align: center;">
+            <div class="ledger-action-cluster">
+              <button type="button" class="btn-ledger-action btn-ticket" title="Copy exact broker order ticket (Groww / Zerodha)" onclick="window.copyBrokerPayload(${trade.id})">📋</button>
+              <button type="button" class="btn-ledger-action btn-journal" title="Export this trade to story Journal" onclick="exportPracticeTradeToJournal('${escapeHtml(trade.symbol)}', ${entry}, ${exitP}, ${stop}, ${target}, ${lots}, ${lotSize}, ${net})">📝</button>
+              <button type="button" class="btn-ledger-action btn-delete" title="Delete this record" onclick="event.stopPropagation(); window.deletePaperTradeFromUi(${trade.id}, this)">🗑️</button>
             </div>
           </td>
         </tr>
       `;
     }).join("")
-    : `<tr><td colspan="6" class="empty-table-cell">No triggered alerts this week.</td></tr>`;
+    : `<tr><td colspan="7" class="empty-table-cell" style="text-align:center; padding: 32px 16px; color: #94a3b8;"><div class="empty-trades-dock"><span class="empty-icon">📂</span><strong>No trade records found for this filter</strong><small>Executed practice positions will populate here with full millisecond audit details.</small></div></td></tr>`;
 }
+
+function exportClosedTradesToCsv() {
+  const trades = paperState.lab?.closedTrades || [];
+  if (!trades.length) {
+    showDeskToast("Export Notice", "No closed practice trades available to export.", "ℹ️");
+    return;
+  }
+  const headers = ["ID", "Time", "Symbol", "Direction", "Option Type", "Quantity", "Entry Price", "Exit Price", "Gross PnL", "Charges", "Net Realized PnL", "Close Reason"];
+  const rows = trades.map(t => [
+    t.id,
+    `"${t.exitDatetime || t.entryDatetime || ''}"`,
+    `"${t.symbol || ''}"`,
+    `"${t.direction || 'LONG'}"`,
+    `"${t.optionType || 'CALL'}"`,
+    t.quantity || 1,
+    Number(t.entryPrice || 0).toFixed(2),
+    Number(t.exitPrice || 0).toFixed(2),
+    Number(t.realizedPnl || 0).toFixed(2),
+    Number(t.charges || 0).toFixed(2),
+    Number(t.netPnl || 0).toFixed(2),
+    `"${t.closeReason || 'TARGET_HIT'}"`
+  ]);
+  const csvContent = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", `paper_trades_ledger_${new Date().toISOString().slice(0, 10)}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  showDeskToast("Export Successful 📥", `Exported ${trades.length} trades to CSV spreadsheet!`, "📊");
+}
+window.exportClosedTradesToCsv = exportClosedTradesToCsv;
+
+async function squareOffAllTrades() {
+  if (isSquaringOff) return;
+  const openTrades = paperState.lab?.openTrades || [];
+  if (!openTrades.length) {
+    showDeskToast("No Open Trades", "There are no active practice positions to square off.", "🏖️");
+    return;
+  }
+  const confirmAction = window.confirm(`Emergency Killswitch: Are you sure you want to market-close all ${openTrades.length} open practice position(s) immediately?`);
+  if (!confirmAction) return;
+
+  isSquaringOff = true;
+  const btnKill = document.getElementById("btnSquareOffAll");
+  const origHtml = btnKill ? btnKill.innerHTML : "";
+  if (btnKill) {
+    btnKill.disabled = true;
+    btnKill.innerHTML = `<span class="pad-spinner"></span> Squaring Off...`;
+  }
+
+  setPaperStatus("⚡ Emergency Killswitch activated: Closing all active positions...");
+  try {
+    const res = await fetchJson("/api/paper-lab/square-off-all", { method: "POST" });
+    await loadPaperLab();
+    showDeskToast("⚡ Square Off Executed", `Closed ${res.count || openTrades.length} active positions at current market mark!`, "🛑");
+  } catch (err) {
+    setPaperStatus(err.message, true);
+  } finally {
+    isSquaringOff = false;
+    if (btnKill) {
+      btnKill.disabled = false;
+      btnKill.innerHTML = origHtml;
+    }
+  }
+}
+window.squareOffAllTrades = squareOffAllTrades;
 
 function renderLiveAlertCard(trade) {
   const mark = Number(trade.lastMarkPrice || trade.entryPrice || 0);
@@ -938,7 +1193,8 @@ function renderLiveAlertCard(trade) {
   const entryDate = parseTradeDate(trade.entryDatetime) || now;
   const elapsedMinutes = Math.max(0, Math.floor((now.getTime() - entryDate.getTime()) / 60000));
   const isThetaZone = elapsedMinutes >= 15;
-  const isSandbox = trade.personalNotes?.includes("[SANDBOX_MANUAL]") || trade.isSandbox || trade.preview;
+  const isExplicitManual = trade.feedMode === "MANUAL" || trade.personalNotes?.includes("[MANUAL_ONLY]");
+  const isLive = !isExplicitManual;
   const isSpread = String(trade.symbol || "").includes("Spread") || String(trade.personalNotes || "").includes("[SPREAD_BUNDLE]");
   const approxNetPnl = Math.round((unrealized - (unrealized === 0 ? 0 : 93.58)) * 100) / 100;
 
@@ -962,7 +1218,10 @@ function renderLiveAlertCard(trade) {
             <div class="flex items-center gap-2 flex-wrap">
               <strong class="pos-sym-title">${escapeHtml(trade.symbol)}</strong>
               ${isSpread ? `<span class="badge-spread-type">🛡️ SPREAD</span>` : ""}
-              ${isSandbox ? `<span class="badge-sandbox-mode">SANDBOX</span>` : `<span class="badge-live-mode">LIVE UPSTOX</span>`}
+              <button type="button" class="btn-card-mode-toggle ${isLive ? "is-live" : "is-manual"}" onclick="window.toggleTradeFeedMode(${trade.id})" title="Click to toggle between Live Upstox Stream and Manual Simulator">
+                ${isLive ? `<span class="live-pulse-dot"></span> 🟢 Live Upstox Stream` : `🎮 Manual Simulator`}
+                <span class="mode-switch-pill">⇋ Switch</span>
+              </button>
               ${isThetaZone ? `<span class="badge-theta-zone" title="Holding time > 15m increases weekly option theta decay">⏳ Theta Zone (${elapsedMinutes}m)</span>` : `<span class="badge-timer-active">⏱️ ${elapsedMinutes}m active</span>`}
             </div>
             <span class="pos-meta-sub">${formatShortDate(trade.entryDatetime)} &bull; ${paperNum.format(lots)} ${lots === 1 ? "Lot" : "Lots"} (${paperNum.format(units)} units) &bull; Est. Net: ${signedMoney(approxNetPnl)}</span>
@@ -1027,6 +1286,22 @@ function renderLiveAlertCard(trade) {
         </div>
       </div>
 
+      ${isThetaZone ? `
+        <!-- ⏳ THETA TIME-STOP DEFENSE BANNER (>15m Stalled Scalp) -->
+        <div class="theta-warning-banner">
+          <div class="flex items-center gap-2">
+            <span class="theta-alert-icon">⏳</span>
+            <div>
+              <strong class="text-white text-xs">Theta Decay Warning (${elapsedMinutes}m held)</strong>
+              <small class="text-slate-400 text-xxs block">Option time decay is accelerating. Consider time-stopping if momentum has stalled.</small>
+            </div>
+          </div>
+          <button type="button" class="btn-time-stop" onclick="window.instantExitTrade(${trade.id}, ${mark}, 'TIME_STOP_THETA_EXIT')" title="Cut stalled trade to eliminate further option theta decay">
+            🛡️ Time-Stop Exit
+          </button>
+        </div>
+      ` : ""}
+
       <!-- 🌟 THE 3 CORE IN-TRADE ACTION CONTROLS -->
       <div class="pos-primary-actions-grid">
         <!-- Button 1: Smart Trailing SL / Lock Profit -->
@@ -1055,13 +1330,15 @@ function renderLiveAlertCard(trade) {
       <!-- Card Utilities Strip: Manual Simulation & Flywheel Export -->
       <div class="pos-actions-bar">
         <div class="pos-manual-ltp-wrap">
-          <span class="pos-ltp-tag">Simulate LTP:</span>
+          <span class="pos-ltp-tag">${isLive ? "🟢 Live (Simulate):" : "🎮 Simulate LTP:"}</span>
           <button type="button" class="btn-step-ltp" onclick="window.stepManualLtp(${trade.id}, -1)">−</button>
           <input data-paper-price data-manual-price-id="${trade.id}" type="number" step="0.50" min="0" value="${escapeHtml(mark)}" class="pos-ltp-input" oninput="window.handleManualLtpInput(${trade.id}, this.value)" onkeydown="if(event.key==='Enter')window.syncManualLtp(${trade.id})" />
           <button type="button" class="btn-step-ltp" onclick="window.stepManualLtp(${trade.id}, 1)">+</button>
           <button data-paper-mark="${trade.id}" onclick="window.syncManualLtp(${trade.id})" type="button" class="btn-pos-action btn-sync">Sync</button>
         </div>
         <div class="pos-btn-cluster">
+          <button type="button" class="btn-pos-action btn-ticket" title="Copy exact Groww/Zerodha broker order ticket payload" onclick="window.copyBrokerPayload(${trade.id})">📋 Ticket</button>
+          <button type="button" class="btn-pos-action btn-mode-toggle" onclick="window.toggleTradeFeedMode(${trade.id})" title="Toggle between Live Upstox stream and Manual simulator">${isLive ? "🎮 Set Manual" : "🟢 Set Live"}</button>
           <button type="button" class="btn-pos-action btn-journal" title="Export this trade to Journal" onclick="window.exportPracticeTradeToJournal('${escapeHtml(trade.symbol)}', ${Number(trade.entryPrice || 0)}, ${mark}, ${Number(trade.stopLoss || 0)}, ${Number(trade.targetPrice || 0)}, ${Number(trade.quantity || 1)}, ${Number(trade.lotSize || 65)}, ${unrealized})">📝 Journal</button>
           <button data-paper-delete="${trade.id}" onclick="event.stopPropagation(); window.deletePaperTradeFromUi(${trade.id}, this)" type="button" class="btn-pos-action btn-del" title="Delete trade">🗑️</button>
         </div>
@@ -1313,15 +1590,45 @@ function renderBestWorstAlerts(trades) {
 
 function renderBestWorstItem(trade, label, tone) {
   const pnl = Number(trade.netPnl || 0);
+  const isBest = tone === "best";
+  const entry = Number(trade.entryPrice || 0);
+  const exit = Number(trade.exitPrice || 0);
+  const movePts = exit - entry;
+  const movePct = entry > 0 ? (movePts / entry) * 100 : 0;
+  const reason = formatCloseReason(trade.closeReason);
+  const glyph = isBest ? "🏆" : "🛡️";
+  const tagCls = isBest ? "badge-green" : "badge-loss";
+  const dateStr = formatShortDate(trade.exitDatetime || trade.entryDatetime);
+
   return `
-    <article class="paper-bestworst-item ${tone}">
-      <span>${tone === "best" ? "â˜…" : "!"}</span>
-      <div>
-        <small>${escapeHtml(label)}</small>
-        <strong>${escapeHtml(trade.symbol)}</strong>
-        <em>${escapeHtml(formatCloseReason(trade.closeReason))}</em>
+    <article class="pro-edge-card ${tone}" data-drilldown-id="${trade.id}" tabindex="0" role="button" data-paper-tooltip="⚡ Click or press Enter to inspect Trade Story #${trade.id} in audit ledger">
+      <div class="pro-edge-head">
+        <div class="pro-edge-badge-group">
+          <span class="pro-edge-icon">${glyph}</span>
+          <div class="pro-edge-titles">
+            <span class="pro-edge-type">${escapeHtml(label)}</span>
+            <strong class="pro-edge-symbol">${escapeHtml(trade.symbol)}</strong>
+          </div>
+        </div>
+        <div class="pro-edge-head-right">
+          <span class="apple-pill-badge ${tagCls}">${escapeHtml(reason)}</span>
+          <span class="pro-edge-drill-hint">🔍 Inspect →</span>
+        </div>
       </div>
-      <b class="${pnl >= 0 ? "gain" : "loss"}">${signedMoney(pnl)}</b>
+      <div class="pro-edge-metrics">
+        <div class="pro-edge-submetric">
+          <small>Execution</small>
+          <span>₹${entry.toFixed(2)} → ₹${exit.toFixed(2)}</span>
+        </div>
+        <div class="pro-edge-submetric">
+          <small>Resolved Date</small>
+          <span>${escapeHtml(dateStr)}</span>
+        </div>
+        <div class="pro-edge-pnl">
+          <small>Net Realized</small>
+          <strong class="${pnl >= 0 ? 'text-gain' : 'text-loss'}">${signedMoney(pnl)} <em class="pro-edge-pct">(${movePct >= 0 ? '+' : ''}${movePct.toFixed(1)}%)</em></strong>
+        </div>
+      </div>
     </article>
   `;
 }
@@ -1501,6 +1808,46 @@ function toggleSpreadMode(mode) {
 }
 window.toggleSpreadMode = toggleSpreadMode;
 
+function toggleFeedMode(mode) {
+  const chosen = String(mode || "LIVE").toUpperCase();
+  const input = document.getElementById("deskFeedMode");
+  if (input) input.value = chosen;
+  
+  document.querySelectorAll(".btn-feed-mode").forEach((b) => {
+    b.classList.toggle("active", b.dataset.feedMode === chosen);
+  });
+  
+  const statusPill = document.getElementById("paperFormStatus");
+  if (statusPill) {
+    statusPill.textContent = chosen === "LIVE" ? "🟢 Live Upstox Mode" : "🎮 Manual Sandbox Mode";
+  }
+  
+  try {
+    localStorage.setItem("portfoliox_pref_feed_mode", chosen);
+  } catch (_) {}
+}
+window.toggleFeedMode = toggleFeedMode;
+
+async function toggleTradeFeedMode(tradeId) {
+  try {
+    const res = await fetchJson(`/api/live-alerts/trades/${tradeId}/toggle-mode`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" }
+    });
+    playTactileChime();
+    const isLive = res?.feedMode === "LIVE";
+    showDeskToast(
+      isLive ? "🟢 Live Stream Connected" : "🎮 Manual Mode Active",
+      res?.message || `Position switched to ${isLive ? "Live Upstox auto-exit" : "Manual sandbox simulation"}`,
+      isLive ? "🟢" : "🎮"
+    );
+    await loadPaperLab();
+  } catch (err) {
+    showDeskToast("Toggle Error", err.message, "❌");
+  }
+}
+window.toggleTradeFeedMode = toggleTradeFeedMode;
+
 function incrementHedgeStrike(step) {
   if (!paperForm) return;
   const input = paperForm.querySelector('input[name="hedgeStrikePrice"]');
@@ -1669,10 +2016,10 @@ function incrementStrike(step) {
 }
 
 function renderWeeklyVisuals(lab) {
-  const trades = lab.closedTrades || [];
+  const trades = Array.isArray(lab.closedTrades) ? lab.closedTrades : [];
   const dailyTarget = byId("paperDailyBars");
   const calendarTarget = byId("paperTradeCalendar");
-  if (!dailyTarget || !calendarTarget) return;
+  if (!dailyTarget && !calendarTarget) return;
 
   const range = paperState.pnlRange || "week";
   const buckets = buildWeekBuckets(trades, range);
@@ -1680,46 +2027,55 @@ function renderWeeklyVisuals(lab) {
   const maxValue = Math.max(1, ...values.map((value) => Math.abs(value)));
 
   const totalRangePnl = buckets.reduce((sum, b) => sum + b.pnl, 0);
-  const rangePnlPct = (totalRangePnl / 100000) * 100;
+  const startingCapital = Number(lab.account?.starting_capital || 100000);
+  const rangePnlPct = (totalRangePnl / startingCapital) * 100;
 
   const bottomDailyPnl = byId("bottomDailyPnl");
   if (bottomDailyPnl) {
-    bottomDailyPnl.textContent = signedMoney(totalRangePnl);
-    bottomDailyPnl.className = totalRangePnl >= 0 ? "gain" : "loss";
+    bottomDailyPnl.textContent = `${totalRangePnl >= 0 ? "+" : ""}${paperMoney.format(totalRangePnl)}`;
+    bottomDailyPnl.className = totalRangePnl >= 0 ? "apple-numeral text-gain" : "apple-numeral text-loss";
   }
   const bottomDailyPnlPct = byId("bottomDailyPnlPct");
   if (bottomDailyPnlPct) {
-    bottomDailyPnlPct.textContent = `${totalRangePnl >= 0 ? "+" : ""}${rangePnlPct.toFixed(2)}%`;
-    bottomDailyPnlPct.className = totalRangePnl >= 0 ? "gain" : "loss";
+    bottomDailyPnlPct.textContent = `${rangePnlPct >= 0 ? "+" : ""}${rangePnlPct.toFixed(2)}%`;
+    bottomDailyPnlPct.className = `apple-pill-badge ${rangePnlPct >= 0 ? "badge-green" : "badge-loss"}`;
   }
 
-  dailyTarget.innerHTML = buckets.map((bucket) => {
-    const height = bucket.count ? Math.max(16, Math.round((Math.abs(bucket.pnl) / maxValue) * 92)) : 8;
-    const cls = bucket.count ? (bucket.pnl < 0 ? "loss" : "gain") : "quiet";
-    const tooltip = buildDayTooltip(bucket);
-    return `
-      <div class="paper-bar ${cls}" tabindex="0" data-paper-tooltip="${escapeHtml(tooltip)}">
-        <span style="height:${height}px"></span>
-        <small>${bucket.label}</small>
-      </div>
-    `;
-  }).join("");
+  if (dailyTarget) {
+    dailyTarget.innerHTML = buckets.map((bucket) => {
+      const hasTrades = bucket.count > 0;
+      const height = hasTrades ? Math.max(18, Math.round((Math.abs(bucket.pnl) / maxValue) * 78)) : 6;
+      const cls = hasTrades ? (bucket.pnl >= 0 ? "gain" : "loss") : "quiet";
+      const tooltip = buildDayTooltip(bucket);
+      return `
+        <div class="paper-bar ${cls}" tabindex="0" data-paper-tooltip="${escapeHtml(tooltip)}">
+          <div class="bar-fill-track">
+            <span class="bar-pill-fill" style="height:${height}px"></span>
+          </div>
+          <small class="bar-label">${bucket.label}</small>
+        </div>
+      `;
+    }).join("");
+  }
 
-  const maxCalendarRows = 4;
-  const calendarCells = Array.from({ length: maxCalendarRows }, (_, rowIndex) =>
-    buckets.slice(0, 7).map((bucket) => renderCalendarCell(bucket, rowIndex, maxCalendarRows)).join("")
-  ).join("");
-  calendarTarget.innerHTML = `
-    <div class="paper-calendar-days"><b>M</b><b>T</b><b>W</b><b>T</b><b>F</b><b>S</b><b>S</b></div>
-    <div class="paper-calendar-cells">${calendarCells}</div>
-    <div class="paper-calendar-legend"><span><i class="gain"></i> More trades</span><span><i></i> Less trades</span></div>
-  `;
+  if (calendarTarget) {
+    const maxCalendarRows = 4;
+    const calendarCells = Array.from({ length: maxCalendarRows }, (_, rowIndex) =>
+      buckets.slice(0, 7).map((bucket) => renderCalendarCell(bucket, rowIndex, maxCalendarRows)).join("")
+    ).join("");
+    calendarTarget.innerHTML = `
+      <div class="paper-calendar-days"><b>M</b><b>T</b><b>W</b><b>T</b><b>F</b><b>S</b><b>S</b></div>
+      <div class="paper-calendar-cells">${calendarCells}</div>
+      <div class="paper-calendar-legend"><span><i class="gain"></i> Profits</span><span><i class="loss"></i> Stops</span><span><i class="quiet"></i> Inactive</span></div>
+    `;
+  }
 }
 
 function renderCalendarCell(bucket, tradeIndex, maxRows) {
   const trade = bucket.trades[tradeIndex];
   if (!trade) {
-    return `<span class="paper-calendar-cell quiet" aria-hidden="true"></span>`;
+    const dayLabel = bucket.date.toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short" });
+    return `<span class="paper-calendar-cell quiet" aria-hidden="true" tabindex="0" data-paper-tooltip="${escapeHtml(dayLabel)}\nNo practice trades logged"></span>`;
   }
 
   const hiddenTradeCount = bucket.trades.length - maxRows;
@@ -1814,34 +2170,50 @@ function buildWeekBuckets(trades, range = "week") {
 }
 
 function buildDayTooltip(bucket) {
-  const dateText = bucket.date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", weekday: "short" });
+  const dateText = bucket.date.toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short" });
   if (!bucket.count) {
-    return `${dateText}\nNo live alerts`;
+    return `${dateText}\nNo practice trades on this date`;
   }
-  const symbols = bucket.trades.map((trade) => trade.symbol).slice(0, 3).join(", ");
-  const extra = bucket.trades.length > 3 ? ` +${bucket.trades.length - 3} more` : "";
-  return [
-    dateText,
-    `Alerts: ${bucket.count}`,
-    `Capital watched: ${paperMoney.format(bucket.invested)}`,
-    `P&L: ${signedMoney(bucket.pnl)}`,
-    `Wins/Losses: ${bucket.wins}/${bucket.losses}`,
-    `Alerts: ${symbols}${extra}`,
-  ].join("\n");
+  const lines = [
+    `📅 ${dateText}`,
+    `📦 Closed Trades: ${bucket.count}`,
+    `💰 Realized P&L: ${signedMoney(bucket.pnl)}`,
+    `🎯 Wins/Losses: ${bucket.wins}W / ${bucket.losses}L`,
+    "",
+    "Trade Details:"
+  ];
+  bucket.trades.forEach((trade, idx) => {
+    if (idx < 5) {
+      const pnl = Number(trade.netPnl || 0);
+      const sign = pnl >= 0 ? "+" : "";
+      const reason = trade.closeReason === "TARGET_HIT" ? "Target Hit" : trade.closeReason === "STOP_LOSS_HIT" ? "SL Hit" : (trade.closeReason || "Closed");
+      lines.push(`• ${trade.symbol}: ${sign}${signedMoney(pnl)} (${reason})`);
+    }
+  });
+  if (bucket.trades.length > 5) {
+    lines.push(`+ ${bucket.trades.length - 5} more trades`);
+  }
+  return lines.join("\n");
 }
 
 function buildTradeTooltip(trade, bucket) {
   const exitDate = parseTradeDate(trade.exitDatetime || trade.entryDatetime);
-  const dateText = exitDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", weekday: "short" });
+  const dateText = exitDate.toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short" });
+  const timeText = exitDate.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
   const pnl = Number(trade.netPnl || 0);
+  const reasonText = trade.closeReason === "TARGET_HIT" ? "🎯 Target Hit" : trade.closeReason === "STOP_LOSS_HIT" ? "🛑 Stop Loss Hit" : "⚡ " + (trade.closeReason || "Closed");
+  const qty = Number(trade.quantity || 1);
+  const lot = Number(trade.lotSize || 1);
+  const totalUnits = qty * lot;
+
   return [
-    `${dateText} Â· ${trade.symbol}`,
-    `Result: ${pnl >= 0 ? "WIN" : "LOSS"}`,
-    `Capital watched: ${paperMoney.format(getTradeInvestedAmount(trade))}`,
-    `Entry: ${paperMoney.format(trade.entryPrice || 0)}`,
-    `Exit: ${paperMoney.format(trade.exitPrice || 0)}`,
-    `P&L: ${signedMoney(pnl)}`,
-    `Day total: ${signedMoney(bucket.pnl)}`,
+    `⚡ ${trade.symbol}`,
+    `📅 ${dateText} at ${timeText}`,
+    `Status: ${pnl >= 0 ? "✅ WIN" : "❌ LOSS"} (${reasonText})`,
+    `Qty: ${qty} lot (${totalUnits} units)`,
+    `Entry: ₹${Number(trade.entryPrice || 0).toFixed(2)} → Exit: ₹${Number(trade.exitPrice || 0).toFixed(2)}`,
+    `Realized P&L: ${signedMoney(pnl)}`,
+    `Day Cumulative P&L: ${signedMoney(bucket.pnl)}`
   ].join("\n");
 }
 
@@ -1917,21 +2289,24 @@ function parseTradeDate(value) {
 
 function handlePaperTooltipOver(event) {
   const target = event.target.closest("[data-paper-tooltip]");
-  if (!target || !paperLab.contains(target)) return;
+  if (!target) return;
   showPaperHoverToast(target.dataset.paperTooltip, event.clientX, event.clientY);
 }
 
 function handlePaperTooltipMove(event) {
-  if (!event.target.closest("[data-paper-tooltip]")) return;
-  movePaperHoverToast(event.clientX, event.clientY);
+  const target = event.target.closest("[data-paper-tooltip]");
+  if (!target) {
+    hidePaperHoverToast();
+    return;
+  }
+  showPaperHoverToast(target.dataset.paperTooltip, event.clientX, event.clientY);
 }
 
 function handlePaperTooltipOut(event) {
-  const target = event.target.closest("[data-paper-tooltip]");
-  if (!target) return;
   const nextTarget = event.relatedTarget?.closest?.("[data-paper-tooltip]");
-  if (nextTarget === target) return;
-  hidePaperHoverToast();
+  if (!nextTarget) {
+    hidePaperHoverToast();
+  }
 }
 
 function handlePaperTooltipFocus(event) {
@@ -1942,27 +2317,48 @@ function handlePaperTooltipFocus(event) {
 }
 
 function showPaperHoverToast(text, x, y) {
-  if (!text) return;
+  if (!text || text.trim() === "") {
+    hidePaperHoverToast();
+    return;
+  }
   const toast = getPaperHoverToast();
   toast.textContent = text;
+  toast.style.display = "block";
   toast.hidden = false;
   movePaperHoverToast(x, y);
 }
 
 function movePaperHoverToast(x, y) {
   const toast = getPaperHoverToast();
-  if (toast.hidden) return;
-  const padding = 14;
+  if (toast.hidden || toast.style.display === "none") return;
+  const padding = 16;
   const rect = toast.getBoundingClientRect();
-  const left = clamp(x + 14, padding, window.innerWidth - rect.width - padding);
-  const top = clamp(y + 14, padding, window.innerHeight - rect.height - padding);
+  const width = rect.width || 240;
+  const height = rect.height || 90;
+  
+  let left = x + 16;
+  let top = y + 16;
+  
+  if (left + width > window.innerWidth - padding) {
+    left = x - width - 16;
+  }
+  if (top + height > window.innerHeight - padding) {
+    top = y - height - 16;
+  }
+  
+  left = Math.max(padding, left);
+  top = Math.max(padding, top);
+  
   toast.style.left = `${left}px`;
   toast.style.top = `${top}px`;
 }
 
 function hidePaperHoverToast() {
   const toast = document.getElementById("paperHoverToast");
-  if (toast) toast.hidden = true;
+  if (toast) {
+    toast.hidden = true;
+    toast.style.display = "none";
+  }
 }
 
 function getPaperHoverToast() {
@@ -1972,6 +2368,7 @@ function getPaperHoverToast() {
     toast.id = "paperHoverToast";
     toast.className = "paper-hover-toast";
     toast.hidden = true;
+    toast.style.display = "none";
     document.body.appendChild(toast);
   }
   return toast;
@@ -1994,24 +2391,48 @@ async function deletePaperTradeFromUi(id, button) {
     return;
   }
 
-  const row = button?.closest(".paper-position-card, .paper-closed-row");
-  setPaperStatus("Deleting...");
-  if (button) {
-    button.disabled = true;
-    button.textContent = "Deleting...";
+  if (!confirm(`Delete practice trade #${tradeId}? This will remove it from your history.`)) {
+    return;
+  }
+
+  const row = button?.closest(".paper-position-card, .paper-closed-row, tr") || document.querySelector(`[data-closed-trade-id="${tradeId}"]`);
+  
+  // 1. Optimistic smooth DOM removal
+  if (row) {
+    row.style.transition = "opacity 0.2s ease, transform 0.2s ease";
+    row.style.opacity = "0";
+    row.style.transform = "scale(0.96)";
+    setTimeout(() => { try { row.remove(); } catch(_) {} }, 200);
+  }
+
+  // 2. Optimistic in-memory splicing
+  if (paperState.lab) {
+    if (Array.isArray(paperState.lab.openTrades)) {
+      paperState.lab.openTrades = paperState.lab.openTrades.filter(t => Number(t.id) !== tradeId);
+      renderOpenPaperTrades(paperState.lab.openTrades);
+    }
+    if (Array.isArray(paperState.lab.closedTrades)) {
+      paperState.lab.closedTrades = paperState.lab.closedTrades.filter(t => Number(t.id) !== tradeId);
+      renderClosedPaperTrades(paperState.lab.closedTrades);
+    }
+    try { renderPaperSummary(paperState.lab); } catch(_) {}
+  }
+
+  showDeskToast("Trade Deleted", `Practice trade #${tradeId} removed.`, "🗑️");
+
+  // 3. Cross-view dispatch
+  document.dispatchEvent(new CustomEvent("portfoliox:trade-deleted", { detail: { tradeId } }));
+  if (deskChannel) {
+    try { deskChannel.postMessage({ type: "TRADE_MUTATION", action: "delete", tradeId }); } catch(_) {}
   }
 
   try {
     await fetchJson(`/api/live-alerts/trades/${tradeId}/delete`, { method: "POST" });
-    row?.remove();
-    await loadPaperLab();
-    setPaperStatus("Live alert deleted");
+    setPaperStatus("Trade deleted");
   } catch (error) {
-    if (button) {
-      button.disabled = false;
-      button.textContent = "Delete";
-    }
+    showDeskToast("Delete Error", error.message, "❌");
     setPaperStatus(`Delete failed: ${error.message}`, true);
+    await loadPaperLab(); // Rollback on network error
   }
 }
 
@@ -2089,13 +2510,41 @@ function startLiveClock() {
   setInterval(update, 1000);
 }
 
+function setStreamStatusUi(status) {
+  const statusBadge = byId("paperStreamStatus");
+  if (!statusBadge) return;
+  if (status === "live") {
+    statusBadge.className = "stream-pulse-badge live";
+    const label = statusBadge.querySelector(".pulse-label");
+    if (label) label.textContent = "LIVE STREAM";
+    statusBadge.dataset.paperTooltip = "Real-Time Execution Engine: Connected & streaming live practice data (SSE active)";
+  } else if (status === "reconnecting") {
+    statusBadge.className = "stream-pulse-badge reconnecting";
+    const label = statusBadge.querySelector(".pulse-label");
+    if (label) label.textContent = "RECONNECTING...";
+    statusBadge.dataset.paperTooltip = "SSE Connection dropped. Auto-reconnecting to stream...";
+  } else {
+    statusBadge.className = "stream-pulse-badge offline";
+    const label = statusBadge.querySelector(".pulse-label");
+    if (label) label.textContent = "OFFLINE";
+    statusBadge.dataset.paperTooltip = "Execution stream offline. Check internet connection.";
+  }
+}
+
 function connectPaperSse() {
   if (paperSse) {
     try { paperSse.close(); } catch(e) {}
   }
+  
+  setStreamStatusUi("reconnecting");
   paperSse = new EventSource("/api/live-alerts/live-events");
   
+  paperSse.onopen = () => {
+    setStreamStatusUi("live");
+  };
+
   paperSse.addEventListener("tick", (event) => {
+    setStreamStatusUi("live");
     try {
       const data = JSON.parse(event.data);
       const payload = data.payload || {};
@@ -2136,10 +2585,119 @@ function connectPaperSse() {
   paperSse.addEventListener("trade_mutation", handleReloadEvent);
   
   paperSse.onerror = (err) => {
+    setStreamStatusUi("reconnecting");
     console.warn("SSE connection error, retrying in 5s...", err);
-    paperSse.close();
+    try { paperSse.close(); } catch(_) {}
     setTimeout(connectPaperSse, 5000);
   };
+
+  if (!window._paperTabVisibilityAttached) {
+    window._paperTabVisibilityAttached = true;
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        loadPaperLab();
+        if (!paperSse || paperSse.readyState === 2 /* CLOSED */) {
+          connectPaperSse();
+        }
+      }
+    });
+    window.addEventListener("focus", () => {
+      if (!paperSse || paperSse.readyState === 2 /* CLOSED */) {
+        connectPaperSse();
+      }
+    });
+
+    // ⚡ Post-Mortem Card Interactive Drilldown
+    document.addEventListener("click", (e) => {
+      const card = e.target.closest("[data-drilldown-id]");
+      if (!card) return;
+      const tradeId = card.getAttribute("data-drilldown-id");
+      if (!tradeId) return;
+      
+      const storyTarget = document.getElementById(`story-${tradeId}`) || document.querySelector(`[data-trade-id="${tradeId}"]`) || document.querySelector(`[data-paper-trade-row="${tradeId}"]`);
+      if (storyTarget) {
+        storyTarget.scrollIntoView({ behavior: "smooth", block: "center" });
+        storyTarget.classList.add("highlight-pulse-gold");
+        setTimeout(() => storyTarget.classList.remove("highlight-pulse-gold"), 2500);
+        showDeskToast("Audit Drilldown", `Navigated to Trade Story #${tradeId}.`, "🔍");
+      } else {
+        const storiesSec = document.getElementById("paperTradeStoriesList") || document.getElementById("paperClosedTrades");
+        if (storiesSec) {
+          storiesSec.scrollIntoView({ behavior: "smooth", block: "start" });
+          showDeskToast("Audit Ledger", `Inspecting Trade History for #${tradeId}.`, "📖");
+        }
+      }
+    });
+
+    // Keyboard support for Enter/Space on drilldown cards
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        const card = document.activeElement?.closest("[data-drilldown-id]");
+        if (card) {
+          e.preventDefault();
+          card.click();
+          return;
+        }
+      }
+
+      // Pro Keyboard Shortcuts (1-4 timeframe, B/W alert navigation, ? help)
+      const tag = (e.target.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select" || e.target.isContentEditable) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      if (e.key === "1") {
+        const btn = document.querySelector('.paper-pnl-range[data-pnl-range="week"]');
+        if (btn) btn.click();
+      } else if (e.key === "2") {
+        const btn = document.querySelector('.paper-pnl-range[data-pnl-range="last_week"]');
+        if (btn) btn.click();
+      } else if (e.key === "3") {
+        const btn = document.querySelector('.paper-pnl-range[data-pnl-range="month"]');
+        if (btn) btn.click();
+      } else if (e.key === "4") {
+        const btn = document.querySelector('.paper-pnl-range[data-pnl-range="all"]');
+        if (btn) btn.click();
+      } else if (e.key === "b" || e.key === "B") {
+        const bestCard = document.querySelector(".pro-edge-card.best");
+        if (bestCard) {
+          bestCard.scrollIntoView({ behavior: "smooth", block: "center" });
+          bestCard.focus();
+        }
+      } else if (e.key === "w" || e.key === "W") {
+        const worstCard = document.querySelector(".pro-edge-card.worst");
+        if (worstCard) {
+          worstCard.scrollIntoView({ behavior: "smooth", block: "center" });
+          worstCard.focus();
+        }
+      } else if (e.key === "?" || e.key === "/") {
+        showDeskToast("⚡ Pro Keyboard Shortcuts", "1-4: Switch Timeline Range | B: Jump to Best Alert | W: Jump to Worst Alert", "⌨️");
+      }
+    });
+
+    // ⚡ Triggered Trade History Ledger Filter Chips
+    document.addEventListener("click", (e) => {
+      const filterBtn = e.target.closest(".ledger-filter-btn");
+      if (!filterBtn) return;
+      document.querySelectorAll(".ledger-filter-btn").forEach(b => b.classList.remove("active"));
+      filterBtn.classList.add("active");
+      paperState.ledgerFilter = filterBtn.getAttribute("data-ledger-filter") || "all";
+      renderClosedPaperTrades(paperState.lab?.closedTrades || []);
+    });
+
+    // 📥 Export Ledger CSV Button
+    document.addEventListener("click", (e) => {
+      if (e.target.closest("#btnExportLedgerCsv")) {
+        exportClosedTradesToCsv();
+      }
+    });
+
+    // ⚡ Emergency Square-Off Killswitch
+    document.addEventListener("click", (e) => {
+      if (e.target.closest("#btnSquareOffAll")) {
+        squareOffAllTrades();
+      }
+    });
+  }
 }
 
 function updateTradeLtpInUi(tradeId, ltp) {
@@ -2219,6 +2777,9 @@ function incrementLots(step) {
 
 async function loadCopilotSetupIntoForm(e) {
   if (e && typeof e.preventDefault === "function") e.preventDefault();
+  if (isAutoDeploying) return;
+  isAutoDeploying = true;
+
   const btn = document.getElementById("btnFastDeployLiveSignal") || document.getElementById("btnDeployCopilotPractice");
   const origHtml = btn ? btn.innerHTML : "";
   if (btn) {
@@ -2254,6 +2815,7 @@ async function loadCopilotSetupIntoForm(e) {
     showDeskToast("Deployment Error", err.message, "❌");
     setPaperStatus(err.message, true);
   } finally {
+    isAutoDeploying = false;
     if (btn) {
       btn.disabled = false;
       btn.innerHTML = origHtml;
@@ -2436,28 +2998,67 @@ function initLiveDeskButtons() {
   }
 }
 
-function initWeekendMarketSimulation() {
-  if (simulationInterval) clearInterval(simulationInterval);
-  
-  simulationInterval = setInterval(() => {
-    if (document.documentElement.dataset.activeView !== "paper") return;
-    const openTrades = paperState.lab?.openTrades || [];
-    if (!openTrades.length) return;
+function copyBrokerPayload(tradeId) {
+  const trade = (paperState.lab?.openTrades || []).find((t) => Number(t.id) === Number(tradeId)) ||
+                (paperState.lab?.closedTrades || []).find((t) => Number(t.id) === Number(tradeId));
+  if (!trade) {
+    showDeskToast("Notice", "Trade details not found.", "ℹ️");
+    return;
+  }
 
-    const active = openTrades[0];
-    const currentMark = Number(active.lastMarkPrice || active.entryPrice || 83);
-    const tickDelta = (Math.random() - 0.48) * 0.40;
-    const newPrice = Math.max(0.05, Number((currentMark + tickDelta).toFixed(2)));
-    
-    active.lastMarkPrice = newPrice;
-    syncLiveDeskFromForm();
+  const units = (Number(trade.quantity) || 1) * Math.max(1, Number(trade.lotSize) || 65);
+  const entry = Number(trade.entryPrice || 0).toFixed(2);
+  const stop = Number(trade.stopLoss || 0).toFixed(2);
+  const target = Number(trade.targetPrice || 0).toFixed(2);
+  const side = trade.optionType === "PUT" ? "PUT" : "CALL";
 
-    if (active.targetPrice && newPrice >= Number(active.targetPrice)) {
-      setPaperStatus("🎯 Target Hit in Live Tracking!");
-    } else if (active.stopLoss && newPrice <= Number(active.stopLoss)) {
-      setPaperStatus("🛑 Stop Loss Protected in Live Tracking!");
-    }
-  }, 2500);
+  const payload = [
+    `═══════════════════════════════════════════`,
+    `📋 BROKER ORDER TICKET (Groww / Zerodha)`,
+    `═══════════════════════════════════════════`,
+    `• CONTRACT:    ${trade.symbol}`,
+    `• ACTION:      BUY (${side} Option)`,
+    `• PRODUCT:     INTRADAY (MIS / Regular)`,
+    `• QUANTITY:    ${units} (${trade.quantity || 1} Lot)`,
+    `• ENTRY LIMIT: ₹${entry} (Limit Order)`,
+    `• STOP LOSS:   ₹${stop} (Trigger SL)`,
+    `• TARGET (TP): ₹${target} (Take Profit)`,
+    `• ORDER TYPE:  LIMIT ORDER (Strict Slippage Cap)`,
+    `═══════════════════════════════════════════`
+  ].join("\n");
+
+  navigator.clipboard.writeText(payload).then(() => {
+    playTactileChime();
+    showDeskToast("📋 Broker Ticket Copied", `${trade.symbol} · Ready to paste in Groww/Zerodha!`, "🚀");
+  }).catch(() => {
+    showDeskToast("Copy Notice", "Could not copy to clipboard.", "ℹ️");
+  });
 }
+window.copyBrokerPayload = copyBrokerPayload;
+
+function toggleSlippageSimulation(enabled) {
+  isSlippageSimulationEnabled = Boolean(enabled);
+  const badge = document.getElementById("slippageStatusBadge");
+  if (badge) {
+    if (isSlippageSimulationEnabled) {
+      badge.className = "apple-pill-badge badge-warning";
+      badge.textContent = "🛡️ Real -0.50pt Spread Active";
+      badge.style.color = "#fbbf24";
+      badge.style.borderColor = "rgba(251, 191, 36, 0.4)";
+      badge.style.background = "rgba(251, 191, 36, 0.12)";
+      showDeskToast("Slippage Guard Active", "Entry & exit fills will now model -0.50 pt spread penalty to prove real edge.", "🛡️");
+    } else {
+      badge.className = "apple-pill-badge badge-neutral";
+      badge.textContent = "Ideal 0ms Fills";
+      badge.style.color = "";
+      badge.style.borderColor = "";
+      badge.style.background = "";
+      showDeskToast("Ideal Fills Active", "Slippage penalty disabled.", "⚡");
+    }
+  }
+}
+window.toggleSlippageSimulation = toggleSlippageSimulation;
+
+
 
 

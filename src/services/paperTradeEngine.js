@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { getPaperLab, markPaperTrade } from "../repositories/paper-lab.repository.js";
+import { getTradeById } from "../repositories/trades.repository.js";
 import { createUpstoxClient } from "./upstoxClient.js";
 
 const MARKET_CLOSED_REFRESH_MS = 60_000;
@@ -13,9 +14,11 @@ export class PaperTradeEngine extends EventEmitter {
     this.tokenToTradeIds = new Map();
     this.resolving = new Set();
     this.triggering = new Set();
+    this.pendingMarks = new Map();
     this.lastEventId = 0;
     this.events = [];
     this.refreshTimer = null;
+    this.flushTimer = null;
     this.started = false;
 
     this.client.on("tick", (tick) => this.handleTick(tick));
@@ -30,12 +33,16 @@ export class PaperTradeEngine extends EventEmitter {
     this.client.start();
     this.refreshActiveTrades();
     this.refreshTimer = setInterval(() => this.refreshActiveTrades(), ACTIVE_REFRESH_MS);
+    this.flushTimer = setInterval(() => this.flushPendingMarks(), 1000);
   }
 
   stop() {
     this.started = false;
     if (this.refreshTimer) clearInterval(this.refreshTimer);
+    if (this.flushTimer) clearInterval(this.flushTimer);
     this.refreshTimer = null;
+    this.flushTimer = null;
+    this.flushPendingMarks();
     this.client.stop();
   }
 
@@ -95,9 +102,13 @@ export class PaperTradeEngine extends EventEmitter {
   }
 
   async syncTrade(tradeId) {
-    const trade = (getPaperLab({ range: "week" }).openTrades || []).find((item) => Number(item.id) === Number(tradeId));
+    const id = Number(tradeId);
+    let trade = (getPaperLab({ range: "week" }).openTrades || []).find((item) => Number(item.id) === id);
     if (!trade) {
-      this.removeTrade(Number(tradeId));
+      trade = getTradeById(id);
+    }
+    if (!trade || trade.status !== "OPEN") {
+      this.removeTrade(id);
       return;
     }
     await this.ensureTradeSubscription(trade, { force: true });
@@ -125,8 +136,10 @@ export class PaperTradeEngine extends EventEmitter {
     const id = Number(trade.id);
     if (!id || this.resolving.has(id)) return;
 
-    // Isolate pure manual sandbox practice trades from Upstox live ticker overwrite
-    if (trade.personalNotes?.includes("[SANDBOX_MANUAL]") || trade.isSandbox) {
+    // Isolate only explicit MANUAL_ONLY trades from Upstox live ticker subscription
+    const isExplicitManual = trade.feedMode === "MANUAL" || trade.personalNotes?.includes("[MANUAL_ONLY]");
+    if (isExplicitManual) {
+      if (this.activeTrades.has(id)) this.removeTrade(id);
       return;
     }
 
@@ -187,6 +200,7 @@ export class PaperTradeEngine extends EventEmitter {
       if (!item || item.tokenKey !== tick.key) continue;
       item.lastLtp = tick.ltp;
       item.lastTickAt = tick.receivedAt;
+      this.pendingMarks.set(id, { price: tick.ltp, time: tick.receivedAt });
       this.publish("tick", {
         tradeId: id,
         symbol: item.trade.symbol,
@@ -195,6 +209,30 @@ export class PaperTradeEngine extends EventEmitter {
         receivedAt: tick.receivedAt,
       });
       this.evaluateTrigger(item.trade, tick);
+    }
+  }
+
+  flushPendingMarks() {
+    if (!this.pendingMarks.size) return;
+    const entries = Array.from(this.pendingMarks.entries());
+    this.pendingMarks.clear();
+
+    try {
+      import("../db/connection.js").then(({ getDb }) => {
+        const db = getDb();
+        db.exec("BEGIN;");
+        try {
+          const stmt = db.prepare("UPDATE trades SET last_mark_price = ?, last_marked_at = ? WHERE id = ? AND status = 'OPEN'");
+          for (const [id, data] of entries) {
+            stmt.run(data.price, data.time || new Date().toISOString(), id);
+          }
+          db.exec("COMMIT;");
+        } catch {
+          db.exec("ROLLBACK;");
+        }
+      }).catch(() => {});
+    } catch {
+      // non-fatal
     }
   }
 

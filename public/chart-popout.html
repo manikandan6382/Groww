@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TradingView Pop-Out Terminal · PortfolioX</title>
+  <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    :root {
+      --apple-bg: #070a12;
+      --apple-glass: rgba(14, 19, 30, 0.88);
+      --apple-border: rgba(255, 255, 255, 0.09);
+      --apple-cyan: #00f0ff;
+      --apple-gain: #10b981;
+      --apple-loss: #f87171;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--apple-bg);
+      color: #f1f5f9;
+      font-family: 'Inter', -apple-system, sans-serif;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .popout-header {
+      background: var(--apple-glass);
+      backdrop-filter: blur(24px) saturate(180%);
+      -webkit-backdrop-filter: blur(24px) saturate(180%);
+      border-bottom: 1px solid var(--apple-border);
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      z-index: 10;
+    }
+    .popout-sym-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .popout-sym-title {
+      font-size: 16px;
+      font-weight: 900;
+      color: #ffffff;
+    }
+    .popout-price {
+      font-size: 16px;
+      font-weight: 900;
+      font-family: monospace;
+      color: var(--apple-gain);
+    }
+    .popout-controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .timeframe-pills {
+      display: flex;
+      align-items: center;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid var(--apple-border);
+      border-radius: 8px;
+      padding: 3px;
+      gap: 3px;
+    }
+    .tf-btn {
+      background: transparent;
+      border: none;
+      color: #94a3b8;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .tf-btn.active {
+      background: rgba(255, 255, 255, 0.12);
+      color: #ffffff;
+    }
+    .popout-status-pill {
+      font-size: 10.5px;
+      font-weight: 800;
+      color: var(--apple-cyan);
+      background: rgba(0, 240, 255, 0.1);
+      border: 1px solid rgba(0, 240, 255, 0.25);
+      border-radius: 20px;
+      padding: 4px 10px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .pulse-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--apple-cyan);
+      box-shadow: 0 0 8px var(--apple-cyan);
+    }
+    #popoutChartContainer {
+      flex: 1;
+      width: 100%;
+      position: relative;
+    }
+  </style>
+</head>
+<body>
+  <header class="popout-header">
+    <div class="popout-sym-group">
+      <strong class="popout-sym-title" id="popoutSymbol">NIFTY 50</strong>
+      <span class="popout-price" id="popoutLtp">24,180.00</span>
+    </div>
+
+    <div class="popout-controls">
+      <div class="timeframe-pills">
+        <button type="button" class="tf-btn" data-tf="1m">1m</button>
+        <button type="button" class="tf-btn active" data-tf="5m">5m</button>
+        <button type="button" class="tf-btn" data-tf="15m">15m</button>
+        <button type="button" class="tf-btn" data-tf="1h">1h</button>
+      </div>
+      <div class="popout-status-pill">
+        <span class="pulse-dot"></span> 60 FPS Canvas Live
+      </div>
+    </div>
+  </header>
+
+  <main id="popoutChartContainer"></main>
+
+  <script type="module">
+    import { TradingViewTerminal } from "./js/tradingview-chart.js";
+    const params = new URLSearchParams(window.location.search);
+    const symbol = params.get("symbol") || "NIFTY 50";
+    document.getElementById("popoutSymbol").textContent = symbol;
+    const chartContainer = document.getElementById("popoutChartContainer");
+    const terminal = new TradingViewTerminal("popoutChartContainer", {
+      symbol,
+      timeframe: "5m",
+      height: chartContainer.clientHeight || 500
+    });
+    window.addEventListener("resize", () => { 
+      if (terminal?.chart) terminal.chart.resize(chartContainer.clientWidth, chartContainer.clientHeight); 
+    });
+    document.querySelectorAll(".tf-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".tf-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        terminal.setTimeframe(btn.getAttribute("data-tf"));
+      });
+    });
+  </script>
+</body>
+</html>
