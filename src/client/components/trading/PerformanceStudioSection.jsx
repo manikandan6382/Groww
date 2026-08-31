@@ -1,6 +1,9 @@
 import React, { useState } from "react";
 import { useTradingStore } from "../../stores/useTradingStore";
+import { soundEngine } from "../../utils/soundEngine";
 import { LuxuryDateRangePicker } from "../common/LuxuryDateRangePicker";
+import { RollingTicker } from "../common/RollingTicker";
+import { getLocalDateKey } from "../../utils/dateUtils";
 import { 
   Trophy, 
   ShieldAlert, 
@@ -28,11 +31,7 @@ import clsx from "clsx";
 // 🌟 PURE DYNAMIC SESSION AGGREGATOR DERIVED FROM UNIFIED MASTER TRADES
 // ─── Shared date utilities for session dataset builder ────────────────────────
 function getISODate(dt) {
-  // Returns YYYY-MM-DD for a Date object in local timezone
-  const y = dt.getFullYear();
-  const m = String(dt.getMonth() + 1).padStart(2, "0");
-  const d = String(dt.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+  return getLocalDateKey(dt);
 }
 
 function getWeekMonday(refDate = new Date()) {
@@ -131,7 +130,7 @@ export function buildDynamicSessionDataset(allTrades = [], range = "week", custo
   // ── TODAY ────────────────────────────────────────────────────────────────
   if (range === "today") {
     const todayTrades = trades.filter((t) => {
-      const d = t.exitDatetime?.split("T")[0] || t.entryDatetime?.split("T")[0] || todayStr;
+      const d = getLocalDateKey(t.exitDatetime || t.entryDatetime);
       return d === todayStr;
     });
     const bar = buildBar(todayTrades, "Today", "Today's Active Session", todayStr.slice(5), todayStr);
@@ -149,19 +148,19 @@ export function buildDynamicSessionDataset(allTrades = [], range = "week", custo
     };
   }
 
-  // ── THIS WEEK (dynamic Mon-Fri of current calendar week) ──────────────────
+  // ── THIS WEEK (dynamic Mon-Sun of current calendar week) ──────────────────
   if (range === "week" || range === "last_week") {
     const weekOffset = range === "last_week" ? -7 : 0;
     const monday = getWeekMonday(addDays(new Date(), weekOffset));
-    const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri"];
-    const DAY_FULL  = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+    const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    const DAY_FULL  = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
     const bars = DAY_NAMES.map((dayLabel, i) => {
       const dayDate = addDays(monday, i);
       const dateStr = getISODate(dayDate);
       const dateShort = `${String(dayDate.getMonth() + 1).padStart(2, "0")}-${String(dayDate.getDate()).padStart(2, "0")}`;
       const dayTrades = trades.filter((t) => {
-        const d = t.exitDatetime?.split("T")[0] || t.entryDatetime?.split("T")[0];
+        const d = getLocalDateKey(t.exitDatetime || t.entryDatetime);
         return d === dateStr;
       });
       return buildBar(dayTrades, dayLabel, `${DAY_FULL[i]} (${dateShort})`, dateShort, dateStr);
@@ -288,39 +287,35 @@ export function PerformanceStudioSection() {
 
   // Shared filter helper — reused by both sections with their own range state
   const filterTradesByRange = (trades, range, csStart, csEnd) => {
-    const todayStr = new Date().toISOString().split("T")[0];
+    const todayKey = getLocalDateKey();
     if (range === "today") {
       return trades.filter((t) => {
-        const d = t.exitDatetime?.split("T")[0] || t.entryDatetime?.split("T")[0] || todayStr;
-        return d === todayStr;
+        const d = getLocalDateKey(t.exitDatetime || t.entryDatetime);
+        return d === todayKey;
       });
     }
-    if (range === "week") {
-      const d = new Date();
-      const day = d.getDay();
-      const monday = new Date(d);
-      monday.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
-      monday.setHours(0, 0, 0, 0);
-      const sunday = new Date(monday);
-      sunday.setDate(monday.getDate() + 6);
-      const weekStart = monday.toISOString().split("T")[0];
-      const weekEnd = sunday.toISOString().split("T")[0];
+    if (range === "week" || range === "last_week") {
+      const weekOffset = range === "last_week" ? -7 : 0;
+      const monday = getWeekMonday(addDays(new Date(), weekOffset));
+      const sunday = addDays(monday, 6);
+      const startKey = getLocalDateKey(monday);
+      const endKey = getLocalDateKey(sunday);
       return trades.filter((t) => {
-        const td = t.exitDatetime?.split("T")[0] || t.entryDatetime?.split("T")[0] || todayStr;
-        return td >= weekStart && td <= weekEnd;
+        const td = getLocalDateKey(t.exitDatetime || t.entryDatetime);
+        return td >= startKey && td <= endKey;
       });
     }
     if (range === "month") {
       const now = new Date();
       const prefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
       return trades.filter((t) => {
-        const td = t.exitDatetime?.split("T")[0] || t.entryDatetime?.split("T")[0] || todayStr;
+        const td = getLocalDateKey(t.exitDatetime || t.entryDatetime);
         return td.startsWith(prefix);
       });
     }
     if (range === "custom") {
       return trades.filter((t) => {
-        const td = t.exitDatetime?.split("T")[0] || t.entryDatetime?.split("T")[0] || todayStr;
+        const td = getLocalDateKey(t.exitDatetime || t.entryDatetime);
         if (csStart && csEnd) return td >= csStart && td <= csEnd;
         if (csStart) return td >= csStart;
         return true;
@@ -329,20 +324,92 @@ export function PerformanceStudioSection() {
     return trades; // "all"
   };
 
-
   // 1. Daily Session Cards — uses paperPnlRange from store
   const timeframeTrades = React.useMemo(() => {
     return filterTradesByRange(closedAlerts || [], paperPnlRange, customStart, customEnd);
   }, [closedAlerts, paperPnlRange, customStart, customEnd]);
+
+  // Discipline Matrix Scoped Trades (Dynamic: reflects timeframeTrades or all closedAlerts)
+  const matrixTrades = timeframeTrades.length > 0 ? timeframeTrades : (closedAlerts || []);
+
+  const matrixWins = matrixTrades.filter((t) => Number(t.netPnl || 0) > 0);
+  const matrixLosses = matrixTrades.filter((t) => Number(t.netPnl || 0) <= 0);
+  const matrixWinCount = matrixWins.length;
+  const matrixTotalCount = matrixTrades.length;
+
+  // 1. Dynamic Win Rate
+  const matrixWinRate = matrixTotalCount > 0 
+    ? ((matrixWinCount / matrixTotalCount) * 100).toFixed(1) 
+    : "0.0";
+
+  // 2. Dynamic Profit Factor
+  const matrixGrossWins = matrixWins.reduce((acc, t) => acc + Number(t.netPnl || 0), 0);
+  const matrixGrossLosses = Math.abs(matrixLosses.reduce((acc, t) => acc + Number(t.netPnl || 0), 0));
+  const matrixProfitFactor = matrixGrossLosses > 0 
+    ? (matrixGrossWins / matrixGrossLosses).toFixed(2) 
+    : matrixGrossWins > 0 
+      ? (matrixLosses.length === 0 ? "4.00" : "0.00") 
+      : "0.00";
+  const isMatrixPureWins = matrixGrossWins > 0 && matrixGrossLosses === 0;
+
+  // 3. Dynamic Average Risk-to-Reward (Avg R:R)
+  const calculatedRRs = matrixTrades.map((t) => {
+    const entry = Number(t.entryPrice || 0);
+    const target = Number(t.targetPrice || 0);
+    const sl = Number(t.stopLoss || 0);
+    if (entry > 0 && target > 0 && sl > 0) {
+      const risk = Math.abs(entry - sl);
+      const reward = Math.abs(target - entry);
+      if (risk > 0) return reward / risk;
+    }
+    return null;
+  }).filter((r) => r !== null && !isNaN(r) && r > 0 && r < 50);
+
+  const avgRRValue = calculatedRRs.length > 0 
+    ? (calculatedRRs.reduce((a, b) => a + b, 0) / calculatedRRs.length).toFixed(2) 
+    : "2.38";
+
+  // 4. Dynamic Best Streak
+  const matrixBestStreak = React.useMemo(() => {
+    if (matrixTrades.length === 0) return 0;
+    let maxS = 0;
+    let currS = 0;
+    const sorted = [...matrixTrades].sort((a, b) => new Date(a.entryDatetime || 0) - new Date(b.entryDatetime || 0));
+    sorted.forEach((t) => {
+      if (Number(t.netPnl || 0) > 0) {
+        currS++;
+        if (currS > maxS) maxS = currS;
+      } else {
+        currS = 0;
+      }
+    });
+    return maxS;
+  }, [matrixTrades]);
 
   // 2. Post-Mortem — uses its own independent postMortemRange local state
   const postMortemTrades = React.useMemo(() => {
     return filterTradesByRange(closedAlerts || [], postMortemRange, pmCustomStart, pmCustomEnd);
   }, [closedAlerts, postMortemRange, pmCustomStart, pmCustomEnd]);
 
-  // Practice sample progress
-  const practiceCompleted = Math.max(closedAlerts.length, 5);
-  const sampleSizeProgress = Math.min(100, (practiceCompleted / 30) * 100);
+  // Practice sample progress (Strict real-time count with zero artificial padding)
+  const practiceCompleted = (closedAlerts || []).length;
+  const sampleSizeProgress = Math.min(100, Math.round((practiceCompleted / 30) * 100));
+
+  // Dynamic Graduation Gate Metrics derived from actual closedAlerts ledger
+  const allWins = (closedAlerts || []).filter((t) => (t.netPnl || 0) > 0);
+  const allLosses = (closedAlerts || []).filter((t) => (t.netPnl || 0) <= 0);
+  const totalWinPnl = allWins.reduce((acc, t) => acc + Number(t.netPnl || 0), 0);
+  const totalLossPnl = Math.abs(allLosses.reduce((acc, t) => acc + Number(t.netPnl || 0), 0));
+  const gateProfitFactor = totalLossPnl > 0 
+    ? (totalWinPnl / totalLossPnl).toFixed(2) 
+    : totalWinPnl > 0 
+      ? (totalLossPnl === 0 ? "4.00" : "0.00") 
+      : "0.00";
+  const isPureWins = totalWinPnl > 0 && totalLossPnl === 0;
+  const planFollowedCount = (closedAlerts || []).filter((t) => t.followedPlan !== false && t.mistakeTags !== "Chased Extended Wick" && t.mistakeTags !== "Moved Stop Loss").length;
+  const gateDisciplinePct = (closedAlerts || []).length > 0 
+    ? Math.round((planFollowedCount / closedAlerts.length) * 100) 
+    : 100;
 
   const [selectedDayIndex, setSelectedDayIndex] = React.useState(0);
   const selectedDay = currentDataset.bars[selectedDayIndex] || currentDataset.bars[0];
@@ -366,7 +433,7 @@ export function PerformanceStudioSection() {
   const worstAlert = activeLossTrades.length > 0 ? [...activeLossTrades].sort((a, b) => a.netPnl - b.netPnl)[0] : null;
 
   return (
-    <div className="p-5 rounded-3xl bg-app-card/70 backdrop-blur-2xl border border-white/5 shadow-2xl space-y-6">
+    <div className="p-5 sm:p-6 rounded-3xl bg-gradient-to-b from-[#0e1628]/95 via-[#090e1c]/95 to-[#060a14]/95 backdrop-blur-2xl border border-white/[0.08] shadow-[0_16px_40px_rgba(0,0,0,0.45),inset_0_1px_0_rgba(255,255,255,0.08)] space-y-6">
       {/* Master Header & Telemetry */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-white/5">
         <div>
@@ -385,22 +452,32 @@ export function PerformanceStudioSection() {
         <div className="flex items-center gap-3 text-xs flex-wrap">
           <div className="p-2.5 rounded-2xl bg-white/[0.02] border border-white/5 text-right flex-shrink-0">
             <span className="text-[10px] text-slate-400 block">Realized Net P&amp;L ({currentDataset.label || paperPnlRange})</span>
-            <strong className={clsx("font-mono text-sm font-bold", totalRealizedPnl >= 0 ? "text-emerald-400" : "text-rose-400")}>
-              {totalRealizedPnl >= 0 ? "+" : ""}₹{totalRealizedPnl.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-            </strong>
+            <div className={clsx("font-mono text-sm font-bold", totalRealizedPnl >= 0 ? "text-emerald-400" : "text-rose-400")}>
+              <RollingTicker 
+                value={totalRealizedPnl} 
+                prefix="₹" 
+                showSign={true} 
+                decimalPlaces={2} 
+                className={totalRealizedPnl >= 0 ? "text-emerald-400" : "text-rose-400"}
+              />
+            </div>
           </div>
 
           <div className="p-2.5 rounded-2xl bg-white/[0.02] border border-white/5 text-right flex-shrink-0">
             <span className="text-[10px] text-slate-400 block">Win Rate</span>
             <div className="flex items-center gap-1.5 justify-end">
-              <strong className="font-mono text-sm font-bold text-cyan-400">{winRate}%</strong>
+              <div className="font-mono text-sm font-bold text-cyan-400">
+                <RollingTicker value={Number(winRate)} suffix="%" decimalPlaces={1} className="text-cyan-400" />
+              </div>
               <span className="text-[10px] text-slate-400 font-mono">({winCount}W / {lossCount}L)</span>
             </div>
           </div>
 
           <div className="p-2.5 rounded-2xl bg-white/[0.02] border border-white/5 text-right flex-shrink-0">
             <span className="text-[10px] text-slate-400 block">Timeframe Sample</span>
-            <strong className="font-mono text-sm font-bold text-white">{totalTradesCount} Trades</strong>
+            <div className="font-mono text-sm font-bold text-white">
+              <RollingTicker value={totalTradesCount} suffix=" Trades" decimalPlaces={0} className="text-white" />
+            </div>
           </div>
         </div>
       </div>
@@ -438,17 +515,23 @@ export function PerformanceStudioSection() {
                     key={tab.id}
                     type="button"
                     onClick={() => {
+                      soundEngine.playTabSwitchTone();
                       setPaperPnlRange(tab.id);
                       setSelectedDayIndex(0);
                       if (tab.id === "custom") setCalendarOpen(true);
                     }}
                     className={clsx(
-                      "px-3 py-1.5 rounded-lg font-bold transition text-xs flex items-center gap-1.5 whitespace-nowrap",
-                      isActive
-                        ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-sm"
-                        : "text-slate-400 hover:text-slate-200"
+                      "relative px-3 py-1.5 rounded-lg font-bold transition-colors text-xs flex items-center gap-1.5 whitespace-nowrap z-10",
+                      isActive ? "text-cyan-300" : "text-slate-400 hover:text-slate-200"
                     )}
                   >
+                    {isActive && (
+                      <motion.div
+                        layoutId="activeDailyTimeframePill"
+                        transition={{ type: "spring", stiffness: 450, damping: 32 }}
+                        className="absolute inset-0 rounded-lg bg-cyan-500/20 border border-cyan-500/35 shadow-[0_0_12px_rgba(6,182,212,0.25)] -z-10"
+                      />
+                    )}
                     {Icon && <Icon className="w-3.5 h-3.5 text-cyan-400" />}
                     <span>{tab.label}</span>
                   </button>
@@ -460,7 +543,10 @@ export function PerformanceStudioSection() {
             {paperPnlRange === "custom" && (
               <button
                 type="button"
-                onClick={() => setCalendarOpen(true)}
+                onClick={() => {
+                  soundEngine.playTabSwitchTone();
+                  setCalendarOpen(true);
+                }}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 text-xs font-mono font-bold transition whitespace-nowrap shadow-sm"
                 title="Edit custom date range"
               >
@@ -474,85 +560,93 @@ export function PerformanceStudioSection() {
 
         {/* 🌟 Full-Width 5-Card Apple Spatial Heatmap Deck */}
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-          {currentDataset.bars.map((d, idx) => {
-            const isGain = d.pnl >= 0;
-            const isSelected = selectedDayIndex === idx;
-            const dayWinRate = d.trades > 0 ? ((d.wins / d.trades) * 100).toFixed(0) : "0";
+          <AnimatePresence mode="popLayout">
+            {currentDataset.bars.map((d, idx) => {
+              const isGain = d.pnl >= 0;
+              const isSelected = selectedDayIndex === idx;
+              const dayWinRate = d.trades > 0 ? ((d.wins / d.trades) * 100).toFixed(0) : "0";
 
-            // Sparkline SVG Points computation
-            const points = (d.sparkline || [0, d.pnl]).map((val, pIdx, arr) => {
-              const min = Math.min(...arr, 0);
-              const max = Math.max(...arr, 1);
-              const range = Math.max(1, max - min);
-              const x = (pIdx / (arr.length - 1 || 1)) * 100;
-              const y = 100 - ((val - min) / range) * 80 - 10;
-              return `${x},${y}`;
-            }).join(" ");
+              // Sparkline SVG Points computation
+              const points = (d.sparkline || [0, d.pnl]).map((val, pIdx, arr) => {
+                const min = Math.min(...arr, 0);
+                const max = Math.max(...arr, 1);
+                const range = Math.max(1, max - min);
+                const x = (pIdx / (arr.length - 1 || 1)) * 100;
+                const y = 100 - ((val - min) / range) * 80 - 10;
+                return `${x},${y}`;
+              }).join(" ");
 
-            return (
-              <motion.div
-                key={d.day || idx}
-                layout
-                whileHover={{ y: -3, transition: { duration: 0.15 } }}
-                onClick={() => setSelectedDayIndex(idx)}
-                className={clsx(
-                  "p-3.5 rounded-2xl border transition-all duration-200 cursor-pointer flex flex-col justify-between space-y-2 relative overflow-hidden select-none",
-                  isSelected
-                    ? "bg-cyan-950/40 border-cyan-400/80 shadow-xl shadow-cyan-500/20 ring-1 ring-cyan-400/50"
-                    : "bg-[#060e1d]/70 hover:bg-[#081226] border-white/10 hover:border-white/20"
-                )}
-              >
-                {/* Top Row: Day Name & Date */}
-                <div className="flex items-center justify-between border-b border-white/5 pb-1.5">
-                  <strong className="text-xs font-bold text-white font-mono">{d.day}</strong>
-                  <span className="text-[10px] text-slate-400 font-mono">{d.date}</span>
-                </div>
+              const uniqueKey = `${paperPnlRange}-${d.dateStr || d.date || d.day || idx}`;
 
-                {/* Center P&L Numeral & Intraday Sparkline */}
-                <div className="space-y-1">
-                  <span className={clsx(
-                    "font-mono text-sm font-black block tabular-nums",
-                    isGain ? "text-emerald-400" : "text-rose-400"
-                  )}>
-                    {isGain ? "+" : ""}₹{Math.abs(d.pnl)}
-                  </span>
+              return (
+                <motion.div
+                  key={uniqueKey}
+                  layout
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  transition={{ duration: 0.2 }}
+                  whileHover={{ y: -3, transition: { duration: 0.15 } }}
+                  onClick={() => setSelectedDayIndex(idx)}
+                  className={clsx(
+                    "p-3.5 rounded-2xl border transition-all duration-200 cursor-pointer flex flex-col justify-between space-y-2 relative overflow-hidden select-none",
+                    isSelected
+                      ? "bg-cyan-950/40 border-cyan-400/80 shadow-xl shadow-cyan-500/20 ring-1 ring-cyan-400/50"
+                      : "bg-[#060e1d]/70 hover:bg-[#081226] border-white/10 hover:border-white/20"
+                  )}
+                >
+                  {/* Top Row: Day Name & Date */}
+                  <div className="flex items-center justify-between border-b border-white/5 pb-1.5">
+                    <strong className="text-xs font-bold text-white font-mono">{d.day}</strong>
+                    <span className="text-[10px] text-slate-400 font-mono">{d.date}</span>
+                  </div>
 
-                  {/* Micro Sparkline SVG */}
-                  <div className="h-6 w-full opacity-80">
-                    <svg viewBox="0 0 100 100" className="w-full h-full overflow-visible" preserveAspectRatio="none">
-                      <polyline
-                        fill="none"
-                        stroke={isGain ? "#10b981" : "#f43f5e"}
-                        strokeWidth="6"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        points={points}
+                  {/* Center P&L Numeral & Intraday Sparkline */}
+                  <div className="space-y-1">
+                    <span className={clsx(
+                      "font-mono text-sm font-black block tabular-nums",
+                      isGain ? "text-emerald-400" : "text-rose-400"
+                    )}>
+                      {isGain ? "+" : "-"}₹{Math.abs(d.pnl).toFixed(2)}
+                    </span>
+
+                    {/* Micro Sparkline SVG */}
+                    <div className="h-6 w-full opacity-80">
+                      <svg viewBox="0 0 100 100" className="w-full h-full overflow-visible" preserveAspectRatio="none">
+                        <polyline
+                          fill="none"
+                          stroke={isGain ? "#10b981" : "#f43f5e"}
+                          strokeWidth="6"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          points={points}
+                        />
+                      </svg>
+                    </div>
+                  </div>
+
+                  {/* Bottom Mini Progress Track */}
+                  <div className="space-y-1 pt-1.5 border-t border-white/5">
+                    <div className="h-1.5 w-full rounded-full bg-white/5 overflow-hidden flex">
+                      <div 
+                        className="bg-emerald-400 h-full" 
+                        style={{ width: `${dayWinRate}%` }} 
+                        title={`${d.wins} Wins`}
                       />
-                    </svg>
+                      <div 
+                        className="bg-rose-500 h-full" 
+                        style={{ width: `${100 - Number(dayWinRate)}%` }} 
+                        title={`${d.losses} Losses`}
+                      />
+                    </div>
+                    <span className="text-[9px] font-mono text-slate-400 block text-center truncate">
+                      {d.wins}W · {d.losses}L ({dayWinRate}%)
+                    </span>
                   </div>
-                </div>
-
-                {/* Bottom Mini Progress Track */}
-                <div className="space-y-1 pt-1.5 border-t border-white/5">
-                  <div className="h-1.5 w-full rounded-full bg-white/5 overflow-hidden flex">
-                    <div 
-                      className="bg-emerald-400 h-full" 
-                      style={{ width: `${dayWinRate}%` }} 
-                      title={`${d.wins} Wins`}
-                    />
-                    <div 
-                      className="bg-rose-500 h-full" 
-                      style={{ width: `${100 - Number(dayWinRate)}%` }} 
-                      title={`${d.losses} Losses`}
-                    />
-                  </div>
-                  <span className="text-[9px] font-mono text-slate-400 block text-center truncate">
-                    {d.wins}W · {d.losses}L ({dayWinRate}%)
-                  </span>
-                </div>
-              </motion.div>
-            );
-          })}
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
         </div>
       </div>
 
@@ -652,90 +746,131 @@ export function PerformanceStudioSection() {
           </motion.div>
         )}
 
-        {/* Discipline Matrix with Interactive Tooltips (Full 12-Column Width) */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs w-full">
-          {/* Metric 1: Win Rate */}
-          <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/5 text-center relative group/matrix hover:border-cyan-500/40 hover:bg-white/[0.04] transition-all duration-300 cursor-help">
-            {/* Tooltip */}
-            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 p-3 rounded-2xl bg-[#060e1d]/95 border border-cyan-500/30 shadow-2xl backdrop-blur-xl opacity-0 group-hover/matrix:opacity-100 transition-all duration-200 pointer-events-none z-30 scale-95 group-hover/matrix:scale-100 transform space-y-1 text-left">
-              <div className="flex items-center gap-1 text-cyan-300 font-bold text-xs pb-1 border-b border-white/10 whitespace-nowrap">
-                <Info className="w-3.5 h-3.5" />
-                <span>Win Rate ({winRate}%)</span>
-              </div>
-              <p className="text-[11px] text-slate-300 leading-relaxed">
-                Formula: <strong>(Targets Won ÷ Total Setups) × 100</strong>. At a 1:2.38 R:R, any win rate above 30% generates strong compounding profit.
-              </p>
-              <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-[#060e1d] border-r border-b border-cyan-500/30 rotate-45" />
-            </div>
-
-            <span className="text-[10px] text-slate-400 block flex items-center justify-center gap-1 font-semibold uppercase tracking-wider">
-              Win Rate
-              <HelpCircle className="w-3 h-3 text-slate-500" />
+        {/* Discipline Matrix with Interactive Tooltips & Active Scope Pill (Full 12-Column Width) */}
+        <div className="space-y-2.5 w-full">
+          <div className="flex items-center justify-between gap-2 flex-wrap px-0.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 font-mono">
+              <Zap className="w-3 h-3 text-cyan-400" />
+              DISCIPLINE &amp; EXPECTANCY MATRIX
             </span>
-            <strong className="font-mono text-cyan-400 font-black text-base block mt-1">{winRate}%</strong>
+            <div className="flex items-center gap-2">
+              {matrixTotalCount < 10 && matrixTotalCount > 0 && (
+                <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/20 font-mono">
+                  Sample: {matrixTotalCount}/30 Practice Trades
+                </span>
+              )}
+              <span className="text-[9px] font-bold px-2.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 font-mono">
+                Scoped: {currentDataset.label || paperPnlRange} ({matrixTotalCount} {matrixTotalCount === 1 ? "Trade" : "Trades"})
+              </span>
+            </div>
           </div>
 
-          {/* Metric 2: Profit Factor */}
-          <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/5 text-center relative group/matrix hover:border-emerald-500/40 hover:bg-white/[0.04] transition-all duration-300 cursor-help">
-            {/* Tooltip */}
-            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 p-3 rounded-2xl bg-[#060e1d]/95 border border-emerald-500/30 shadow-2xl backdrop-blur-xl opacity-0 group-hover/matrix:opacity-100 transition-all duration-200 pointer-events-none z-30 scale-95 group-hover/matrix:scale-100 transform space-y-1 text-left">
-              <div className="flex items-center gap-1 text-emerald-300 font-bold text-xs pb-1 border-b border-white/10 whitespace-nowrap">
-                <Info className="w-3.5 h-3.5" />
-                <span>Profit Factor ({profitFactor}x)</span>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs w-full">
+            {/* Metric 1: Win Rate */}
+            <motion.div 
+              whileHover={{ y: -3, scale: 1.01 }}
+              transition={{ type: "spring", stiffness: 400, damping: 25 }}
+              className="p-3.5 rounded-2xl bg-gradient-to-b from-white/[0.04] to-white/[0.01] border border-white/10 shadow-[0_8px_20px_rgba(0,0,0,0.3),inset_0_1px_0_rgba(255,255,255,0.06)] text-center relative group/matrix hover:border-cyan-500/50 transition-colors duration-300 cursor-help"
+            >
+              {/* Tooltip */}
+              <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 p-3 rounded-2xl bg-[#060e1d]/95 border border-cyan-500/30 shadow-2xl backdrop-blur-xl opacity-0 group-hover/matrix:opacity-100 transition-all duration-200 pointer-events-none z-30 scale-95 group-hover/matrix:scale-100 transform space-y-1 text-left">
+                <div className="flex items-center gap-1 text-cyan-300 font-bold text-xs pb-1 border-b border-white/10 whitespace-nowrap">
+                  <Info className="w-3.5 h-3.5" />
+                  <span>Win Rate ({matrixWinRate}%)</span>
+                </div>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  Formula: <strong>(Targets Won ÷ Total Setups) × 100</strong>. At a 1:{avgRRValue} R:R, any win rate above 35% generates strong compounding profit.
+                </p>
+                <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-[#060e1d] border-r border-b border-cyan-500/30 rotate-45" />
               </div>
-              <p className="text-[11px] text-slate-300 leading-relaxed">
-                Formula: <strong>Gross Wins ÷ Gross Losses</strong>. Measures expectancy. Any factor &gt; 2.0x represents an institutional-grade trading edge.
-              </p>
-              <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-[#060e1d] border-r border-b border-emerald-500/30 rotate-45" />
-            </div>
 
-            <span className="text-[10px] text-slate-400 block flex items-center justify-center gap-1 font-semibold uppercase tracking-wider">
-              Profit Factor
-              <HelpCircle className="w-3 h-3 text-slate-500" />
-            </span>
-            <strong className="font-mono text-emerald-400 font-black text-base block mt-1">{profitFactor}x</strong>
-          </div>
+              <span className="text-[10px] text-slate-400 block flex items-center justify-center gap-1 font-semibold uppercase tracking-wider">
+                Win Rate
+                <HelpCircle className="w-3 h-3 text-slate-500" />
+              </span>
+              <strong className="font-mono text-cyan-400 font-black text-base block mt-1">{matrixWinRate}%</strong>
+            </motion.div>
 
-          {/* Metric 3: Avg R:R */}
-          <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/5 text-center relative group/matrix hover:border-cyan-500/40 hover:bg-white/[0.04] transition-all duration-300 cursor-help">
-            {/* Tooltip */}
-            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 p-3 rounded-2xl bg-[#060e1d]/95 border border-cyan-500/30 shadow-2xl backdrop-blur-xl opacity-0 group-hover/matrix:opacity-100 transition-all duration-200 pointer-events-none z-30 scale-95 group-hover/matrix:scale-100 transform space-y-1 text-left">
-              <div className="flex items-center gap-1 text-cyan-300 font-bold text-xs pb-1 border-b border-white/10 whitespace-nowrap">
-                <Info className="w-3.5 h-3.5" />
-                <span>Risk-to-Reward (1:2.38)</span>
+            {/* Metric 2: Profit Factor */}
+            <motion.div 
+              whileHover={{ y: -3, scale: 1.01 }}
+              transition={{ type: "spring", stiffness: 400, damping: 25 }}
+              className="p-3.5 rounded-2xl bg-gradient-to-b from-white/[0.04] to-white/[0.01] border border-white/10 shadow-[0_8px_20px_rgba(0,0,0,0.3),inset_0_1px_0_rgba(255,255,255,0.06)] text-center relative group/matrix hover:border-emerald-500/50 transition-colors duration-300 cursor-help"
+            >
+              {/* Tooltip */}
+              <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 p-3 rounded-2xl bg-[#060e1d]/95 border border-emerald-500/30 shadow-2xl backdrop-blur-xl opacity-0 group-hover/matrix:opacity-100 transition-all duration-200 pointer-events-none z-30 scale-95 group-hover/matrix:scale-100 transform space-y-1 text-left">
+                <div className="flex items-center gap-1 text-emerald-300 font-bold text-xs pb-1 border-b border-white/10 whitespace-nowrap">
+                  <Info className="w-3.5 h-3.5" />
+                  <span>Profit Factor ({isMatrixPureWins ? "100% Win Rate" : `${matrixProfitFactor}x`})</span>
+                </div>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  Formula: <strong>Gross Wins ÷ Gross Losses</strong>. Measures expectancy. Any factor &gt; 2.0x represents an institutional-grade trading edge.
+                </p>
+                <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-[#060e1d] border-r border-b border-emerald-500/30 rotate-45" />
               </div>
-              <p className="text-[11px] text-slate-300 leading-relaxed">
-                Formula: <strong>Target Points ÷ Stop Loss Points</strong>. On average, you capture ₹2.38 for every ₹1.00 risked on simulated setups.
-              </p>
-              <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-[#060e1d] border-r border-b border-cyan-500/30 rotate-45" />
-            </div>
 
-            <span className="text-[10px] text-slate-400 block flex items-center justify-center gap-1 font-semibold uppercase tracking-wider">
-              Avg R:R
-              <HelpCircle className="w-3 h-3 text-slate-500" />
-            </span>
-            <strong className="font-mono text-white font-black text-base block mt-1">1:2.38</strong>
-          </div>
+              <span className="text-[10px] text-slate-400 block flex items-center justify-center gap-1 font-semibold uppercase tracking-wider">
+                Profit Factor
+                <HelpCircle className="w-3 h-3 text-slate-500" />
+              </span>
+              <strong className="font-mono text-emerald-400 font-black text-base block mt-1">
+                {isMatrixPureWins ? "∞ (100% Win)" : `${matrixProfitFactor}x`}
+              </strong>
+            </motion.div>
 
-          {/* Metric 4: Best Streak */}
-          <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/5 text-center relative group/matrix hover:border-amber-500/40 hover:bg-white/[0.04] transition-all duration-300 cursor-help">
-            {/* Tooltip */}
-            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 p-3 rounded-2xl bg-[#060e1d]/95 border border-amber-500/30 shadow-2xl backdrop-blur-xl opacity-0 group-hover/matrix:opacity-100 transition-all duration-200 pointer-events-none z-30 scale-95 group-hover/matrix:scale-100 transform space-y-1 text-left">
-              <div className="flex items-center gap-1 text-amber-300 font-bold text-xs pb-1 border-b border-white/10 whitespace-nowrap">
-                <Flame className="w-3.5 h-3.5 text-amber-400" />
-                <span>Best Streak (4 Wins)</span>
+            {/* Metric 3: Avg R:R */}
+            <motion.div 
+              whileHover={{ y: -3, scale: 1.01 }}
+              transition={{ type: "spring", stiffness: 400, damping: 25 }}
+              className="p-3.5 rounded-2xl bg-gradient-to-b from-white/[0.04] to-white/[0.01] border border-white/10 shadow-[0_8px_20px_rgba(0,0,0,0.3),inset_0_1px_0_rgba(255,255,255,0.06)] text-center relative group/matrix hover:border-cyan-500/50 transition-colors duration-300 cursor-help"
+            >
+              {/* Tooltip */}
+              <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 p-3 rounded-2xl bg-[#060e1d]/95 border border-cyan-500/30 shadow-2xl backdrop-blur-xl opacity-0 group-hover/matrix:opacity-100 transition-all duration-200 pointer-events-none z-30 scale-95 group-hover/matrix:scale-100 transform space-y-1 text-left">
+                <div className="flex items-center gap-1 text-cyan-300 font-bold text-xs pb-1 border-b border-white/10 whitespace-nowrap">
+                  <Info className="w-3.5 h-3.5" />
+                  <span>Risk-to-Reward (1:{avgRRValue})</span>
+                </div>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  Formula: <strong>Target Points ÷ Stop Loss Points</strong>. On average, you capture ₹{avgRRValue} for every ₹1.00 risked across {calculatedRRs.length > 0 ? `${calculatedRRs.length} logged setups` : "simulated setups"}.
+                </p>
+                <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-[#060e1d] border-r border-b border-cyan-500/30 rotate-45" />
               </div>
-              <p className="text-[11px] text-slate-300 leading-relaxed">
-                Consecutive profitable executions without triggering a single stop-loss or violating the daily 2-loss circuit breaker rule.
-              </p>
-              <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-[#060e1d] border-r border-b border-amber-500/30 rotate-45" />
-            </div>
 
-            <span className="text-[10px] text-slate-400 block flex items-center justify-center gap-1 font-semibold uppercase tracking-wider">
-              Best Streak
-              <HelpCircle className="w-3 h-3 text-slate-500" />
-            </span>
-            <strong className="font-mono text-amber-400 font-black text-base block mt-1">4 Wins</strong>
+              <span className="text-[10px] text-slate-400 block flex items-center justify-center gap-1 font-semibold uppercase tracking-wider">
+                Avg R:R
+                <HelpCircle className="w-3 h-3 text-slate-500" />
+              </span>
+              <strong className="font-mono text-white font-black text-base block mt-1">1:{avgRRValue}</strong>
+            </motion.div>
+
+            {/* Metric 4: Best Streak */}
+            <motion.div 
+              whileHover={{ y: -3, scale: 1.01 }}
+              transition={{ type: "spring", stiffness: 400, damping: 25 }}
+              className="p-3.5 rounded-2xl bg-gradient-to-b from-white/[0.04] to-white/[0.01] border border-white/10 shadow-[0_8px_20px_rgba(0,0,0,0.3),inset_0_1px_0_rgba(255,255,255,0.06)] text-center relative group/matrix hover:border-amber-500/50 transition-colors duration-300 cursor-help"
+            >
+              {/* Tooltip */}
+              <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 p-3 rounded-2xl bg-[#060e1d]/95 border border-amber-500/30 shadow-2xl backdrop-blur-xl opacity-0 group-hover/matrix:opacity-100 transition-all duration-200 pointer-events-none z-30 scale-95 group-hover/matrix:scale-100 transform space-y-1 text-left">
+                <div className="flex items-center gap-1 text-amber-300 font-bold text-xs pb-1 border-b border-white/10 whitespace-nowrap">
+                  <Flame className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Best Streak ({matrixBestStreak} {matrixBestStreak === 1 ? "Win" : "Wins"})</span>
+                </div>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  {matrixBestStreak > 0 
+                    ? `Longest run: ${matrixBestStreak} consecutive winning trades without triggering a single stop-loss.`
+                    : "Consecutive profitable executions without triggering a single stop-loss."}
+                </p>
+                <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-[#060e1d] border-r border-b border-amber-500/30 rotate-45" />
+              </div>
+
+              <span className="text-[10px] text-slate-400 block flex items-center justify-center gap-1 font-semibold uppercase tracking-wider">
+                Best Streak
+                <HelpCircle className="w-3 h-3 text-slate-500" />
+              </span>
+              <strong className="font-mono text-amber-400 font-black text-base block mt-1">
+                {matrixBestStreak} {matrixBestStreak === 1 ? "Win" : "Wins"}
+              </strong>
+            </motion.div>
           </div>
         </div>
       </div>
@@ -780,16 +915,22 @@ export function PerformanceStudioSection() {
                       key={tab.id}
                       type="button"
                       onClick={() => {
+                        soundEngine.playTabSwitchTone();
                         setPostMortemRange(tab.id); // ✅ own setter
                         if (tab.id === "custom") setPmCalendarOpen(true);
                       }}
                       className={clsx(
-                        "px-3 py-1 text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 whitespace-nowrap",
-                        isActive
-                          ? "bg-violet-500/20 text-violet-300 border border-violet-500/30 shadow-[0_0_10px_rgba(139,92,246,0.3)]"
-                          : "text-slate-400 hover:text-white"
+                        "relative px-3 py-1 text-xs font-bold rounded-xl transition-colors flex items-center gap-1.5 whitespace-nowrap z-10",
+                        isActive ? "text-violet-300" : "text-slate-400 hover:text-white"
                       )}
                     >
+                      {isActive && (
+                        <motion.div
+                          layoutId="activeStrategyTimeframePill"
+                          transition={{ type: "spring", stiffness: 450, damping: 32 }}
+                          className="absolute inset-0 rounded-xl bg-violet-500/20 border border-violet-500/35 shadow-[0_0_12px_rgba(139,92,246,0.25)] -z-10"
+                        />
+                      )}
                       {Icon && <Icon className="w-3 h-3 text-violet-400" />}
                       <span>{tab.label}</span>
                     </button>
@@ -801,7 +942,10 @@ export function PerformanceStudioSection() {
               {postMortemRange === "custom" && (
                 <button
                   type="button"
-                  onClick={() => setPmCalendarOpen(true)}
+                  onClick={() => {
+                    soundEngine.playTabSwitchTone();
+                    setPmCalendarOpen(true);
+                  }}
                   className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-violet-500/10 hover:bg-violet-500/20 border border-violet-500/30 text-violet-300 text-xs font-mono font-bold transition shadow-sm"
                   title="Edit custom date range"
                 >
@@ -1005,7 +1149,33 @@ export function PerformanceStudioSection() {
       </div>
 
       {/* 3-Step Live Capital Readiness & Micro-Lot Graduation Gate with Rich Tooltips */}
-      <div className="p-4 rounded-xl bg-white/[0.02] border border-white/10 space-y-3">
+      <div className="p-5 rounded-2xl bg-white/[0.02] border border-white/10 space-y-4">
+        {/* 🏆 Graduation Milestone Certified Celebration Banner */}
+        {practiceCompleted >= 30 && (Number(gateProfitFactor) >= 1.5 || isPureWins) && gateDisciplinePct >= 90 && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/20 via-yellow-500/10 to-amber-500/20 border border-amber-500/40 shadow-[0_0_30px_rgba(245,158,11,0.2)] flex items-center justify-between gap-3 text-xs flex-wrap"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-xl shadow-inner">
+                🎓
+              </div>
+              <div>
+                <strong className="text-amber-300 font-extrabold text-sm block">
+                  MICRO-LOT LIVE CAPITAL CERTIFIED!
+                </strong>
+                <p className="text-[11px] text-amber-200/80 font-sans">
+                  You have completed 30 statistical practice executions with a profitable edge ({isPureWins ? "100% Win Rate" : `${gateProfitFactor}x PF`}) and {gateDisciplinePct}% discipline. You are cleared for real-money Micro-Lot (1 Lot) deployment.
+                </p>
+              </div>
+            </div>
+            <div className="px-3 py-1.5 rounded-xl bg-amber-400 text-black font-extrabold text-xs shadow-md">
+              Cleared for 1-Lot Live Desk
+            </div>
+          </motion.div>
+        )}
+
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <Award className="w-4 h-4 text-amber-400" />
@@ -1078,13 +1248,22 @@ export function PerformanceStudioSection() {
                 2. Profit Factor (&ge; 1.5)
                 <HelpCircle className="w-3 h-3 text-slate-500" />
               </span>
-              <strong className="font-mono text-emerald-400 font-bold">{profitFactor}x</strong>
+              <strong className="font-mono text-emerald-400 font-bold">
+                {isPureWins ? "∞ (100% Win)" : `${gateProfitFactor}x`}
+              </strong>
             </div>
             <div className="w-full h-2 rounded-full bg-white/10 overflow-hidden">
-              <div className="h-full bg-emerald-500 rounded-full" style={{ width: "95%" }} />
+              <div 
+                className="h-full bg-emerald-500 rounded-full transition-all duration-300" 
+                style={{ width: `${Math.min(100, isPureWins ? 100 : (Number(gateProfitFactor) / 2.0) * 100)}%` }} 
+              />
             </div>
             <span className="text-[10px] text-emerald-400 block">
-              ✅ Exceeds 1.5 minimum threshold ({profitFactor}x achieved)
+              {practiceCompleted === 0 
+                ? "No practice trades recorded yet" 
+                : Number(gateProfitFactor) >= 1.5 || isPureWins 
+                  ? `✅ Exceeds 1.5 minimum threshold (${isPureWins ? "100% Win Rate" : `${gateProfitFactor}x achieved`})` 
+                  : `⚠️ Current PF: ${gateProfitFactor}x (Target: ≥ 1.50x)`}
             </span>
           </div>
 
@@ -1100,7 +1279,7 @@ export function PerformanceStudioSection() {
                 Measures whether you allow your automated stop-loss to execute cleanly without manually cancelling, freezing, or widening it during adverse price swings.
               </p>
               <div className="text-[10px] font-mono text-emerald-400 pt-0.5">
-                Current status: 100% disciplined exits.
+                Current status: {gateDisciplinePct}% plan adherence rate.
               </div>
               <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-[#060e1d] border-r border-b border-emerald-500/30 rotate-45" />
             </div>
@@ -1110,13 +1289,13 @@ export function PerformanceStudioSection() {
                 3. Stop Loss Discipline
                 <HelpCircle className="w-3 h-3 text-slate-500" />
               </span>
-              <strong className="font-mono text-emerald-400 font-bold">100% Adherence</strong>
+              <strong className="font-mono text-emerald-400 font-bold">{gateDisciplinePct}% Adherence</strong>
             </div>
             <div className="w-full h-2 rounded-full bg-white/10 overflow-hidden">
-              <div className="h-full bg-emerald-500 rounded-full" style={{ width: "100%" }} />
+              <div className="h-full bg-emerald-500 rounded-full transition-all duration-300" style={{ width: `${gateDisciplinePct}%` }} />
             </div>
             <span className="text-[10px] text-emerald-400 block">
-              ✅ Zero stop-loss violations logged
+              {gateDisciplinePct >= 90 ? "✅ Disciplined exits maintained" : "⚠️ Attention needed on execution"}
             </span>
           </div>
         </div>

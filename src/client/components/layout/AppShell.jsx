@@ -1,6 +1,7 @@
 import React from "react";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
+import { MarketIndicesStrip } from "./MarketIndicesStrip";
 import { RosettaDrawer } from "./RosettaDrawer";
 import { MobileBottomBar } from "./MobileBottomBar";
 import { ShortcutsModal } from "../common/ShortcutsModal";
@@ -22,6 +23,7 @@ export function AppShell({ children }) {
       {/* Main Workspace */}
       <div className="flex-1 flex flex-col min-w-0">
         <Topbar />
+        <MarketIndicesStrip />
         <RosettaDrawer />
         <main className="flex-1 p-4 md:p-6 max-w-7xl mx-auto w-full pb-24 md:pb-6">
           {children}

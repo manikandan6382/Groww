@@ -767,6 +767,22 @@ function loadDotEnv(filePath) {
   }
 }
 
+function gracefulShutdown(signal) {
+  console.log(`\n🛑 ${signal} received. Performing SQLite WAL checkpoint and graceful shutdown...`);
+  try {
+    import("./db/connection.js").then(({ getDb }) => {
+      const db = getDb();
+      db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+      console.log("💾 SQLite WAL checkpointed successfully.");
+      server.close(() => {
+        process.exit(0);
+      });
+    }).catch(() => process.exit(0));
+  } catch {
+    process.exit(0);
+  }
+}
+
 server.on("error", (err) => {
   console.error("🛑 Server HTTP Error:", err);
 });
@@ -777,13 +793,8 @@ process.on("exit", (code) => {
   console.log(`🛑 Node Process exiting with code: ${code}`);
 });
 
-process.on("SIGINT", () => {
-  console.log("🛑 SIGINT received");
-});
-
-process.on("SIGTERM", () => {
-  console.log("🛑 SIGTERM received");
-});
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
 process.on("unhandledRejection", (reason, promise) => {
   console.error("⚠️ Unhandled Rejection at:", promise, "reason:", reason);

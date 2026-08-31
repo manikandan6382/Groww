@@ -1,5 +1,6 @@
 import React from "react";
 import { useTradingStore } from "../../stores/useTradingStore";
+import { RollingTicker } from "../common/RollingTicker";
 import { DollarSign, ShieldCheck, TrendingUp, Award, Activity } from "lucide-react";
 import clsx from "clsx";
 
@@ -52,11 +53,24 @@ export function JournalMaster2CardDeck() {
   const n = filteredTrades.length || 1;
   const p = winTrades.length / n;
   const z = 1.96;
-  const wilsonFloor = (
-    ((p + (z * z) / (2 * n) - z * Math.sqrt((p * (1 - p) + (z * z) / (4 * n)) / n)) / (1 + (z * z) / n)) * 100
-  ).toFixed(1);
+  const numerator = p + (z * z) / (2 * n) - z * Math.sqrt((p * (1 - p) + (z * z) / (4 * n)) / n);
+  const denominator = 1 + (z * z) / n;
+  const wilsonFloor = ((numerator / denominator) * 100).toFixed(1);
 
   const winAngle = ((winTrades.length || 1) / (n || 1)) * 238.76;
+  const netYieldPct = (totalNetPnl / 100000) * 100;
+
+  // Calculate dynamic discipline and streaks
+  const followedPlanCount = filteredTrades.filter((t) => t.followedPlan !== false).length;
+  const ruleDisciplinePct = filteredTrades.length > 0 ? (followedPlanCount / filteredTrades.length) * 100 : 100;
+  
+  let currentStreak = 0;
+  for (const trade of [...filteredTrades].reverse()) {
+    if ((trade.netPnl || 0) > 0) currentStreak++;
+    else break;
+  }
+  const displayStreak = currentStreak > 0 ? currentStreak : winTrades.length;
+  const maxLoss = lossTrades.length > 0 ? Math.min(...lossTrades.map((t) => t.netPnl || 0)) : -511.0;
 
   const rangeLabel = journalRange === "today" 
     ? "Today" 
@@ -82,7 +96,13 @@ export function JournalMaster2CardDeck() {
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              +{((totalNetPnl / 100000) * 100).toFixed(2)}% Net
+              <RollingTicker 
+                value={netYieldPct} 
+                suffix="% Net" 
+                showSign={true} 
+                decimalPlaces={2} 
+                className={netYieldPct >= 0 ? "text-emerald-400 font-bold" : "text-rose-400 font-bold"} 
+              />
             </span>
             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
               Positive Edge
@@ -94,7 +114,13 @@ export function JournalMaster2CardDeck() {
           <div>
             <span className="text-xs text-slate-400 block">Total Net Banked P&amp;L</span>
             <div className={clsx("text-2xl font-black font-mono tracking-tight mt-0.5", totalNetPnl >= 0 ? "text-emerald-400" : "text-rose-400")}>
-              {totalNetPnl >= 0 ? "+" : ""}₹{totalNetPnl.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+              <RollingTicker 
+                value={totalNetPnl} 
+                prefix="₹" 
+                showSign={true} 
+                decimalPlaces={2} 
+                className={totalNetPnl >= 0 ? "text-emerald-400" : "text-rose-400"}
+              />
             </div>
             <small className="text-[10px] text-slate-500 block mt-1">Net cash banked after all statutory friction.</small>
           </div>
@@ -102,7 +128,12 @@ export function JournalMaster2CardDeck() {
           <div>
             <span className="text-xs text-slate-400 block">Risk-Reward Health</span>
             <div className="text-2xl font-black font-mono text-cyan-400 tracking-tight mt-0.5">
-              {profitFactor}x
+              <RollingTicker 
+                value={Number(profitFactor)} 
+                suffix="x" 
+                decimalPlaces={2} 
+                className="text-cyan-400"
+              />
             </div>
             <small className="text-[10px] text-slate-500 block mt-1">How much you make per ₹1.00 risked.</small>
           </div>
@@ -112,22 +143,30 @@ export function JournalMaster2CardDeck() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-white/5 text-xs">
           <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/5">
             <span className="text-[10px] text-slate-400 block">Gross Wins</span>
-            <strong className="font-mono text-emerald-400 font-bold">+₹{grossWins.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</strong>
+            <div className="font-mono text-emerald-400 font-bold">
+              <RollingTicker value={grossWins} prefix="+₹" decimalPlaces={0} className="text-emerald-400" />
+            </div>
           </div>
 
           <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/5">
             <span className="text-[10px] text-slate-400 block">Losses Cut</span>
-            <strong className="font-mono text-rose-400 font-bold">-₹{grossLosses.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</strong>
+            <div className="font-mono text-rose-400 font-bold">
+              <RollingTicker value={grossLosses} prefix="-₹" decimalPlaces={0} className="text-rose-400" />
+            </div>
           </div>
 
           <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/5">
             <span className="text-[10px] text-slate-400 block">Taxes &amp; Fees</span>
-            <strong className="font-mono text-slate-300 font-bold">₹{(filteredTrades.length * 56).toFixed(0)}</strong>
+            <div className="font-mono text-slate-300 font-bold">
+              <RollingTicker value={filteredTrades.length * 56} prefix="₹" decimalPlaces={0} className="text-slate-300" />
+            </div>
           </div>
 
           <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/5">
             <span className="text-[10px] text-slate-400 block">Avg Net / Trade</span>
-            <strong className="font-mono text-cyan-400 font-bold">+₹{avgNet}</strong>
+            <div className="font-mono text-cyan-400 font-bold">
+              <RollingTicker value={Number(avgNet)} prefix="+₹" decimalPlaces={2} className="text-cyan-400" />
+            </div>
           </div>
         </div>
       </div>
@@ -139,7 +178,10 @@ export function JournalMaster2CardDeck() {
             <span className="text-base">🎯</span>
             <div>
               <h2 className="text-sm font-bold text-white">Target Success &amp; Discipline</h2>
-              <span className="text-[10px] text-slate-400">Sample: {filteredTrades.length} Trades</span>
+              <div className="text-[10px] text-slate-400 flex items-center gap-1">
+                <span>Sample:</span>
+                <RollingTicker value={filteredTrades.length} suffix=" Trades" decimalPlaces={0} className="text-cyan-400 font-mono font-bold" />
+              </div>
             </div>
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
@@ -167,7 +209,9 @@ export function JournalMaster2CardDeck() {
               />
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none">
-              <strong className="text-base font-black font-mono text-white">{winRate}%</strong>
+              <div className="text-base font-black font-mono text-white">
+                <RollingTicker value={Number(winRate)} suffix="%" decimalPlaces={1} className="text-white" />
+              </div>
               <span className="text-[9px] text-slate-400 font-bold uppercase">Win Rate</span>
             </div>
           </div>
@@ -179,7 +223,9 @@ export function JournalMaster2CardDeck() {
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
                 <span className="text-slate-300">Targets Hit</span>
               </div>
-              <strong className="text-emerald-400 font-mono">{winTrades.length} Won</strong>
+              <div className="text-emerald-400 font-mono font-bold">
+                <RollingTicker value={winTrades.length} suffix=" Won" decimalPlaces={0} className="text-emerald-400" />
+              </div>
             </div>
 
             <div className="flex items-center justify-between p-1.5 rounded-lg bg-white/[0.02]">
@@ -187,11 +233,16 @@ export function JournalMaster2CardDeck() {
                 <span className="w-2.5 h-2.5 rounded-full bg-rose-400"></span>
                 <span className="text-slate-300">Disciplined Stops</span>
               </div>
-              <strong className="text-rose-400 font-mono">{lossTrades.length} Cut</strong>
+              <div className="text-rose-400 font-mono font-bold">
+                <RollingTicker value={lossTrades.length} suffix=" Cut" decimalPlaces={0} className="text-rose-400" />
+              </div>
             </div>
 
-            <div className="text-[11px] text-slate-400 pt-0.5">
-              95% Wilson Confidence Floor: <strong className="text-cyan-400 font-mono">{wilsonFloor}%</strong>
+            <div className="text-[11px] text-slate-400 pt-0.5 flex items-center justify-between">
+              <span>95% Wilson Confidence Floor:</span>
+              <strong className="text-cyan-400 font-mono">
+                <RollingTicker value={Number(wilsonFloor)} suffix="%" decimalPlaces={1} className="text-cyan-400" />
+              </strong>
             </div>
           </div>
         </div>
@@ -200,17 +251,23 @@ export function JournalMaster2CardDeck() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-white/5 text-xs">
           <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/5">
             <span className="text-[10px] text-slate-400 block">Rule Discipline</span>
-            <strong className="font-mono text-emerald-400 font-bold">100%</strong>
+            <div className="font-mono text-emerald-400 font-bold">
+              <RollingTicker value={ruleDisciplinePct} suffix="%" decimalPlaces={0} className="text-emerald-400 font-bold" />
+            </div>
           </div>
 
           <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/5">
             <span className="text-[10px] text-slate-400 block">Streak</span>
-            <strong className="font-mono text-amber-400 font-bold">2 Wins</strong>
+            <div className="font-mono text-amber-400 font-bold">
+              <RollingTicker value={displayStreak} suffix=" Wins" decimalPlaces={0} className="text-amber-400 font-bold" />
+            </div>
           </div>
 
           <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/5">
             <span className="text-[10px] text-slate-400 block">Account Safety</span>
-            <strong className="font-mono text-rose-400 font-bold">-₹511.00</strong>
+            <div className="font-mono text-rose-400 font-bold">
+              <RollingTicker value={maxLoss} prefix="₹" showSign={true} decimalPlaces={2} className="text-rose-400 font-bold" />
+            </div>
           </div>
 
           <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/5">

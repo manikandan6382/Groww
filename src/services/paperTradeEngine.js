@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { getPaperLab, markPaperTrade } from "../repositories/paper-lab.repository.js";
 import { getTradeById } from "../repositories/trades.repository.js";
 import { createUpstoxClient } from "./upstoxClient.js";
+import { telegramNotifier } from "./notifications/telegramNotifier.js";
 
 const MARKET_CLOSED_REFRESH_MS = 60_000;
 const ACTIVE_REFRESH_MS = 15_000;
@@ -192,6 +193,15 @@ export class PaperTradeEngine extends EventEmitter {
   }
 
   handleTick(tick) {
+    if (tick.key && tick.key.startsWith("NSE_INDEX")) {
+      this.publish("index_tick", {
+        symbol: tick.key.includes("Bank") ? "BANKNIFTY" : "NIFTY",
+        tokenKey: tick.key,
+        ltp: tick.ltp,
+        receivedAt: tick.receivedAt,
+      });
+    }
+
     const tradeIds = this.tokenToTradeIds.get(tick.key);
     if (!tradeIds?.size) return;
 
@@ -243,27 +253,37 @@ export class PaperTradeEngine extends EventEmitter {
     const stopLoss = Number(trade.stopLoss || 0);
     const entry = Number(trade.entryPrice || 0);
     const ltp = Number(tick.ltp || 0);
+    if (!ltp || ltp <= 0) return;
     let reason = null;
 
     // --- 1. Automated Institutional Breakeven Lock ---
-    // If profit reaches >= +8.0 pts, move Stop Loss to Entry + 0.50 (guarantee risk-free trade)
-    if (trade.direction === "SHORT") {
-      if (entry > 0 && ltp <= entry - 8.0 && stopLoss > entry - 0.5) {
-        this.lockBreakeven(trade, entry - 0.5, ltp);
-      }
-    } else {
-      if (entry > 0 && ltp >= entry + 8.0 && stopLoss < entry + 0.5) {
-        this.lockBreakeven(trade, entry + 0.5, ltp);
+    if (entry > 0) {
+      if (target > entry && stopLoss < entry) {
+        // Long Option Buying setup
+        if (ltp >= entry + 8.0 && stopLoss < entry + 0.5) {
+          this.lockBreakeven(trade, entry + 0.5, ltp);
+        }
+      } else if (target < entry && stopLoss > entry) {
+        // Short Option Selling setup
+        if (ltp <= entry - 8.0 && stopLoss > entry - 0.5) {
+          this.lockBreakeven(trade, entry - 0.5, ltp);
+        }
       }
     }
 
     // --- 2. Target & Stop Loss Execution ---
-    if (trade.direction === "SHORT") {
-      if (target && ltp <= target) reason = "TARGET_HIT";
-      if (!reason && stopLoss && ltp >= stopLoss) reason = "STOP_LOSS_HIT";
+    if (target > entry && stopLoss < entry) {
+      // Long option / Standard buyer setup
+      if (target > 0 && ltp >= target) reason = "TARGET_HIT";
+      if (!reason && stopLoss > 0 && ltp <= stopLoss) reason = "STOP_LOSS_HIT";
+    } else if (target < entry && stopLoss > entry) {
+      // Short option / Seller setup
+      if (target > 0 && ltp <= target) reason = "TARGET_HIT";
+      if (!reason && stopLoss > 0 && ltp >= stopLoss) reason = "STOP_LOSS_HIT";
     } else {
-      if (target && ltp >= target) reason = "TARGET_HIT";
-      if (!reason && stopLoss && ltp <= stopLoss) reason = "STOP_LOSS_HIT";
+      // Fallback
+      if (target > 0 && ltp >= target) reason = "TARGET_HIT";
+      if (!reason && stopLoss > 0 && ltp <= stopLoss) reason = "STOP_LOSS_HIT";
     }
 
     if (!reason) return;
@@ -287,6 +307,7 @@ export class PaperTradeEngine extends EventEmitter {
           currentLtp,
           message: `Breakeven Locked at ₹${newStopLoss.toFixed(2)} (+0.50 pt buffer)`,
         });
+        telegramNotifier.notifyBreakevenLocked(trade, newStopLoss, currentLtp).catch(() => {});
       });
     } catch {
       // Non-fatal if DB is locked
@@ -311,6 +332,13 @@ export class PaperTradeEngine extends EventEmitter {
         pnl: result.trade.netPnl,
         message: reason === "TARGET_HIT" ? "Target Hit" : "Stop Loss Hit",
       });
+
+      // Instant Dispatch to Mobile Webhook / Telegram Bot
+      if (reason === "TARGET_HIT") {
+        telegramNotifier.notifyTargetHit(trade, tick, result).catch(() => {});
+      } else {
+        telegramNotifier.notifyStopLossHit(trade, tick, result).catch(() => {});
+      }
     } catch (error) {
       this.publish("error", { tradeId: id, symbol: trade.symbol, message: error.message });
     } finally {

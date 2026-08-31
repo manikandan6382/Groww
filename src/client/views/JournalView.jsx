@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { useTradingStore } from "../stores/useTradingStore";
+import { soundEngine } from "../utils/soundEngine";
 import { JournalMaster2CardDeck } from "../components/trading/JournalMaster2CardDeck";
+import { EquityCurveDeck } from "../components/trading/EquityCurveDeck";
 import { JournalAnalyticsDeck } from "../components/trading/JournalAnalyticsDeck";
 import { TradeLoggerForm } from "../components/trading/TradeLoggerForm";
 import { JournalStoryDeck } from "../components/trading/JournalStoryDeck";
@@ -17,28 +19,44 @@ export function JournalView() {
     journalCustomEnd,
     setJournalRange,
     setJournalCustomRange,
-    setSafetyGuardModalOpen
+    setSafetyGuardModalOpen,
+    setCustomTradeModalOpen
   } = useTradingStore();
 
   const [isFormVisible, setFormVisible] = useState(true);
-  const [isCustomModalOpen, setCustomModalOpen] = useState(false);
   const [isCalendarOpen, setCalendarOpen] = useState(false);
 
   const exportTaxCsv = () => {
-    const headers = ["ID", "Symbol", "Direction", "EntryTime", "EntryPrice", "ExitPrice", "Quantity", "StopLoss", "TargetPrice", "NetPnl", "Strategy", "LessonsLearned"];
-    const rows = journalTrades.map((t) => [
-      t.id,
-      t.symbol,
-      t.direction || "LONG",
-      t.entryDatetime,
-      t.entryPrice,
-      t.exitPrice,
-      t.quantity,
-      t.stopLoss,
-      t.targetPrice,
-      t.netPnl,
-      t.strategyTags || "",
-      `"${t.lessonsLearned || ""}"`
+    const escapeCsv = (val) => `"${String(val ?? "").replace(/"/g, '""')}"`;
+    const headers = [
+      "Trade ID",
+      "Date",
+      "Symbol / Contract",
+      "Side",
+      "Quantity",
+      "Entry Price (INR)",
+      "Exit Price (INR)",
+      "Gross PnL (INR)",
+      "Taxes & Charges (INR)",
+      "Net Realized PnL (INR)",
+      "Setup / Strategy Tag",
+      "Catalyst",
+      "Lessons Learned"
+    ];
+    const rows = journalTrades.map((t, idx) => [
+      escapeCsv(t.id || `TRD-${1000 + idx}`),
+      escapeCsv(t.exitDatetime?.split("T")[0] || t.entryDatetime?.split("T")[0] || new Date().toISOString().split("T")[0]),
+      escapeCsv(t.symbol),
+      escapeCsv(t.direction || "LONG"),
+      t.quantity || 1,
+      Number(t.entryPrice || 0).toFixed(2),
+      Number(t.exitPrice || 0).toFixed(2),
+      Number(t.grossPnl || t.netPnl || 0).toFixed(2),
+      Number(t.taxesAndCharges || 56.0).toFixed(2),
+      Number(t.netPnl || 0).toFixed(2),
+      escapeCsv(t.strategyTags || t.strategyTag || "Quantitative Setup"),
+      escapeCsv(t.catalyst || ""),
+      escapeCsv(t.lessonsLearned || "")
     ]);
 
     const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
@@ -49,6 +67,7 @@ export function JournalView() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    soundEngine.playSuccessTone();
   };
 
   return (
@@ -83,8 +102,8 @@ export function JournalView() {
           </button>
         </div>
 
-        {/* Title and Controls Action Toolbar */}
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        {/* Title and Action Controls */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="space-y-1">
             <h1 className="text-xl md:text-2xl font-black text-white tracking-tight">
               Trading Journal &amp; Results
@@ -94,9 +113,48 @@ export function JournalView() {
             </p>
           </div>
 
-          {/* Clean Non-Wrapping Control Toolbar */}
-          <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
-            {/* Timeframe Range Tabs + Calendar Date Picker */}
+          {/* Action CTAs Dock */}
+          <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap flex-shrink-0">
+            {/* Custom Data / Sample Presets Modal CTA */}
+            <button
+              type="button"
+              onClick={() => setCustomTradeModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/30 text-purple-300 hover:text-purple-200 text-xs font-bold transition whitespace-nowrap shadow-sm"
+              title="Add Custom Trade, Sample Template, or Bulk JSON (Press N)"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+              <span>+ Add Custom Data</span>
+            </button>
+
+            {/* Export CSV Button */}
+            <button
+              type="button"
+              onClick={exportTaxCsv}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/10 text-xs font-bold text-slate-300 hover:text-white transition whitespace-nowrap"
+              title="Export CSV Tax Audit Report"
+            >
+              <Download className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="hidden sm:inline">Export Tax CSV</span>
+              <span className="sm:hidden">CSV</span>
+            </button>
+
+            {/* Log Trade CTA */}
+            <button
+              type="button"
+              onClick={() => setFormVisible(!isFormVisible)}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-sky-400 hover:from-cyan-400 hover:to-sky-300 text-black font-extrabold text-xs shadow-lg shadow-cyan-500/20 transition whitespace-nowrap"
+              title="Toggle Fast Trade Logger Form (Press 'N')"
+            >
+              <Plus className="w-3.5 h-3.5 stroke-[3]" />
+              <span>{isFormVisible ? "Hide Form" : "Log Trade"}</span>
+              <kbd className="text-[9px] font-mono px-1 py-0.2 rounded bg-black/20 text-black font-bold">N</kbd>
+            </button>
+          </div>
+        </div>
+
+        {/* Tier 2: Timeframe Range Tabs + Responsive Custom Date Dock */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-white/5">
+          <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1 p-1 rounded-xl bg-white/[0.02] border border-white/5 text-xs flex-shrink-0">
               {[
                 { id: "all", label: "All Time" },
@@ -112,6 +170,7 @@ export function JournalView() {
                     key={tab.id}
                     type="button"
                     onClick={() => {
+                      soundEngine.playTabSwitchTone();
                       setJournalRange(tab.id);
                       if (tab.id === "custom") setCalendarOpen(true);
                     }}
@@ -134,48 +193,29 @@ export function JournalView() {
               <button
                 type="button"
                 onClick={() => setCalendarOpen(true)}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 text-xs font-mono font-bold transition whitespace-nowrap"
-                title="Edit custom date range"
+                className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 text-xs font-mono font-bold transition whitespace-nowrap shadow-sm"
+                title="Click to edit custom date range"
               >
                 <CalendarIcon className="w-3 h-3 text-cyan-400" />
                 <span>{journalCustomStart} → {journalCustomEnd}</span>
-                <span className="text-[10px] underline ml-1 font-sans text-cyan-300">Edit</span>
+                <span className="text-[10px] underline ml-1 font-sans text-cyan-300 font-normal">Edit Range</span>
               </button>
             )}
+          </div>
 
-            {/* Custom Data / Sample Presets Modal CTA */}
-            <button
-              type="button"
-              onClick={() => setCustomModalOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/30 text-purple-300 hover:text-purple-200 text-xs font-bold transition whitespace-nowrap shadow-sm"
-              title="Add Custom Trade, Sample Template, or Bulk JSON"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-              <span>+ Add Custom Data</span>
-            </button>
-
-            {/* Export CSV Button */}
-            <button
-              type="button"
-              onClick={exportTaxCsv}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/10 text-xs font-bold text-slate-300 hover:text-white transition whitespace-nowrap"
-              title="Export CSV Tax Audit Report"
-            >
-              <Download className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Export Tax CSV</span>
-            </button>
-
-            {/* Log Trade CTA */}
-            <button
-              type="button"
-              onClick={() => setFormVisible(!isFormVisible)}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-sky-400 hover:from-cyan-400 hover:to-sky-300 text-black font-extrabold text-xs shadow-lg shadow-cyan-500/20 transition whitespace-nowrap"
-              title="Toggle Fast Trade Logger Form (Press 'N')"
-            >
-              <Plus className="w-3.5 h-3.5 stroke-[3]" />
-              <span>{isFormVisible ? "Hide Form" : "Log Trade"}</span>
-              <kbd className="text-[9px] font-mono px-1 py-0.2 rounded bg-black/20 text-black font-bold">N</kbd>
-            </button>
+          <div className="text-[11px] text-slate-400 font-mono flex items-center gap-1">
+            <span>Active Range:</span>
+            <strong className="text-cyan-400">
+              {journalRange === "today" 
+                ? "Today" 
+                : journalRange === "week" 
+                ? "This Week" 
+                : journalRange === "month" 
+                ? "This Month" 
+                : journalRange === "custom" 
+                ? `${journalCustomStart} to ${journalCustomEnd}` 
+                : "All Time"}
+            </strong>
           </div>
         </div>
       </div>
@@ -183,7 +223,10 @@ export function JournalView() {
       {/* Act 2: Master 2-Card Deck (Reactive to journalRange) */}
       <JournalMaster2CardDeck />
 
-      {/* Act 3: Middle Visual Analytics Deck (Reactive to journalRange) */}
+      {/* Act 3: Cumulative Account Equity Growth Curve & 1,000-Path Monte Carlo Deck */}
+      <EquityCurveDeck />
+
+      {/* Act 3.5: Middle Visual Analytics Deck (Reactive to journalRange) */}
       <JournalAnalyticsDeck />
 
       {/* Act 3.5: Full 12-Column Guided Trade Logger Form */}
@@ -192,13 +235,7 @@ export function JournalView() {
       {/* Act 4: Story-Driven Trade History Log (Reactive to journalRange & filters) */}
       <JournalStoryDeck />
 
-      {/* Act 5: Custom Trade & Data Importer Modal */}
-      <CustomTradeModal
-        isOpen={isCustomModalOpen}
-        onClose={() => setCustomModalOpen(false)}
-      />
-
-      {/* Act 6: Luxury Calendar Date Range Picker */}
+      {/* Act 5: Luxury Calendar Date Range Picker */}
       <LuxuryDateRangePicker
         isOpen={isCalendarOpen}
         onClose={() => setCalendarOpen(false)}

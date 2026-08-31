@@ -39,18 +39,53 @@ export function useLiveAlertsFeed() {
           setBrokerStatus({ upstoxConnected: true });
         };
 
-        eventSource.onmessage = (event) => {
+        const handleEventData = (rawData) => {
           try {
-            const data = JSON.parse(event.data);
-            if (data.type === "index_tick" || data.symbol?.startsWith("NSE_INDEX")) {
-              useLivePriceStore.getState().updateIndexTick(data.symbol, data.ltp, data.change || 0, data.changePct || 0);
-            } else if (data.type === "tick" && data.tradeId) {
-              useLivePriceStore.getState().updateTick(data.tradeId, data.ltp, data.change || 0);
-            } else if (data.type === "bulk-ticks" && data.ticks) {
-              useLivePriceStore.getState().setBulkTicks(data.ticks);
+            const data = typeof rawData === "string" ? JSON.parse(rawData) : rawData;
+            const payload = data.payload || data;
+            const ltp = Number(payload.ltp || payload.price || 0);
+
+            if (payload.type === "index_tick" || payload.symbol?.startsWith("NSE_INDEX") || payload.symbol?.startsWith("BSE_INDEX")) {
+              useLivePriceStore.getState().updateIndexTick(payload.symbol, ltp, payload.change || 0, payload.changePct || 0);
+            } else if (ltp > 0) {
+              const updates = [];
+              if (payload.tradeId) updates.push({ id: payload.tradeId, ltp, change: payload.change || 0 });
+              if (payload.symbol) updates.push({ id: payload.symbol, ltp, change: payload.change || 0 });
+              if (payload.tokenKey) updates.push({ id: payload.tokenKey, ltp, change: payload.change || 0 });
+              if (updates.length > 0) {
+                useLivePriceStore.getState().updateMultiTicks(updates);
+              }
+            }
+
+            if (payload.type === "bulk-ticks" && payload.ticks) {
+              useLivePriceStore.getState().setBulkTicks(payload.ticks);
             }
           } catch { /* Malformed payload containment */ }
         };
+
+        eventSource.onmessage = (event) => handleEventData(event.data);
+        eventSource.addEventListener("tick", (event) => handleEventData(event.data));
+        eventSource.addEventListener("index_tick", (event) => handleEventData(event.data));
+        eventSource.addEventListener("trade_mutation", (event) => handleEventData(event.data));
+        eventSource.addEventListener("status", (event) => handleEventData(event.data));
+        eventSource.addEventListener("stop_loss_hit", (event) => {
+          handleEventData(event.data);
+          try {
+            const data = JSON.parse(event.data);
+            const tradeId = data.payload?.tradeId || data.tradeId;
+            const ltp = Number(data.payload?.ltp || data.ltp || 0);
+            if (tradeId) useTradingStore.getState().squareOffTrade(tradeId, ltp);
+          } catch {}
+        });
+        eventSource.addEventListener("target_hit", (event) => {
+          handleEventData(event.data);
+          try {
+            const data = JSON.parse(event.data);
+            const tradeId = data.payload?.tradeId || data.tradeId;
+            const ltp = Number(data.payload?.ltp || data.ltp || 0);
+            if (tradeId) useTradingStore.getState().squareOffTrade(tradeId, ltp);
+          } catch {}
+        });
 
         eventSource.onerror = () => {
           if (eventSource) eventSource.close();

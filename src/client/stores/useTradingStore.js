@@ -1,5 +1,19 @@
 import { create } from "zustand";
 import { getViewFromUrl, syncUrlWithView } from "../utils/urlRouter";
+import { calculateTradeDuration, getLocalDateKey } from "../utils/dateUtils";
+
+// Trailing Network Sync Debounce Map (Coalesces rapid pill clicks)
+const networkDebounceTimers = new Map();
+function debounceNetworkSync(key, fn, delay = 300) {
+  if (networkDebounceTimers.has(key)) {
+    clearTimeout(networkDebounceTimers.get(key));
+  }
+  const timer = setTimeout(() => {
+    networkDebounceTimers.delete(key);
+    fn();
+  }, delay);
+  networkDebounceTimers.set(key, timer);
+}
 
 const DEFAULT_WATCHLIST = ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS", "SBIN.NS", "ITC.NS", "GOLDBEES.NS"];
 
@@ -30,19 +44,18 @@ export const INDIAN_STOCK_META = {
 };
 
 export const INITIAL_OPEN_ALERTS = [
-  { id: 56, symbol: "NIFTY 24300 CE", underlyingSymbol: "NIFTY", strikePrice: 24300, optionType: "CALL", entryDatetime: new Date().toISOString(), entryPrice: 83.0, lastMarkPrice: 88.5, targetPrice: 102.0, stopLoss: 75.0, quantity: 1, lotSize: 65, entryReason: "ATM Scalp Practice · R:R 1:2.38", personalNotes: "Live Desk Scalp", feedMode: "LIVE", strategyMode: "NAKED" },
-  { id: 44, symbol: "BANKNIFTY 52200 PE", underlyingSymbol: "BANKNIFTY", strikePrice: 52200, optionType: "PUT", entryDatetime: new Date().toISOString(), entryPrice: 145.0, lastMarkPrice: 162.0, targetPrice: 185.0, stopLoss: 130.0, quantity: 1, lotSize: 35, entryReason: "Bearish Breakdown Scalp · R:R 1:2.67", personalNotes: "Live Desk Scalp", feedMode: "LIVE", strategyMode: "NAKED" },
+  { id: 56, symbol: "NIFTY 24500 CE", underlyingSymbol: "NIFTY", strikePrice: 24500, optionType: "CALL", entryDatetime: new Date().toISOString(), entryPrice: 85.0, lastMarkPrice: 85.0, targetPrice: 105.0, stopLoss: 75.0, quantity: 1, lotSize: 65, entryReason: "ATM Scalp Practice · R:R 1:2.00", personalNotes: "Live Desk Scalp", feedMode: "LIVE", strategyMode: "NAKED" },
 ];
 
 export function resolveIndexLotSize(symbol = "", explicitLot = null) {
-  if (explicitLot && explicitLot > 0) return explicitLot;
+  if (explicitLot && Number(explicitLot) > 0) return Number(explicitLot);
   const sym = (symbol || "").toUpperCase();
-  if (sym.includes("BANKNIFTY")) return 15;
-  if (sym.includes("FINNIFTY")) return 25;
-  if (sym.includes("MIDCPNIFTY")) return 50;
+  if (sym.includes("BANKNIFTY")) return 30;
+  if (sym.includes("FINNIFTY")) return 65;
+  if (sym.includes("MIDCPNIFTY")) return 75;
   if (sym.includes("SENSEX")) return 10;
-  if (sym.includes("NIFTY")) return 25;
-  return 25;
+  if (sym.includes("NIFTY")) return 65;
+  return 65;
 }
 
 /**
@@ -50,7 +63,7 @@ export function resolveIndexLotSize(symbol = "", explicitLot = null) {
  * Brokerage (₹40 round trip) + STT (0.1% on Option Sell) + NSE Turnover Charges (0.05%) 
  * + SEBI Charges + Stamp Duty (0.003% on Buy) + 18% GST.
  */
-export function calculateStatutoryCharges(entryPrice = 0, exitPrice = 0, totalQty = 25) {
+export function calculateStatutoryCharges(entryPrice = 0, exitPrice = 0, totalQty = 65) {
   const buyTurnover = Number(entryPrice || 0) * Number(totalQty || 1);
   const sellTurnover = Number(exitPrice || 0) * Number(totalQty || 1);
   const totalTurnover = buyTurnover + sellTurnover;
@@ -66,19 +79,40 @@ export function calculateStatutoryCharges(entryPrice = 0, exitPrice = 0, totalQt
   return Number(Math.max(45.0, totalCharges).toFixed(2));
 }
 
-// ─── Relative Date Helpers (computed once at module load) ─────────────────────
-// Always produces ISO strings relative to today so all filters work correctly.
-function relDay(offsetDays, timeStr = "T10:00:00") {
-  const d = new Date();
-  d.setDate(d.getDate() + offsetDays);
-  return d.toISOString().split("T")[0] + timeStr;
+export const CANONICAL_STRATEGY_TAGS = [
+  "15m VWAP Retest",
+  "Opening Range Breakout",
+  "EMA Trend Pullback",
+  "Delta Momentum Scalp",
+  "Support Bounce Scalp",
+  "Resistance Rejection Fade",
+  "Expiry Zero Hero",
+  "Defined-Risk Spread",
+  "Discretionary Scalp",
+];
+
+export function canonicalizeStrategyTag(tag = "") {
+  if (!tag) return "Discretionary Scalp";
+  const trimmed = String(tag).trim();
+  const lower = trimmed.toLowerCase();
+  const match = CANONICAL_STRATEGY_TAGS.find(
+    (c) => c.toLowerCase() === lower || lower.includes(c.toLowerCase())
+  );
+  return match || trimmed;
 }
-function currentWeekMonday(timeStr = "T09:30:00") {
-  const d = new Date();
-  const day = d.getDay(); // 0=Sun,1=Mon,...,6=Sat
-  const diff = day === 0 ? -6 : 1 - day; // shift to Monday
-  d.setDate(d.getDate() + diff);
-  return d.toISOString().split("T")[0] + timeStr;
+
+// ─── Indian Stock Market Calendar & Session Helpers ───────────────────────────
+export function isMarketWeekend() {
+  const day = new Date().getDay();
+  return day === 0 || day === 6; // 0 = Sunday, 6 = Saturday
+}
+
+export function isMarketOpenHours() {
+  const now = new Date();
+  const day = now.getDay();
+  if (day === 0 || day === 6) return false;
+  const totalMins = now.getHours() * 60 + now.getMinutes();
+  return totalMins >= 9 * 60 + 15 && totalMins <= 15 * 60 + 30; // 9:15 AM to 3:30 PM IST
 }
 
 export const MASTER_INITIAL_TRADES = [
@@ -88,8 +122,8 @@ export const MASTER_INITIAL_TRADES = [
     optionType: "CALL", 
     direction: "LONG", 
     tradeType: "INTRADAY", 
-    entryDatetime: relDay(0, "T10:15:00"), 
-    exitDatetime: relDay(0, "T10:35:00"), 
+    entryDatetime: "2026-08-28T10:15:00", 
+    exitDatetime: "2026-08-28T10:35:00", 
     duration: "20 mins", 
     entryPrice: 90.13, 
     exitPrice: 95.00, 
@@ -101,8 +135,8 @@ export const MASTER_INITIAL_TRADES = [
     taxesAndCharges: 56.00, 
     netPnl: 365.25, 
     closeReason: "TARGET_HIT", 
-    strategyTag: "0DTE Momentum", 
-    strategyTags: "0DTE Momentum", 
+    strategyTag: "15m VWAP Retest", 
+    strategyTags: "15m VWAP Retest", 
     mistakeTags: "None", 
     confidenceScore: 9, 
     followedPlan: true, 
@@ -117,8 +151,8 @@ export const MASTER_INITIAL_TRADES = [
     optionType: "PUT", 
     direction: "LONG", 
     tradeType: "INTRADAY", 
-    entryDatetime: relDay(0, "T09:58:00"), 
-    exitDatetime: relDay(0, "T10:12:00"), 
+    entryDatetime: "2026-08-28T09:58:00", 
+    exitDatetime: "2026-08-28T10:12:00", 
     duration: "14 mins", 
     entryPrice: 247.19, 
     exitPrice: 240.00, 
@@ -130,8 +164,8 @@ export const MASTER_INITIAL_TRADES = [
     taxesAndCharges: 56.00, 
     netPnl: -251.50, 
     closeReason: "STOP_LOSS_HIT", 
-    strategyTag: "Support Breakdown", 
-    strategyTags: "Support Breakdown", 
+    strategyTag: "Support Bounce Scalp", 
+    strategyTags: "Support Bounce Scalp", 
     mistakeTags: "Chased Early Wick", 
     confidenceScore: 6, 
     followedPlan: true, 
@@ -146,8 +180,8 @@ export const MASTER_INITIAL_TRADES = [
     optionType: "PUT", 
     direction: "LONG", 
     tradeType: "INTRADAY", 
-    entryDatetime: relDay(0, "T09:41:00"), 
-    exitDatetime: relDay(0, "T10:05:00"), 
+    entryDatetime: "2026-08-28T09:41:00", 
+    exitDatetime: "2026-08-28T10:05:00", 
     duration: "24 mins", 
     entryPrice: 114.40, 
     exitPrice: 120.00, 
@@ -159,8 +193,8 @@ export const MASTER_INITIAL_TRADES = [
     taxesAndCharges: 56.00, 
     netPnl: 420.00, 
     closeReason: "TARGET_HIT", 
-    strategyTag: "VIX Expansion Scalp", 
-    strategyTags: "VIX Expansion Scalp", 
+    strategyTag: "Delta Momentum Scalp", 
+    strategyTags: "Delta Momentum Scalp", 
     mistakeTags: "None", 
     confidenceScore: 9, 
     followedPlan: true, 
@@ -175,8 +209,8 @@ export const MASTER_INITIAL_TRADES = [
     optionType: "CALL", 
     direction: "LONG", 
     tradeType: "INTRADAY", 
-    entryDatetime: relDay(0, "T09:22:00"), 
-    exitDatetime: relDay(0, "T09:39:00"), 
+    entryDatetime: "2026-08-27T09:22:00", 
+    exitDatetime: "2026-08-27T09:39:00", 
     duration: "17 mins", 
     entryPrice: 86.27, 
     exitPrice: 90.00, 
@@ -188,8 +222,8 @@ export const MASTER_INITIAL_TRADES = [
     taxesAndCharges: 56.00, 
     netPnl: 280.00, 
     closeReason: "TARGET_HIT", 
-    strategyTag: "Morning Range Breakout", 
-    strategyTags: "Morning Range Breakout", 
+    strategyTag: "Opening Range Breakout", 
+    strategyTags: "Opening Range Breakout", 
     mistakeTags: "None", 
     confidenceScore: 8, 
     followedPlan: true, 
@@ -204,8 +238,8 @@ export const MASTER_INITIAL_TRADES = [
     optionType: "PUT", 
     direction: "LONG", 
     tradeType: "INTRADAY", 
-    entryDatetime: relDay(0, "T09:05:00"), 
-    exitDatetime: relDay(0, "T09:18:00"), 
+    entryDatetime: "2026-08-27T09:05:00", 
+    exitDatetime: "2026-08-27T09:18:00", 
     duration: "13 mins", 
     entryPrice: 205.29, 
     exitPrice: 200.00, 
@@ -217,8 +251,8 @@ export const MASTER_INITIAL_TRADES = [
     taxesAndCharges: 56.00, 
     netPnl: -185.00, 
     closeReason: "STOP_LOSS_HIT", 
-    strategyTag: "Reversal Scalp", 
-    strategyTags: "Reversal Scalp", 
+    strategyTag: "Resistance Rejection Fade", 
+    strategyTags: "Resistance Rejection Fade", 
     mistakeTags: "Counter-Trend Entry", 
     confidenceScore: 6, 
     followedPlan: true, 
@@ -233,8 +267,8 @@ export const MASTER_INITIAL_TRADES = [
     optionType: "CALL", 
     direction: "LONG", 
     tradeType: "INTRADAY", 
-    entryDatetime: relDay(-1, "T14:15:00"), 
-    exitDatetime: relDay(-1, "T14:45:00"), 
+    entryDatetime: "2026-08-26T14:15:00", 
+    exitDatetime: "2026-08-26T14:45:00", 
     duration: "30 mins", 
     entryPrice: 86.33, 
     exitPrice: 95.00, 
@@ -246,8 +280,8 @@ export const MASTER_INITIAL_TRADES = [
     taxesAndCharges: 56.00, 
     netPnl: 650.00, 
     closeReason: "TARGET_HIT", 
-    strategyTag: "Afternoon Momentum", 
-    strategyTags: "Afternoon Momentum", 
+    strategyTag: "15m VWAP Retest", 
+    strategyTags: "15m VWAP Retest", 
     mistakeTags: "None", 
     confidenceScore: 10, 
     followedPlan: true, 
@@ -262,8 +296,8 @@ export const MASTER_INITIAL_TRADES = [
     optionType: "PUT", 
     direction: "LONG", 
     tradeType: "INTRADAY", 
-    entryDatetime: relDay(-2, "T13:30:00"), 
-    exitDatetime: relDay(-2, "T13:50:00"), 
+    entryDatetime: "2026-08-25T13:30:00", 
+    exitDatetime: "2026-08-25T13:50:00", 
     duration: "20 mins", 
     entryPrice: 247.85, 
     exitPrice: 240.00, 
@@ -275,8 +309,8 @@ export const MASTER_INITIAL_TRADES = [
     taxesAndCharges: 56.00, 
     netPnl: -275.00, 
     closeReason: "STOP_LOSS_HIT", 
-    strategyTag: "Chop Zone Defense", 
-    strategyTags: "Chop Zone Defense", 
+    strategyTag: "Expiry Zero Hero", 
+    strategyTags: "Expiry Zero Hero", 
     mistakeTags: "Mid-Day Slump Trade", 
     confidenceScore: 5, 
     followedPlan: true, 
@@ -291,8 +325,8 @@ export const MASTER_INITIAL_TRADES = [
     optionType: "CALL", 
     direction: "LONG", 
     tradeType: "INTRADAY", 
-    entryDatetime: currentWeekMonday("T11:10:00"), 
-    exitDatetime: currentWeekMonday("T11:32:00"), 
+    entryDatetime: "2026-08-24T11:10:00", 
+    exitDatetime: "2026-08-24T11:32:00", 
     duration: "22 mins", 
     entryPrice: 76.70, 
     exitPrice: 80.00, 
@@ -304,8 +338,8 @@ export const MASTER_INITIAL_TRADES = [
     taxesAndCharges: 56.00, 
     netPnl: 247.25, 
     closeReason: "TARGET_HIT", 
-    strategyTag: "Pullback Entry", 
-    strategyTags: "Pullback Entry", 
+    strategyTag: "EMA Trend Pullback", 
+    strategyTags: "EMA Trend Pullback", 
     mistakeTags: "None", 
     confidenceScore: 8, 
     followedPlan: true, 
@@ -382,6 +416,8 @@ export const useTradingStore = create((set, get) => ({
   setCommandPaletteOpen: (open) => set({ isCommandPaletteOpen: open }),
   isSafetyGuardModalOpen: false,
   setSafetyGuardModalOpen: (open) => set({ isSafetyGuardModalOpen: open }),
+  isCustomTradeModalOpen: false,
+  setCustomTradeModalOpen: (open) => set({ isCustomTradeModalOpen: open }),
 
   // Theme State
   activeTheme: "blue", // "blue" | "emerald" | "violet" | "custom"
@@ -411,6 +447,50 @@ export const useTradingStore = create((set, get) => ({
   setBrokerStatus: (status) => set((state) => ({
     brokerStatus: { ...state.brokerStatus, ...status }
   })),
+
+  // Wealth View Persistence
+  wealthTimeframe: (() => {
+    try {
+      return localStorage.getItem("portfolio-wealth-timeframe") || "1M";
+    } catch {
+      return "1M";
+    }
+  })(),
+  wealthViewMode: (() => {
+    try {
+      return localStorage.getItem("portfolio-wealth-viewmode") || "total";
+    } catch {
+      return "total";
+    }
+  })(),
+  setWealthTimeframe: (tf) => {
+    set({ wealthTimeframe: tf });
+    try { localStorage.setItem("portfolio-wealth-timeframe", tf); } catch {}
+  },
+  setWealthViewMode: (mode) => {
+    set({ wealthViewMode: mode });
+    try { localStorage.setItem("portfolio-wealth-viewmode", mode); } catch {}
+  },
+
+  // Streamer P&L Privacy Mode
+  isPrivacyMode: (() => {
+    try {
+      return localStorage.getItem("portfolio-privacy-mode") === "true";
+    } catch {
+      return false;
+    }
+  })(),
+  togglePrivacyMode: () => {
+    const next = !get().isPrivacyMode;
+    set({ isPrivacyMode: next });
+    try {
+      localStorage.setItem("portfolio-privacy-mode", String(next));
+    } catch {}
+  },
+
+  // 1-Click Watchlist -> OrderPad Deployment Bridge
+  orderPadPreFill: null,
+  setOrderPadPreFill: (data) => set({ orderPadPreFill: data }),
 
   // ==========================================
   // UNIFIED MASTER TRADE DATABASE & SYNC STORE
@@ -447,43 +527,152 @@ export const useTradingStore = create((set, get) => ({
   // VIEW 2: PRACTICE LAB / OPTIONS DESK STATE
   // ==========================================
   startingCapital: 100000.0,
-  openAlerts: INITIAL_OPEN_ALERTS,
+  openAlerts: (() => {
+    try {
+      const saved = localStorage.getItem("portfoliox_open_alerts");
+      if (saved !== null) {
+        return JSON.parse(saved);
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  })(),
   feedMode: "LIVE", // "LIVE" | "MANUAL"
   setFeedMode: (mode) => set({ feedMode: mode }),
   strategyMode: "NAKED", // "NAKED" | "SPREAD"
   setStrategyMode: (mode) => set({ strategyMode: mode }),
-  simulateSlippage: false,
+  simulateSlippage: true, // Default ON for realistic institutional fill training
   setSimulateSlippage: (enabled) => set({ simulateSlippage: enabled }),
   paperPnlRange: "week", // "week" | "last_week" | "month" | "all"
   setPaperPnlRange: (range) => set({ paperPnlRange: range }),
   paperLedgerFilter: "all", // "all" | "win" | "loss"
   setPaperLedgerFilter: (filter) => set({ paperLedgerFilter: filter }),
+  deployToast: null,
+  setDeployToast: (toast) => set({ deployToast: toast }),
+  settlementToast: null,
+  setSettlementToast: (toast) => set({ settlementToast: toast }),
 
-  // Practice Order Actions
+  // Practice Order Actions with Idempotency Key Guard & Non-Blocking SQLite Dual-Sync
   deployPracticeTrade: (trade) => {
+    const idempotencyKey = trade.idempotencyKey || `trade_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const existing = get().openAlerts.find((t) => t.idempotencyKey === idempotencyKey);
+    if (existing) return existing;
+
+    const shouldSlippage = get().simulateSlippage;
+    const baseEntry = Number(trade.entryPrice || 0);
+    // Realistic Ask fill spread penalty (+0.2% to +0.4% on market buy)
+    const entryFillPrice = shouldSlippage 
+      ? Number((baseEntry * (1 + (0.002 + Math.random() * 0.0025))).toFixed(2))
+      : baseEntry;
+    const entrySlippage = Math.max(0, entryFillPrice - baseEntry);
+
     const newTrade = {
       id: Date.now(),
+      idempotencyKey,
       entryDatetime: new Date().toISOString(),
-      lastMarkPrice: trade.entryPrice,
-      ...trade
+      plannedEntryPrice: baseEntry,
+      entryPrice: entryFillPrice,
+      lastMarkPrice: entryFillPrice,
+      entrySlippage: Number(entrySlippage.toFixed(2)),
+      ...trade,
+      entryPrice: entryFillPrice // Ensure realistic fill is recorded
     };
-    set((state) => ({ openAlerts: [newTrade, ...state.openAlerts] }));
+    const nextAlerts = [newTrade, ...get().openAlerts];
+    set({ openAlerts: nextAlerts, deployToast: newTrade });
+    try {
+      localStorage.setItem("portfoliox_open_alerts", JSON.stringify(nextAlerts));
+    } catch {}
+
+    // 🚀 Non-blocking optimistic background sync to SQLite (0ms UI latency)
+    try {
+      fetch("/api/paper-lab/trades", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          symbol: newTrade.symbol,
+          underlyingSymbol: newTrade.underlyingSymbol || (newTrade.symbol.includes("BANK") ? "BANKNIFTY" : "NIFTY"),
+          strikePrice: newTrade.strikePrice || Number((newTrade.symbol.match(/\d+/) || [24000])[0]),
+          entryPrice: newTrade.entryPrice,
+          targetPrice: newTrade.targetPrice,
+          stopLoss: newTrade.stopLoss,
+          quantity: newTrade.quantity || 1,
+          lotSize: newTrade.lotSize,
+          optionType: newTrade.optionType,
+          tradeType: newTrade.tradeType || "INTRADAY",
+          direction: newTrade.direction || "LONG",
+          feedMode: get().feedMode || "LIVE",
+          strategyTags: [newTrade.strategyTag || "Practice Scalp"],
+          personalNotes: newTrade.personalNotes || newTrade.catalyst || "Practice Scalp Order"
+        })
+      })
+      .then((r) => r.json())
+      .then((res) => {
+        if (res?.item?.id) {
+          set((state) => ({
+            openAlerts: state.openAlerts.map((t) =>
+              t.id === newTrade.id ? { ...t, serverId: res.item.id, tokenKey: res.item.tokenKey } : t
+            ),
+          }));
+        }
+      })
+      .catch(() => {});
+    } catch {}
+
+    return newTrade;
+  },
+
+  autoDeployCopilotTrade: (params = {}) => {
+    const underlying = params.underlying || "NIFTY";
+    const strikePrice = params.strikePrice || (underlying === "BANKNIFTY" ? 57200 : 24500);
+    const optionType = params.optionType || "CALL";
+    const entryPrice = params.entryPrice || (underlying === "BANKNIFTY" ? 180.0 : 85.0);
+    const stopLoss = params.stopLoss || (underlying === "BANKNIFTY" ? 160.0 : 75.0);
+    const targetPrice = params.targetPrice || (underlying === "BANKNIFTY" ? 230.0 : 105.0);
+    const quantity = params.lots || 1;
+    const lotSize = resolveIndexLotSize(underlying);
+    const symbol = `${underlying} ${strikePrice} ${optionType === "CALL" ? "CE" : "PE"}`;
+
+    return get().deployPracticeTrade({
+      symbol,
+      underlyingSymbol: underlying,
+      strikePrice,
+      optionType,
+      entryPrice,
+      stopLoss,
+      targetPrice,
+      quantity,
+      lotSize,
+      feedMode: "LIVE",
+      strategyMode: "NAKED",
+      entryReason: `Copilot Prime 1-Click Scalp · R:R 1:${((targetPrice - entryPrice) / Math.max(1, entryPrice - stopLoss)).toFixed(2)}`,
+      personalNotes: `Live ${underlying} ATM Scalp execution`
+    });
   },
 
   squareOffTrade: (id, customExitPrice) => {
     const trade = get().openAlerts.find((t) => t.id === id);
     if (!trade) return;
     const baseExitPrice = customExitPrice ?? trade.lastMarkPrice ?? trade.entryPrice;
-    // Realistic stochastic option spread slippage (±0.15% friction)
-    const slippageFactor = get().simulateSlippage ? (1 + (Math.random() * 0.003 - 0.0015)) : 1;
-    const exitPrice = Math.max(0.05, baseExitPrice * slippageFactor);
+    // Realistic market bid exit spread penalty (-0.2% to -0.4% below current mark)
+    const shouldSlippage = get().simulateSlippage;
+    const exitPrice = shouldSlippage 
+      ? Math.max(0.05, baseExitPrice * (1 - (0.002 + Math.random() * 0.0025)))
+      : Math.max(0.05, baseExitPrice);
+    
     const resolvedLot = resolveIndexLotSize(trade.symbol, trade.lotSize);
     const totalQty = resolvedLot * (trade.quantity || 1);
-    const grossPnl = (exitPrice - trade.entryPrice) * totalQty;
+    const isShort = trade.direction === "SHORT";
+    const grossPnl = isShort 
+      ? (trade.entryPrice - exitPrice) * totalQty 
+      : (exitPrice - trade.entryPrice) * totalQty;
     const friction = calculateStatutoryCharges(trade.entryPrice, exitPrice, totalQty);
-    const netPnl = trade.optionType === "PUT" 
-      ? (trade.entryPrice - exitPrice) * totalQty - friction
-      : grossPnl - friction;
+    const netPnl = grossPnl - friction;
+    const exitSlippageCost = shouldSlippage ? Math.max(0, (baseExitPrice - exitPrice) * totalQty) : 0;
+    const totalSlippageCost = (trade.entrySlippage ? trade.entrySlippage * totalQty : 0) + exitSlippageCost;
+
+    const exitDatetime = new Date().toISOString();
+    const tradeDuration = calculateTradeDuration(trade.entryDatetime, exitDatetime);
 
     const closed = {
       id: Date.now(),
@@ -491,9 +680,9 @@ export const useTradingStore = create((set, get) => ({
       optionType: trade.optionType || (trade.symbol.includes("PE") ? "PUT" : "CALL"),
       direction: "LONG",
       tradeType: "INTRADAY",
-      entryDatetime: trade.entryDatetime,
-      exitDatetime: new Date().toISOString(),
-      duration: "15 mins",
+      entryDatetime: trade.entryDatetime || new Date().toISOString(),
+      exitDatetime,
+      duration: tradeDuration,
       entryPrice: trade.entryPrice,
       exitPrice: Number(exitPrice.toFixed(2)),
       targetPrice: trade.targetPrice,
@@ -502,6 +691,7 @@ export const useTradingStore = create((set, get) => ({
       lotSize: resolvedLot,
       grossPnl: Number(grossPnl.toFixed(2)),
       taxesAndCharges: friction,
+      slippageCost: Number(totalSlippageCost.toFixed(2)),
       netPnl: Number(netPnl.toFixed(2)),
       closeReason: netPnl >= 0 ? "TARGET_HIT" : "STOP_LOSS_HIT",
       strategyTag: trade.entryReason || "Manual Practice Scalp",
@@ -510,103 +700,213 @@ export const useTradingStore = create((set, get) => ({
       confidenceScore: 8,
       followedPlan: true,
       catalyst: trade.personalNotes || "Live desk order book momentum scalp.",
-      executionDetails: `Executed at ₹${trade.entryPrice}, squared off at ₹${exitPrice.toFixed(2)}. Net P&L: ${netPnl >= 0 ? "+" : ""}₹${netPnl.toFixed(2)}.`,
+      executionDetails: `Executed at ₹${trade.entryPrice}, squared off at ₹${exitPrice.toFixed(2)}. Net P&L: ${netPnl >= 0 ? "+" : ""}₹${netPnl.toFixed(2)} (Friction: ₹${friction} · Slippage: ₹${totalSlippageCost.toFixed(1)}).`,
       mindsetEmotion: netPnl >= 0 ? "Disciplined Execution" : "Controlled Exit",
       lessonsLearned: "Exited at predetermined target/stop cleanly with zero tilt."
     };
 
     const next = [closed, ...get().masterTrades];
-    set((state) => ({
-      openAlerts: state.openAlerts.filter((t) => t.id !== id),
+    const nextAlerts = get().openAlerts.filter((t) => t.id !== id);
+    set({
+      openAlerts: nextAlerts,
       masterTrades: next,
       closedAlerts: next,
-      journalTrades: next
-    }));
+      journalTrades: next,
+      settlementToast: closed
+    });
     try {
+      localStorage.setItem("portfoliox_open_alerts", JSON.stringify(nextAlerts));
       localStorage.setItem("portfolio-master-trades", JSON.stringify(next));
       localStorage.setItem("portfolio-journal-trades", JSON.stringify(next));
     } catch {}
+
+    // 🚀 Non-blocking optimistic background close sync to SQLite
+    try {
+      fetch(`/api/paper-lab/trades/${id}/close`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          price: Number(exitPrice.toFixed(2)),
+          reason: netPnl >= 0 ? "TARGET_HIT" : "STOP_LOSS_HIT"
+        })
+      }).catch(() => {});
+    } catch {}
+
+    return closed;
+  },
+
+  squareOffAlert: (id, customExitPrice) => {
+    return get().squareOffTrade(id, customExitPrice);
   },
 
   squareOffAll: () => {
     const opens = get().openAlerts;
     opens.forEach((trade) => get().squareOffTrade(trade.id));
+    set({ openAlerts: [] });
+    try {
+      localStorage.setItem("portfoliox_open_alerts", JSON.stringify([]));
+      fetch("/api/paper-lab/square-off-all", { method: "POST" }).catch(() => {});
+    } catch {}
   },
 
   trailStopLoss: (id, newSl) => {
-    set((state) => ({
-      openAlerts: state.openAlerts.map((t) => t.id === id ? { ...t, stopLoss: Number(newSl) } : t)
-    }));
+    const val = Number(newSl);
+    const updated = get().openAlerts.map((t) => t.id === id ? { ...t, stopLoss: val } : t);
+    set({ openAlerts: updated });
+    try {
+      localStorage.setItem("portfoliox_open_alerts", JSON.stringify(updated));
+      fetch(`/api/paper-lab/trades/${id}/stop-loss`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stopLoss: val })
+      }).catch(() => {});
+    } catch {}
   },
 
   adjustStopLoss: (id, delta) => {
-    set((state) => ({
-      openAlerts: state.openAlerts.map((t) => {
-        if (t.id === id) {
-          const currentSl = Number(t.stopLoss || 0);
-          const currentTp = Number(t.targetPrice || 999999);
-          // Clamp: Stop Loss cannot exceed Target - 1.0 pt
-          const rawNewSl = currentSl + delta;
-          const newSl = Math.min(currentTp - 1.0, Math.max(0.05, rawNewSl));
-          return { ...t, stopLoss: Number(newSl.toFixed(2)) };
-        }
-        return t;
-      })
-    }));
+    let finalSl = null;
+    const updated = get().openAlerts.map((t) => {
+      if (t.id === id) {
+        const currentSl = Number(t.stopLoss || 0);
+        const currentTp = Number(t.targetPrice || 999999);
+        const rawNewSl = currentSl + delta;
+        const newSl = Math.min(currentTp - 1.0, Math.max(0.05, rawNewSl));
+        finalSl = Number(newSl.toFixed(2));
+        return { ...t, stopLoss: finalSl };
+      }
+      return t;
+    });
+    set({ openAlerts: updated });
+    try {
+      localStorage.setItem("portfoliox_open_alerts", JSON.stringify(updated));
+      if (finalSl !== null) {
+        debounceNetworkSync(`trade_${id}_sl`, () => {
+          fetch(`/api/paper-lab/trades/${id}/stop-loss`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ stopLoss: finalSl })
+          }).catch(() => {});
+        }, 300);
+      }
+    } catch {}
   },
 
   setBreakevenSL: (id) => {
-    set((state) => ({
-      openAlerts: state.openAlerts.map((t) => {
-        if (t.id === id) {
-          const entry = Number(t.entryPrice || 0);
-          const currentTp = Number(t.targetPrice || 999999);
-          const safeSl = Math.min(currentTp - 1.0, entry);
-          return { ...t, stopLoss: Number(safeSl.toFixed(2)) };
-        }
-        return t;
-      })
-    }));
+    let finalSl = null;
+    const updated = get().openAlerts.map((t) => {
+      if (t.id === id) {
+        const entry = Number(t.entryPrice || 0);
+        const currentTp = Number(t.targetPrice || 999999);
+        const safeSl = Math.min(currentTp - 1.0, entry);
+        finalSl = Number(safeSl.toFixed(2));
+        return { ...t, stopLoss: finalSl };
+      }
+      return t;
+    });
+    set({ openAlerts: updated });
+    try {
+      localStorage.setItem("portfoliox_open_alerts", JSON.stringify(updated));
+      if (finalSl !== null) {
+        debounceNetworkSync(`trade_${id}_sl`, () => {
+          fetch(`/api/paper-lab/trades/${id}/stop-loss`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ stopLoss: finalSl })
+          }).catch(() => {});
+        }, 100);
+      }
+    } catch {}
   },
 
   updateTargetPrice: (id, newTp) => {
-    set((state) => ({
-      openAlerts: state.openAlerts.map((t) => t.id === id ? { ...t, targetPrice: Number(newTp) } : t)
-    }));
+    const val = Number(newTp);
+    const updated = get().openAlerts.map((t) => t.id === id ? { ...t, targetPrice: val } : t);
+    set({ openAlerts: updated });
+    try {
+      localStorage.setItem("portfoliox_open_alerts", JSON.stringify(updated));
+      debounceNetworkSync(`trade_${id}_target`, () => {
+        fetch(`/api/paper-lab/trades/${id}/target`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ targetPrice: val })
+        }).catch(() => {});
+      }, 300);
+    } catch {}
   },
 
   adjustTargetPrice: (id, delta) => {
-    set((state) => ({
-      openAlerts: state.openAlerts.map((t) => {
-        if (t.id === id) {
-          const currentTp = Number(t.targetPrice || 0);
-          const currentSl = Number(t.stopLoss || 0);
-          // Clamp: Target Price cannot drop below Stop Loss + 1.0 pt
-          const rawNewTp = currentTp + delta;
-          const newTp = Math.max(currentSl + 1.0, Math.max(0.05, rawNewTp));
-          return { ...t, targetPrice: Number(newTp.toFixed(2)) };
-        }
-        return t;
-      })
-    }));
+    let finalTp = null;
+    const updated = get().openAlerts.map((t) => {
+      if (t.id === id) {
+        const currentTp = Number(t.targetPrice || 0);
+        const currentSl = Number(t.stopLoss || 0);
+        // Clamp: Target Price cannot drop below Stop Loss + 1.0 pt
+        const rawNewTp = currentTp + delta;
+        const newTp = Math.max(currentSl + 1.0, Math.max(0.05, rawNewTp));
+        finalTp = Number(newTp.toFixed(2));
+        return { ...t, targetPrice: finalTp };
+      }
+      return t;
+    });
+    set({ openAlerts: updated });
+    try {
+      localStorage.setItem("portfoliox_open_alerts", JSON.stringify(updated));
+      if (finalTp !== null) {
+        debounceNetworkSync(`trade_${id}_target`, () => {
+          fetch(`/api/paper-lab/trades/${id}/target`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ targetPrice: finalTp })
+          }).catch(() => {});
+        }, 300);
+      }
+    } catch {}
   },
 
   // ==========================================
   // VIEW 4: PRO TRADING JOURNAL & PERFORMANCE STUDIO GLOBAL TIMEFRAME STATE
   // ==========================================
+  isTimeframeLocked: true, // 🔗 Global Timeframe Synchronization Switch (Level 3 Elite)
+  toggleTimeframeLock: () => set((state) => ({ isTimeframeLocked: !state.isTimeframeLocked })),
+  setTimeframeLock: (val) => set({ isTimeframeLocked: Boolean(val) }),
   paperPnlRange: "all", // "all" | "today" | "week" | "month" | "custom"
   journalRange: "all", // "all" | "today" | "week" | "month" | "custom"
   journalCustomStart: new Date().toISOString().split("T")[0],
   journalCustomEnd: new Date().toISOString().split("T")[0],
-  setPaperPnlRange: (range) => set({ paperPnlRange: range }), // Daily Session Cards — independent
-  setJournalRange: (range) => set({ journalRange: range }),   // Journal Story Deck — independent
-  setJournalCustomRange: (start, end) => set({ 
-    journalCustomStart: start, 
-    journalCustomEnd: end, 
-    journalRange: "custom",
+  setPaperPnlRange: (range) => set((state) => {
+    if (state.isTimeframeLocked) {
+      return { paperPnlRange: range, journalRange: range };
+    }
+    return { paperPnlRange: range };
+  }),
+  setJournalRange: (range) => set((state) => {
+    if (state.isTimeframeLocked) {
+      return { paperPnlRange: range, journalRange: range };
+    }
+    return { journalRange: range };
+  }),
+  setJournalCustomRange: (start, end) => set((state) => {
+    if (state.isTimeframeLocked) {
+      return { 
+        journalCustomStart: start, 
+        journalCustomEnd: end, 
+        journalRange: "custom",
+        paperPnlRange: "custom"
+      };
+    }
+    return { 
+      journalCustomStart: start, 
+      journalCustomEnd: end, 
+      journalRange: "custom",
+    };
   }),
   journalFilter: "ALL", // "ALL" | "WIN" | "LOSS" | "BREAKEVEN"
   setJournalFilter: (filter) => set({ journalFilter: filter }),
+  selectedStrategyFilter: null,
+  setSelectedStrategyFilter: (strategyName) => set((state) => ({ 
+    selectedStrategyFilter: state.selectedStrategyFilter === strategyName ? null : strategyName 
+  })),
+  clearSelectedStrategyFilter: () => set({ selectedStrategyFilter: null }),
 
   logJournalTrade: (trade) => {
     const newEntry = {
@@ -644,6 +944,74 @@ export const useTradingStore = create((set, get) => ({
       localStorage.setItem("portfolio-master-trades", JSON.stringify(next));
       localStorage.setItem("portfolio-journal-trades", JSON.stringify(next));
     } catch {}
+  },
+
+  // Global Cross-Route Undo Engine
+  undoTradeBackup: null,
+  undoCountdown: 5,
+  undoTimerHandle: null,
+  undoIntervalHandle: null,
+
+  deleteJournalTradeWithUndo: (trade) => {
+    const tradeObj = typeof trade === "object" ? trade : get().masterTrades.find((t) => t.id === trade);
+    if (!tradeObj) return;
+
+    const { undoTimerHandle, undoIntervalHandle } = get();
+    if (undoTimerHandle) clearTimeout(undoTimerHandle);
+    if (undoIntervalHandle) clearInterval(undoIntervalHandle);
+
+    get().deleteJournalTrade(tradeObj.id);
+
+    let count = 5;
+    const interval = setInterval(() => {
+      count -= 1;
+      if (count <= 0) {
+        clearInterval(interval);
+        set({ undoTradeBackup: null, undoCountdown: 5, undoIntervalHandle: null });
+      } else {
+        set({ undoCountdown: count });
+      }
+    }, 1000);
+
+    const timer = setTimeout(() => {
+      set({ undoTradeBackup: null, undoCountdown: 5, undoTimerHandle: null });
+    }, 5000);
+
+    set({
+      undoTradeBackup: tradeObj,
+      undoCountdown: 5,
+      undoTimerHandle: timer,
+      undoIntervalHandle: interval
+    });
+  },
+
+  executeUndoTrade: () => {
+    const { undoTradeBackup, undoTimerHandle, undoIntervalHandle } = get();
+    if (undoTradeBackup) {
+      get().logJournalTrade(undoTradeBackup);
+      if (undoTimerHandle) clearTimeout(undoTimerHandle);
+      if (undoIntervalHandle) clearInterval(undoIntervalHandle);
+      set({
+        undoTradeBackup: null,
+        undoCountdown: 5,
+        undoTimerHandle: null,
+        undoIntervalHandle: null
+      });
+      return true;
+    }
+    return false;
+  },
+
+  dismissUndoTrade: () => {
+    const { undoTimerHandle, undoIntervalHandle } = get();
+    if (undoTimerHandle) clearTimeout(undoTimerHandle);
+    if (undoIntervalHandle) clearInterval(undoIntervalHandle);
+    set({
+      undoTradeBackup: null,
+      undoCountdown: 5,
+      undoTimerHandle: null,
+      undoIntervalHandle: null
+    });
   },
 
   deleteJournalTrade: (id) => {
@@ -701,6 +1069,16 @@ export const useTradingStore = create((set, get) => ({
     } catch {}
   },
 
+  restoreTradingBrain: (trades) => {
+    if (!Array.isArray(trades) || trades.length === 0) return false;
+    set({ masterTrades: trades, closedAlerts: trades, journalTrades: trades });
+    try {
+      localStorage.setItem("portfolio-master-trades", JSON.stringify(trades));
+      localStorage.setItem("portfolio-journal-trades", JSON.stringify(trades));
+    } catch {}
+    return true;
+  },
+
   getPortfolioTelemetry: () => {
     const state = get();
     const startingCapital = Number(state.startingCapital || 100000);
@@ -743,3 +1121,31 @@ export const useTradingStore = create((set, get) => ({
     };
   }
 }));
+
+// Cross-Tab Storage Event Synchronization (Zero-Lag Multi-Monitor Sync)
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (event) => {
+    if (event.key === "portfoliox_open_alerts" && event.newValue) {
+      try {
+        const parsed = JSON.parse(event.newValue);
+        if (Array.isArray(parsed)) {
+          useTradingStore.setState({ openAlerts: parsed });
+        }
+      } catch {}
+    }
+    if ((event.key === "portfolio-master-trades" || event.key === "portfolio-journal-trades") && event.newValue) {
+      try {
+        const parsed = JSON.parse(event.newValue);
+        if (Array.isArray(parsed)) {
+          useTradingStore.setState({ masterTrades: parsed, closedAlerts: parsed, journalTrades: parsed });
+        }
+      } catch {}
+    }
+    if (event.key === "portfolio_starting_capital" && event.newValue) {
+      const val = Number(event.newValue);
+      if (!isNaN(val) && val > 0) {
+        useTradingStore.setState({ startingCapital: val });
+      }
+    }
+  });
+}

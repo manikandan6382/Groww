@@ -1,5 +1,7 @@
 import React, { useState } from "react";
 import { useTradingStore } from "../../stores/useTradingStore";
+import { soundEngine } from "../../utils/soundEngine";
+import { calculateTradeDuration, getLocalDateKey } from "../../utils/dateUtils";
 import { PlusCircle, Calculator, Tag, Sparkles, ShieldCheck, AlertCircle, Info } from "lucide-react";
 import clsx from "clsx";
 
@@ -17,11 +19,16 @@ export function TradeLoggerForm({ onLogged }) {
   const [mistakeTag, setMistakeTag] = useState("None (Plan Followed)");
   const [notes, setNotes] = useState("15-min volume breakout above morning high with tight risk.");
   const [submitting, setSubmitting] = useState(false);
+  const [overrideTiltBreaker, setOverrideTiltBreaker] = useState(false);
 
   const { journalTrades, logJournalTrade } = useTradingStore();
 
+  // 🛡️ Psychological Circuit Breaker & Consecutive Loss Check
+  const recentTrades = (journalTrades || []).slice(0, 2);
+  const consecutiveLosses = recentTrades.length >= 2 && recentTrades.every(t => Number(t.netPnl || 0) <= 0);
+
   // Calculate today's executed trades count
-  const _todayStr = new Date().toISOString().split("T")[0];
+  const _todayStr = getLocalDateKey();
   const todayTradesCount = (journalTrades || []).filter(
     (t) => t.entryDatetime?.split("T")[0] === _todayStr
   ).length;
@@ -55,6 +62,17 @@ export function TradeLoggerForm({ onLogged }) {
     if (emotion) setMindsetEmotion(emotion);
     if (conf) setConfidenceScore(conf);
     if (mistake) setMistakeTag(mistake);
+  };
+
+  // 1-Click ATM / OTM Strike Auto-Populator
+  const applyStrikePreset = (symName, defaultEntry, defaultExit, defaultSL, defaultTP, defaultQty, defaultTag) => {
+    setSymbol(symName);
+    setEntryPrice(String(defaultEntry));
+    setExitPrice(String(defaultExit));
+    setStopLoss(String(defaultSL));
+    setTargetPrice(String(defaultTP));
+    setQuantity(String(defaultQty));
+    if (defaultTag) setSetupTag(defaultTag);
   };
 
   async function handleSubmit(e) {
@@ -92,28 +110,32 @@ export function TradeLoggerForm({ onLogged }) {
         direction: side === "BUY" ? "LONG" : "SHORT",
         entryPrice: entry,
         exitPrice: exit,
-        quantity: Math.max(1, Math.round(qty / 65)),
-        lotSize: 65,
+        quantity: Math.max(1, Math.round(qty / 25)),
+        lotSize: 25,
         stopLoss: Number(stopLoss || entry),
         targetPrice: Number(targetPrice || exit),
         grossPnl: grossPnl,
         taxesAndCharges: totalFriction,
         netPnl: netTakeHomePnl,
-        closeReason: netTakeHomePnl >= 0 ? "TARGET_HIT" : "STOP_LOSS_HIT",
-        strategyTags: setupTag,
-        catalyst: notes || `${symbol} technical ${setupTag} setup with volume expansion above ₹${entry}.`,
-        executionDetails: `Order filled at ₹${entry.toFixed(2)} ➔ Closed at ₹${exit.toFixed(2)} (${isProfit ? "+" : ""}${pts.toFixed(2)} pts). ${isProfit ? "Target reached with 0 slippage." : "Loss cut promptly at risk limit."}`,
-        mindsetEmotion: mindsetEmotion,
+        points: pts,
+        status: "CLOSED",
+        exitReason: isProfit ? "🎯 Target Hit (Plan Followed)" : "🛡️ Stop-Loss Protected",
+        setupTag: setupTag,
+        strategyTag: setupTag,
+        notes,
+        mindsetEmotion,
         mistakeTags: mistakeTag,
         confidenceScore: confidenceScore,
         followedPlan: mistakeTag !== "Chased Extended Wick",
         lessonsLearned: notes || `Executed ${setupTag} plan. Captured ${isProfit ? "+" : ""}${pts.toFixed(2)} pts take-home after ₹${totalFriction} statutory friction.`,
         entryDatetime: now.toISOString(),
         exitDatetime: exitTime.toISOString(),
-        duration: "14 mins"
+        duration: calculateTradeDuration(now, exitTime),
+        setupIntegrityScore: 92
       };
 
       logJournalTrade(newTrade);
+      soundEngine.playSuccessTone();
 
       if (onLogged) {
         onLogged();
@@ -148,6 +170,78 @@ export function TradeLoggerForm({ onLogged }) {
         </div>
       </div>
 
+      {/* 🛡️ Psychological Revenge-Trading Circuit Breaker */}
+      {consecutiveLosses && (
+        <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/15 via-amber-500/10 to-transparent border border-amber-500/30 text-xs space-y-2 animate-fadeIn">
+          <div className="flex items-center justify-between text-amber-300 font-bold">
+            <span className="flex items-center gap-1.5">
+              <AlertCircle className="w-4 h-4 text-amber-400" />
+              <span>🛡️ Psychological Cooldown Active: 2 Consecutive Stops Hit</span>
+            </span>
+            <span className="text-[10px] font-mono bg-amber-500/20 px-2 py-0.5 rounded-md border border-amber-500/40">
+              Tilt Defense Protocol
+            </span>
+          </div>
+          <p className="text-slate-300 text-[11px] leading-relaxed">
+            Taking back-to-back losses elevates cortisol and impulsive revenge-trading risk by 4x. Take a 15-minute breather away from the screen before logging another execution.
+          </p>
+          <label className="flex items-center gap-2 pt-1 text-[11px] text-amber-200 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={overrideTiltBreaker}
+              onChange={(e) => setOverrideTiltBreaker(e.target.checked)}
+              className="rounded border-amber-500/40 text-amber-400 focus:ring-0"
+            />
+            <span>I have completed my trade autopsy and am calm, centered &amp; following my written plan.</span>
+          </label>
+        </div>
+      )}
+
+      {/* 🌟 1-Click Fast Strike & Contract Auto-Populator */}
+      <div className="p-3 rounded-2xl bg-gradient-to-r from-cyan-500/[0.07] via-white/[0.02] to-transparent border border-cyan-500/20 space-y-2">
+        <div className="flex items-center justify-between text-[11px]">
+          <span className="font-bold text-cyan-300 flex items-center gap-1.5">
+            <Calculator className="w-3.5 h-3.5 text-cyan-400" />
+            <span>1-Click Strike &amp; Contract Auto-Populate:</span>
+          </span>
+          <span className="text-[10px] text-slate-400 font-mono">Auto-configures strike, lot size &amp; 1:2 R:R</span>
+        </div>
+
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs flex-nowrap scrollbar-none">
+          <button
+            type="button"
+            onClick={() => applyStrikePreset("NIFTY 24500 CE", 85.0, 115.0, 70.0, 120.0, 25, "15m VWAP Retest")}
+            className="px-2.5 py-1 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[11px] font-mono font-bold whitespace-nowrap transition flex items-center gap-1"
+          >
+            <span>🎯 NIFTY 24500 CE (1 Lot / 25 Qty)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => applyStrikePreset("NIFTY 24500 PE", 90.0, 125.0, 72.0, 130.0, 25, "Delta Momentum Scalp")}
+            className="px-2.5 py-1 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[11px] font-mono font-bold whitespace-nowrap transition flex items-center gap-1"
+          >
+            <span>🎯 NIFTY 24500 PE (1 Lot / 25 Qty)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => applyStrikePreset("BANKNIFTY 52000 CE", 180.0, 245.0, 145.0, 260.0, 15, "Opening Range Breakout")}
+            className="px-2.5 py-1 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-[11px] font-mono font-bold whitespace-nowrap transition flex items-center gap-1"
+          >
+            <span>⚡ BANKNIFTY 52000 CE (1 Lot / 15 Qty)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => applyStrikePreset("BANKNIFTY 52000 PE", 195.0, 260.0, 160.0, 280.0, 15, "EMA Trend Pullback")}
+            className="px-2.5 py-1 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[11px] font-mono font-bold whitespace-nowrap transition flex items-center gap-1"
+          >
+            <span>⚡ BANKNIFTY 52000 PE (1 Lot / 15 Qty)</span>
+          </button>
+        </div>
+      </div>
+
       {/* 🌟 1-Click Fast Story Presets Strip (Zero-Typing Flow) */}
       <div className="p-3 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2">
         <div className="flex items-center justify-between text-[11px]">
@@ -161,34 +255,34 @@ export function TradeLoggerForm({ onLogged }) {
         <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs flex-nowrap scrollbar-none">
           <button
             type="button"
-            onClick={() => applyPreset("Breakout", "15-min volume breakout above morning resistance with momentum.", "Disciplined & Patient", 9, "None (Plan Followed)")}
+            onClick={() => applyPreset("15m VWAP Retest", "15-min volume breakout above morning resistance with momentum.", "Disciplined & Patient", 9, "None (Plan Followed)")}
             className="px-2.5 py-1 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-[11px] font-bold whitespace-nowrap transition flex items-center gap-1"
           >
-            <span>⚡ 15m Breakout</span>
+            <span>⚡ 15m VWAP Retest</span>
           </button>
 
           <button
             type="button"
-            onClick={() => applyPreset("Pullback", "Tested 20 EMA and VWAP support cleanly; entered on green reversal confirmation.", "Calm & Focused", 9, "None (Plan Followed)")}
+            onClick={() => applyPreset("EMA Trend Pullback", "Tested 20 EMA and VWAP support cleanly; entered on green reversal confirmation.", "Calm & Focused", 9, "None (Plan Followed)")}
             className="px-2.5 py-1 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold whitespace-nowrap transition flex items-center gap-1"
           >
-            <span>🎯 VWAP Pullback</span>
+            <span>🎯 EMA Pullback</span>
           </button>
 
           <button
             type="button"
-            onClick={() => applyPreset("Option Scalp", "Opening bell volatility surge; quick 10-point delta expansion scalp.", "High Conviction Execution", 10, "None (Plan Followed)")}
+            onClick={() => applyPreset("Delta Momentum Scalp", "Opening bell volatility surge; quick 10-point delta expansion scalp.", "High Conviction Execution", 10, "None (Plan Followed)")}
             className="px-2.5 py-1 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[11px] font-bold whitespace-nowrap transition flex items-center gap-1"
           >
-            <span>🌊 Opening Bell Scalp</span>
+            <span>🌊 Delta Scalp</span>
           </button>
 
           <button
             type="button"
-            onClick={() => applyPreset("Breakout", "Chased extended wick at top of candle; honored protective stop without widening.", "Slight FOMO -> Disciplined Exit", 6, "Chased Extended Wick")}
+            onClick={() => applyPreset("Expiry Zero Hero", "0DTE Expiry scalp; strict protective stop honored without hesitation.", "Disciplined Exit", 8, "None (Plan Followed)")}
             className="px-2.5 py-1 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[11px] font-bold whitespace-nowrap transition flex items-center gap-1"
           >
-            <span>🛡️ Slipped Stop Cut</span>
+            <span>🛡️ Expiry Scalp</span>
           </button>
         </div>
       </div>
@@ -346,11 +440,15 @@ export function TradeLoggerForm({ onLogged }) {
             onChange={(e) => setSetupTag(e.target.value)}
             className="w-full px-3 py-2 text-xs bg-slate-900 border border-white/10 rounded-xl text-white font-semibold focus:outline-none focus:border-cyan-400/50"
           >
-            <option value="Breakout">🚀 Breakout</option>
-            <option value="Pullback">🔄 Pullback / EMA Reversal</option>
-            <option value="Option Scalp">⚡ Quick Option Scalp</option>
-            <option value="Gap Fill">📈 Gap Fill Strategy</option>
-            <option value="Gamma Blast">💥 Gamma Blast (Hero Zero)</option>
+            <option value="15m VWAP Retest">🎯 15m VWAP Retest</option>
+            <option value="Opening Range Breakout">🚀 Opening Range Breakout</option>
+            <option value="EMA Trend Pullback">🔄 EMA Trend Pullback</option>
+            <option value="Delta Momentum Scalp">⚡ Delta Momentum Scalp</option>
+            <option value="Support Bounce Scalp">🛡️ Support Bounce Scalp</option>
+            <option value="Resistance Rejection Fade">📉 Resistance Rejection Fade</option>
+            <option value="Expiry Zero Hero">💥 Expiry Zero Hero</option>
+            <option value="Defined-Risk Spread">📊 Defined-Risk Spread</option>
+            <option value="Discretionary Scalp">🎲 Discretionary Scalp</option>
           </select>
         </div>
 

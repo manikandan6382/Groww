@@ -1,5 +1,12 @@
-import React, { useState } from "react";
-import { useTradingStore } from "../../stores/useTradingStore";
+import React, { useState, useRef, useEffect } from "react";
+import { useTradingStore, isMarketWeekend, isMarketOpenHours } from "../../stores/useTradingStore";
+import { soundEngine } from "../../utils/soundEngine";
+import { 
+  formatLocalDateTime, 
+  getLocalDateKey, 
+  calculateTradeDuration, 
+  formatLocalTime12h 
+} from "../../utils/dateUtils";
 import { 
   CheckCircle2, 
   ShieldAlert, 
@@ -17,10 +24,15 @@ import {
   AlertTriangle,
   ArrowRight,
   Zap,
-  Tag,
+  Tag, 
+  Download, 
+  Copy,
+  Check,
+  Layers,
   Calendar as CalendarIcon
 } from "lucide-react";
 import { LuxuryDateRangePicker } from "../common/LuxuryDateRangePicker";
+import { RollingTicker } from "../common/RollingTicker";
 import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
 
@@ -154,14 +166,16 @@ export function JournalStoryDeck() {
     journalFilter, 
     setJournalFilter, 
     deleteJournalTrade,
-    logJournalTrade
+    deleteJournalTradeWithUndo,
+    logJournalTrade,
+    selectedStrategyFilter,
+    clearSelectedStrategyFilter
   } = useTradingStore();
 
   const [expandedTradeIds, setExpandedTradeIds] = useState(new Set([101])); // Multi-card expansion set
   const [searchQuery, setSearchQuery] = useState("");
   const [calendarOpen, setCalendarOpen] = useState(false);
-  const [deletedTradeBackup, setDeletedTradeBackup] = useState(null);
-  const [undoTimer, setUndoTimer] = useState(null);
+  const [copiedTradeId, setCopiedTradeId] = useState(null);
 
   const toggleExpand = (id) => {
     setExpandedTradeIds((prev) => {
@@ -172,36 +186,122 @@ export function JournalStoryDeck() {
     });
   };
 
-  const handleDeleteWithUndo = (trade) => {
-    deleteJournalTrade(trade.id);
-    if (undoTimer) clearTimeout(undoTimer);
-    setDeletedTradeBackup(trade);
-    const timer = setTimeout(() => {
-      setDeletedTradeBackup(null);
-    }, 5000);
-    setUndoTimer(timer);
+  const toggleExpandAll = (allIds) => {
+    if (expandedTradeIds.size === allIds.length) {
+      setExpandedTradeIds(new Set());
+    } else {
+      setExpandedTradeIds(new Set(allIds));
+    }
   };
 
-  const handleUndo = () => {
-    if (deletedTradeBackup) {
-      logJournalTrade(deletedTradeBackup);
-      setDeletedTradeBackup(null);
-      if (undoTimer) clearTimeout(undoTimer);
-    }
+  const copyTradeMarkdown = (trade) => {
+    const isWin = (trade.netPnl ?? 0) >= 0;
+    const text = `📊 **TRADE AUTOPSY: ${trade.symbol}** (${trade.direction || "LONG"})\n` +
+      `• **Outcome**: ${isWin ? "🟢 TARGET HIT" : "🛑 STOP LOSS"} (Net: ${trade.netPnl >= 0 ? "+" : ""}₹${trade.netPnl?.toFixed(2)})\n` +
+      `• **Entry / Exit**: ₹${trade.entryPrice} → ₹${trade.exitPrice} (Target: ₹${trade.targetPrice} | SL: ₹${trade.stopLoss})\n` +
+      `• **Strategy**: ${trade.strategyTags || trade.strategyTag || "Delta Momentum"}\n` +
+      `• **Catalyst**: ${trade.catalyst || "Technical VWAP structure breakout"}\n` +
+      `• **Execution**: ${trade.executionDetails || "Market fill at planned entry"}\n` +
+      `• **Mindset**: ${trade.mindsetEmotion || "Calm & Disciplined"}\n` +
+      `• **Lesson**: ${trade.lessonsLearned || "Flawless risk execution"}\n` +
+      `— *Logged with PortfolioX Quant Terminal*`;
+
+    navigator.clipboard?.writeText(text).then(() => {
+      soundEngine.playSuccessTone();
+      setCopiedTradeId(trade.id);
+      setTimeout(() => setCopiedTradeId(null), 2500);
+    });
+  };
+
+  const handleDeleteWithUndo = (trade) => {
+    soundEngine.playDeleteTone();
+    deleteJournalTradeWithUndo(trade);
+  };
+
+  // Institutional CA & Tax-Filing Derivative Ledger (Section 44AD / 44ADA Compliant)
+  const exportTaxCsv = () => {
+    const headers = [
+      "Trade ID",
+      "Date",
+      "Symbol / Contract",
+      "Side",
+      "Quantity",
+      "Entry Price (INR)",
+      "Exit Price (INR)",
+      "Gross Buy Value (INR)",
+      "Gross Sell Value (INR)",
+      "Gross PnL (INR)",
+      "Sec 44AD Turnover (Absolute PnL INR)",
+      "Brokerage (INR)",
+      "STT / CTT (INR)",
+      "Exchange Charges (INR)",
+      "GST (18% INR)",
+      "Net Realized PnL (INR)",
+      "Setup / Strategy Tag",
+      "Integrity Score",
+      "Execution Notes"
+    ];
+
+    const rows = filteredTrades.map((t, idx) => {
+      const qty = t.lotSize && t.quantity ? t.lotSize * t.quantity : 25;
+      const entryPrice = Number(t.entryPrice || 0);
+      const exitPrice = Number(t.exitPrice || 0);
+      const buyVal = entryPrice * qty;
+      const sellVal = exitPrice * qty;
+      const gross = t.direction === "SHORT" ? (buyVal - sellVal) : (sellVal - buyVal);
+      const turnover = Math.abs(gross);
+      const brokerage = 40.0;
+      const stt = Number((sellVal * 0.001).toFixed(2));
+      const exch = Number(((buyVal + sellVal) * 0.0005).toFixed(2));
+      const gst = Number((0.18 * (brokerage + exch)).toFixed(2));
+      const net = Number((gross - (brokerage + stt + exch + gst)).toFixed(2));
+
+      return [
+        `TRD-${t.id || (1000 + idx)}`,
+        `"${t.exitDatetime?.split("T")[0] || t.entryDatetime?.split("T")[0] || new Date().toISOString().split("T")[0]}"`,
+        `"${t.symbol}"`,
+        `"${t.direction || (t.optionType === "PUT" ? "SELL" : "BUY")}"`,
+        qty,
+        entryPrice.toFixed(2),
+        exitPrice.toFixed(2),
+        buyVal.toFixed(2),
+        sellVal.toFixed(2),
+        gross.toFixed(2),
+        turnover.toFixed(2),
+        brokerage.toFixed(2),
+        stt.toFixed(2),
+        exch.toFixed(2),
+        gst.toFixed(2),
+        (t.netPnl !== undefined ? t.netPnl : net).toFixed(2),
+        `"${t.strategyTags || t.strategyTag || t.setupTag || "Quantitative Setup"}"`,
+        `${t.setupIntegrityScore || 90}%`,
+        `"${(t.notes || t.executionDetails || "Executed on quantitative criteria").replace(/"/g, '""')}"`
+      ];
+    });
+
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `trading_journal_tax_ledger_${journalRange}_${new Date().toISOString().split("T")[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    soundEngine.playSuccessTone();
   };
 
   // Safe Dynamic Date Resolver (Zero Hardcoded Fallbacks)
   const getTradeDate = (trade) => {
-    return trade.exitDatetime?.split("T")[0] || trade.entryDatetime?.split("T")[0] || new Date().toISOString().split("T")[0];
+    return getLocalDateKey(trade.exitDatetime || trade.entryDatetime);
   };
 
   // 1. Date Filter First
   const dateFilteredTrades = (journalTrades || []).filter((trade) => {
     const tradeDate = getTradeDate(trade);
-    const todayStr = new Date().toISOString().split("T")[0];
+    const todayKey = getLocalDateKey();
 
     if (journalRange === "today") {
-      return tradeDate === todayStr;
+      return tradeDate === todayKey;
     }
     if (journalRange === "week") {
       const d = new Date();
@@ -211,7 +311,8 @@ export function JournalStoryDeck() {
       monday.setHours(0, 0, 0, 0);
       const sunday = new Date(monday);
       sunday.setDate(monday.getDate() + 6);
-      return tradeDate >= monday.toISOString().split("T")[0] && tradeDate <= sunday.toISOString().split("T")[0];
+      sunday.setHours(23, 59, 59, 999);
+      return tradeDate >= getLocalDateKey(monday) && tradeDate <= getLocalDateKey(sunday);
     }
     if (journalRange === "month") {
       const now = new Date();
@@ -228,8 +329,12 @@ export function JournalStoryDeck() {
     return true;
   });
 
-  // 2. Outcome & Search Filter
+  // 2. Outcome, Strategy & Search Filter
   const filteredTrades = dateFilteredTrades.filter((trade) => {
+    if (selectedStrategyFilter) {
+      const tradeStrat = (trade.strategyTags || trade.strategyTag || trade.entryReason || "").trim();
+      if (tradeStrat !== selectedStrategyFilter) return false;
+    }
     if (journalFilter === "WIN" && !(trade.closeReason === "TARGET_HIT" || trade.netPnl > 0)) return false;
     if (journalFilter === "LOSS" && !(trade.closeReason === "STOP_LOSS_HIT" || trade.netPnl < 0)) return false;
     if (journalFilter === "BREAKEVEN" && !(trade.closeReason === "BREAKEVEN_LOCKED" || trade.netPnl === 0)) return false;
@@ -265,6 +370,23 @@ export function JournalStoryDeck() {
       <div className="absolute top-0 right-0 w-96 h-96 bg-cyan-500/[0.03] rounded-full blur-3xl pointer-events-none -mr-20 -mt-20" />
       <div className="absolute bottom-0 left-0 w-96 h-96 bg-emerald-500/[0.02] rounded-full blur-3xl pointer-events-none -ml-20 -mb-20" />
 
+      {/* Selected Strategy Filter Notification Chip */}
+      {selectedStrategyFilter && (
+        <div className="flex items-center justify-between p-3 px-4 rounded-2xl bg-gradient-to-r from-cyan-500/15 via-cyan-500/10 to-transparent border border-cyan-500/30 text-xs text-cyan-300 shadow-lg shadow-cyan-500/10 animate-fadeIn">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+            <span>🎯 Filtered by Strategy Leaderboard: <strong className="text-white font-mono">{selectedStrategyFilter}</strong></span>
+          </div>
+          <button
+            type="button"
+            onClick={clearSelectedStrategyFilter}
+            className="px-2.5 py-1 rounded-xl bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold transition flex items-center gap-1"
+          >
+            <span>✕ Reset (Show All Setups)</span>
+          </button>
+        </div>
+      )}
+
       {/* Master Header & Story Telemetry */}
       <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-5 pb-5 border-b border-white/10">
         <div className="space-y-1.5">
@@ -284,18 +406,28 @@ export function JournalStoryDeck() {
           </p>
         </div>
 
-        {/* Realized Summary Strip */}
+        {/* Realized Summary Strip with Apple-Grade Rolling Odometer Ticker */}
         <div className="flex items-center gap-3 text-xs flex-wrap sm:flex-nowrap flex-shrink-0">
           <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-xl text-right shadow-sm min-w-[140px]">
             <span className="text-[10px] text-slate-400 font-semibold block mb-0.5">Total Net Realized ({rangeLabel})</span>
-            <strong className={clsx("font-mono text-sm sm:text-base font-black", totalNet >= 0 ? "text-emerald-400" : "text-rose-400")}>
-              {totalNet >= 0 ? "+" : ""}₹{totalNet.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-            </strong>
+            <div className={clsx("font-mono text-sm sm:text-base font-black flex justify-end items-baseline", totalNet >= 0 ? "text-emerald-400" : "text-rose-400")}>
+              <RollingTicker 
+                value={totalNet} 
+                prefix="₹" 
+                showSign={true} 
+                decimalPlaces={2} 
+                className={totalNet >= 0 ? "text-emerald-400" : "text-rose-400"}
+              />
+            </div>
           </div>
 
           <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-xl text-right shadow-sm min-w-[110px]">
             <span className="text-[10px] text-slate-400 font-semibold block mb-0.5">Win/Stop Record</span>
-            <strong className="font-mono text-sm sm:text-base font-black text-cyan-400">{winCount}W · {lossCount}L</strong>
+            <div className="font-mono text-sm sm:text-base font-black text-cyan-400 flex items-center justify-end gap-1">
+              <RollingTicker value={winCount} suffix="W" decimalPlaces={0} className="text-emerald-400 font-black" />
+              <span className="text-slate-500 font-normal">·</span>
+              <RollingTicker value={lossCount} suffix="L" decimalPlaces={0} className="text-rose-400 font-black" />
+            </div>
           </div>
         </div>
       </div>
@@ -320,16 +452,22 @@ export function JournalStoryDeck() {
                     key={tab.id}
                     type="button"
                     onClick={() => {
+                      soundEngine.playTabSwitchTone();
                       setJournalRange(tab.id);
                       if (tab.id === "custom") setCalendarOpen(true);
                     }}
                     className={clsx(
-                      "px-3 py-1.5 rounded-xl font-bold transition-all text-xs flex items-center gap-1.5 whitespace-nowrap",
-                      isActive
-                        ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-[0_0_12px_rgba(6,182,212,0.2)]"
-                        : "text-slate-400 hover:text-slate-200"
+                      "relative px-3 py-1.5 rounded-xl font-bold transition-colors text-xs flex items-center gap-1.5 whitespace-nowrap z-10",
+                      isActive ? "text-cyan-300" : "text-slate-400 hover:text-slate-200"
                     )}
                   >
+                    {isActive && (
+                      <motion.div
+                        layoutId="activeJournalTimeframePill"
+                        transition={{ type: "spring", stiffness: 450, damping: 32 }}
+                        className="absolute inset-0 rounded-xl bg-cyan-500/20 border border-cyan-500/35 shadow-[0_0_12px_rgba(6,182,212,0.25)] -z-10"
+                      />
+                    )}
                     {Icon && <Icon className="w-3 h-3 text-cyan-400" />}
                     <span>{tab.label}</span>
                   </button>
@@ -341,7 +479,10 @@ export function JournalStoryDeck() {
             {journalRange === "custom" && (
               <button
                 type="button"
-                onClick={() => setCalendarOpen(true)}
+                onClick={() => {
+                  soundEngine.playTabSwitchTone();
+                  setCalendarOpen(true);
+                }}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 text-xs font-mono font-bold transition shadow-sm"
               >
                 <CalendarIcon className="w-3 h-3" />
@@ -351,74 +492,224 @@ export function JournalStoryDeck() {
             )}
           </div>
 
-          {/* Search Input with Frosted Finish */}
-          <div className="relative flex-1 sm:flex-initial">
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search strike, catalyst, rule..."
-              className="w-full sm:w-64 bg-black/40 border border-white/10 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 font-mono focus:outline-none focus:border-cyan-500/50 shadow-inner"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery("")}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white text-xs"
-              >
-                ✕
-              </button>
-            )}
+          <div className="flex items-center gap-2 flex-1 sm:flex-initial">
+            {/* Export Tax-Filing CSV Button */}
+            <button
+              type="button"
+              onClick={exportTaxCsv}
+              disabled={filteredTrades.length === 0}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-xs font-bold transition disabled:opacity-40 disabled:cursor-not-allowed shadow-sm whitespace-nowrap"
+              title="Export CA Tax-Filing Ledger with Section 44AD Turnover & STT Breakdown"
+            >
+              <Download className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="hidden sm:inline">Tax Ledger CSV</span>
+            </button>
+
+            {/* Search Input with Frosted Finish */}
+            <div className="relative flex-1 sm:flex-initial">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search strike, catalyst, rule..."
+                className="w-full sm:w-60 bg-black/40 border border-white/10 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 font-mono focus:outline-none focus:border-cyan-500/50 shadow-inner"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white text-xs"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* Tier 2: Outcome Filter Chips */}
-        <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-xl text-xs flex-wrap">
-          {[
-            { id: "ALL", label: "All Stories", count: dateFilteredTrades.length },
-            { id: "WIN", label: "🟢 Targets Hit", count: dateFilteredTrades.filter(t => (t.netPnl || 0) > 0).length },
-            { id: "LOSS", label: "🛑 Protected Stops", count: dateFilteredTrades.filter(t => (t.netPnl || 0) <= 0).length },
-          ].map((tab) => (
+        {/* Tier 2: Outcome Filter Chips & Global Expand/Collapse Toggle */}
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-xl text-xs flex-wrap">
+            {[
+              { id: "ALL", label: "All Stories", count: dateFilteredTrades.length },
+              { id: "WIN", label: "🟢 Targets Hit", count: dateFilteredTrades.filter(t => (t.netPnl || 0) > 0).length },
+              { id: "LOSS", label: "🛑 Protected Stops", count: dateFilteredTrades.filter(t => (t.netPnl || 0) <= 0).length },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => {
+                  soundEngine.playTabSwitchTone();
+                  setJournalFilter(tab.id);
+                }}
+                className={clsx(
+                  "px-3 py-1.5 rounded-xl font-bold transition-all whitespace-nowrap text-xs flex items-center gap-2",
+                  journalFilter === tab.id
+                    ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-sm"
+                    : "text-slate-400 hover:text-slate-200"
+                )}
+              >
+                <span>{tab.label}</span>
+                <span className="px-1.5 py-0.2 rounded-full bg-white/10 text-[10px] font-mono">
+                  {tab.count}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {/* Global Expand / Collapse All Stories Toggle */}
+          {filteredTrades.length > 0 && (
             <button
-              key={tab.id}
               type="button"
-              onClick={() => setJournalFilter(tab.id)}
-              className={clsx(
-                "px-3 py-1.5 rounded-xl font-bold transition-all whitespace-nowrap text-xs flex items-center gap-2",
-                journalFilter === tab.id
-                  ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-sm"
-                  : "text-slate-400 hover:text-slate-200"
-              )}
+              onClick={() => {
+                soundEngine.playTabSwitchTone();
+                toggleExpandAll(filteredTrades.map((t) => t.id));
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 hover:text-white text-xs font-bold transition shadow-sm"
+              title="Expand or collapse all 4-Act trade autopsies"
             >
-              <span>{tab.label}</span>
-              <span className="px-1.5 py-0.2 rounded-full bg-white/10 text-[10px] font-mono">
-                {tab.count}
+              <Layers className="w-3.5 h-3.5 text-cyan-400" />
+              <span>
+                {expandedTradeIds.size === filteredTrades.length ? "Collapse All Stories" : "Expand All Stories"}
               </span>
             </button>
-          ))}
+          )}
         </div>
+
+        {/* Tier 3: Active Strategy Filter Badge with 1-Click Clear */}
+        {selectedStrategyFilter && (
+          <div className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 text-xs animate-in fade-in">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Tag className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="text-slate-300 font-medium">Filtered by Strategy:</span>
+              <strong className="text-cyan-300 font-bold px-2 py-0.5 rounded-lg bg-cyan-500/20 border border-cyan-500/40 font-mono">
+                {selectedStrategyFilter}
+              </strong>
+              <span className="text-slate-400 font-mono text-[11px]">
+                ({filteredTrades.length} trades · {filteredTrades.filter(t => (t.netPnl || 0) > 0).length} wins)
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playTabSwitchTone();
+                clearSelectedStrategyFilter();
+              }}
+              className="px-2.5 py-1 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 font-bold text-xs transition flex items-center gap-1 shadow-sm whitespace-nowrap"
+            >
+              <span>Clear Filter ✕</span>
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* 🌟 Trade Story Cards Stack */}
+      {/* 🌟 Contextual Market & Filter Empty States */}
       {filteredTrades.length === 0 ? (
-        <div className="p-12 text-center text-slate-400 text-xs rounded-3xl bg-white/[0.01] border border-white/5 space-y-3">
-          <BookOpen className="w-8 h-8 mx-auto text-slate-500 opacity-60" />
-          <div>
-            <strong className="text-white text-sm block font-bold">No trade case studies match this filter</strong>
-            <span className="text-slate-400 text-xs">Try resetting your date range or clearing your search term.</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              setJournalRange("all");
-              setJournalFilter("ALL");
-              setSearchQuery("");
-            }}
-            className="px-4 py-2 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 text-xs font-bold transition inline-flex items-center gap-1.5"
-          >
-            <Zap className="w-3.5 h-3.5" />
-            <span>Reset All Filters to All Time</span>
-          </button>
+        <div className="p-8 sm:p-12 text-center text-xs rounded-3xl bg-white/[0.02] border border-white/10 space-y-4 backdrop-blur-xl shadow-xl">
+          {journalRange === "today" && isMarketWeekend() ? (
+            /* 🏖️ Weekend Market Closed State */
+            <div className="space-y-3 max-w-md mx-auto">
+              <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-2xl shadow-inner">
+                🏖️
+              </div>
+              <div className="space-y-1">
+                <strong className="text-white text-base font-black block tracking-tight">
+                  Weekend — Indian Markets (NSE &amp; BSE) are Closed
+                </strong>
+                <p className="text-slate-400 text-xs leading-relaxed">
+                  No market executions for today (Sunday/Saturday). Select <strong className="text-cyan-300">"This Week"</strong> or <strong className="text-cyan-300">"All Time"</strong> to inspect previous trading sessions and review your setup expectancy.
+                </p>
+              </div>
+              <div className="flex items-center justify-center gap-2 pt-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setJournalRange("week")}
+                  className="px-4 py-2 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
+                >
+                  <CalendarIcon className="w-3.5 h-3.5" />
+                  <span>Switch to This Week</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setJournalRange("all")}
+                  className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10 text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
+                >
+                  <Zap className="w-3.5 h-3.5" />
+                  <span>View All-Time Ledger</span>
+                </button>
+              </div>
+            </div>
+          ) : journalRange === "today" && !isMarketWeekend() ? (
+            /* ☕ Live Weekday Zero Trades State */
+            <div className="space-y-3 max-w-md mx-auto">
+              <div className="w-14 h-14 mx-auto rounded-2xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-2xl shadow-inner">
+                ☕
+              </div>
+              <div className="space-y-1">
+                <strong className="text-white text-base font-black block tracking-tight">
+                  No Trades Logged for Today's Market Session Yet
+                </strong>
+                <p className="text-slate-400 text-xs leading-relaxed">
+                  Live market is active. Use the 1-Click Fast Strike Bar above or the trade logger to record your first execution.
+                </p>
+              </div>
+              <div className="flex items-center justify-center gap-2 pt-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setJournalRange("week")}
+                  className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10 text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
+                >
+                  <CalendarIcon className="w-3.5 h-3.5" />
+                  <span>Review Past Sessions (This Week)</span>
+                </button>
+              </div>
+            </div>
+          ) : selectedStrategyFilter ? (
+            /* 🎯 Strategy Filter Empty State */
+            <div className="space-y-3 max-w-md mx-auto">
+              <div className="w-14 h-14 mx-auto rounded-2xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-2xl shadow-inner">
+                🎯
+              </div>
+              <div className="space-y-1">
+                <strong className="text-white text-base font-black block tracking-tight">
+                  No Trades for Strategy: "{selectedStrategyFilter}" in this Range
+                </strong>
+                <p className="text-slate-400 text-xs leading-relaxed">
+                  You have not recorded any trades matching this setup tag in the selected date range ({rangeLabel}).
+                </p>
+              </div>
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={clearSelectedStrategyFilter}
+                  className="px-4 py-2 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 text-xs font-bold transition inline-flex items-center gap-1.5 shadow-sm"
+                >
+                  <span>✕ Reset Strategy Filter (Show All Setups)</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* 🔍 General Search / Filter Empty State */
+            <div className="space-y-3 max-w-md mx-auto">
+              <BookOpen className="w-8 h-8 mx-auto text-slate-500 opacity-60" />
+              <div className="space-y-1">
+                <strong className="text-white text-sm block font-bold">No trade case studies match this filter</strong>
+                <span className="text-slate-400 text-xs">Try resetting your date range or clearing your search term.</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setJournalRange("all");
+                  setJournalFilter("ALL");
+                  setSearchQuery("");
+                }}
+                className="px-4 py-2 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 text-xs font-bold transition inline-flex items-center gap-1.5"
+              >
+                <Zap className="w-3.5 h-3.5" />
+                <span>Reset All Filters to All Time</span>
+              </button>
+            </div>
+          )}
         </div>
       ) : (
         <div className="space-y-4 max-h-[720px] overflow-y-auto pr-2">
@@ -465,18 +756,14 @@ export function JournalStoryDeck() {
                         </span>
                       </div>
                       <div className="flex items-center gap-2 text-[10px] text-slate-400 font-mono mt-0.5">
-                        <span>📅 {trade.entryDatetime?.split("T")[0]}</span>
+                        <span>📅 {formatLocalDateTime(trade.entryDatetime)}</span>
                         <span>•</span>
                         <span>{trade.quantity || 1} Lot ({trade.lotSize || 65} Qty)</span>
-                        {trade.duration && (
-                          <>
-                            <span>•</span>
-                            <span className="text-slate-300 flex items-center gap-1 font-sans font-medium">
-                              <Clock className="w-3 h-3 text-cyan-400" />
-                              {trade.duration}
-                            </span>
-                          </>
-                        )}
+                        <span>•</span>
+                        <span className="text-cyan-300 flex items-center gap-1 font-sans font-medium">
+                          <Clock className="w-3 h-3 text-cyan-400" />
+                          <span>{calculateTradeDuration(trade.entryDatetime, trade.exitDatetime, trade.duration)}</span>
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -502,7 +789,13 @@ export function JournalStoryDeck() {
                         : "bg-rose-500/15 text-rose-300 border-rose-500/40 shadow-rose-500/10"
                     )}>
                       {isGain ? <CheckCircle2 className="w-3.5 h-3.5" /> : <ShieldAlert className="w-3.5 h-3.5" />}
-                      <span>{isGain ? "+" : ""}₹{trade.netPnl?.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</span>
+                      <RollingTicker 
+                        value={Number(trade.netPnl || 0)} 
+                        prefix="₹" 
+                        showSign={true} 
+                        decimalPlaces={2} 
+                        className={isGain ? "text-emerald-300" : "text-rose-300"}
+                      />
                       <span className={clsx(
                         "text-[10px] md:text-[11px] font-bold px-1.5 py-0.5 rounded-md",
                         isGain ? "bg-emerald-500/25 text-emerald-200" : "bg-rose-500/25 text-rose-200"
@@ -510,6 +803,20 @@ export function JournalStoryDeck() {
                         {isGain ? "+" : ""}{pnlPercent.toFixed(2)}%
                       </span>
                     </div>
+
+                    {/* 1-Click Copy Forensic Markdown Card Button */}
+                    <button
+                      type="button"
+                      onClick={() => copyTradeMarkdown(trade)}
+                      className="p-2 text-slate-400 hover:text-cyan-300 hover:bg-cyan-500/10 rounded-xl transition-all"
+                      title="Copy Forensic Markdown Autopsy to Clipboard"
+                    >
+                      {copiedTradeId === trade.id ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                    </button>
 
                     {/* Delete Action with 5s Undo Toast */}
                     <button
@@ -559,9 +866,16 @@ export function JournalStoryDeck() {
                       </div>
                       <div className="flex items-center justify-between text-white font-bold pt-1.5 border-t border-white/10 text-[11px]">
                         <span className="font-sans text-slate-400">True Take-Home:</span>
-                        <span className={isGain ? "text-emerald-400" : "text-rose-400"}>
-                          {isGain ? "+" : ""}₹{trade.netPnl?.toFixed(2)} ({isGain ? "+" : ""}{pnlPercent.toFixed(2)}%)
-                        </span>
+                        <div className={clsx("flex items-center gap-1", isGain ? "text-emerald-400" : "text-rose-400")}>
+                          <RollingTicker 
+                            value={Number(trade.netPnl || 0)} 
+                            prefix="₹" 
+                            showSign={true} 
+                            decimalPlaces={2} 
+                            className={isGain ? "text-emerald-400" : "text-rose-400"}
+                          />
+                          <span>({isGain ? "+" : ""}{pnlPercent.toFixed(2)}%)</span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -696,29 +1010,6 @@ export function JournalStoryDeck() {
           })}
         </div>
       )}
-
-      {/* 5-Second Undo Toast Notification */}
-      <AnimatePresence>
-        {deletedTradeBackup && (
-          <motion.div
-            initial={{ opacity: 0, y: 20, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 20, scale: 0.95 }}
-            className="fixed bottom-6 right-6 z-50 p-4 rounded-2xl bg-slate-900/95 backdrop-blur-2xl border border-cyan-500/30 shadow-[0_0_30px_rgba(6,182,212,0.25)] flex items-center gap-3 text-xs"
-          >
-            <span className="text-slate-200 font-medium">
-              Trade <strong className="text-white font-mono">{deletedTradeBackup.symbol}</strong> deleted.
-            </span>
-            <button
-              type="button"
-              onClick={handleUndo}
-              className="px-3 py-1 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-bold font-mono transition"
-            >
-              Undo (5s)
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* Luxury Spatial Calendar Picker Modal */}
       <LuxuryDateRangePicker

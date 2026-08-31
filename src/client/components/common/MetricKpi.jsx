@@ -1,7 +1,8 @@
 import React from "react";
+import { RollingTicker } from "./RollingTicker";
 import clsx from "clsx";
 
-export function MetricKpi({ icon, label, value, subtext, tone = "default", className }) {
+export function MetricKpi({ icon, label, value, numericValue, prefix = "", suffix = "", subtext, tone = "default", className }) {
   const toneClasses = {
     default: "border-white/5",
     gain: "border-emerald-500/20 text-emerald-400",
@@ -18,6 +19,8 @@ export function MetricKpi({ icon, label, value, subtext, tone = "default", class
     blue: "bg-blue-500/10 text-blue-400 border border-blue-500/20",
   };
 
+  const numToAnimate = typeof numericValue === "number" ? numericValue : (typeof value === "number" ? value : null);
+
   return (
     <div
       className={clsx(
@@ -33,7 +36,13 @@ export function MetricKpi({ icon, label, value, subtext, tone = "default", class
       )}
       <div className="flex flex-col min-w-0">
         <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</span>
-        <strong className="text-xl font-extrabold tracking-tight text-white tabular-nums truncate">{value}</strong>
+        {numToAnimate !== null ? (
+          <div className="text-xl font-extrabold tracking-tight text-white tabular-nums truncate">
+            <RollingTicker value={numToAnimate} prefix={prefix} suffix={suffix} decimalPlaces={2} />
+          </div>
+        ) : (
+          <strong className="text-xl font-extrabold tracking-tight text-white tabular-nums truncate">{value}</strong>
+        )}
         {subtext && <small className="text-[11px] text-slate-400 font-medium truncate">{subtext}</small>}
       </div>
     </div>

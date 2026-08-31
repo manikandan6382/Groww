@@ -26,12 +26,17 @@
   --gain-gradient: linear-gradient(135deg, #10b981 0%, #34d399 100%);
   --shadow-main: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 20px 50px rgba(0, 0, 0, 0.5);
   --shadow-glow: 0 0 30px rgba(56, 189, 248, 0.15);
-  --radius-lg: 20px;
-  --radius-md: 14px;
-  --radius-sm: 8px;
+  --radius-lg: 24px;
+  --radius-md: 16px;
+  --radius-sm: 10px;
   --radius-pill: 9999px;
-  --font-sans: "Outfit", "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-mono: "Roboto Mono", "SF Mono", monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Outfit", "Inter", "Segoe UI", Roboto, sans-serif;
+  --font-mono: "SF Mono", "Roboto Mono", Menlo, Monaco, Consolas, monospace;
+  --apple-glass-surface: rgba(8, 14, 28, 0.78);
+  --apple-glass-blur: blur(28px) saturate(190%);
+  --apple-specular-rim: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 20px 50px rgba(0, 0, 0, 0.6);
+  --apple-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --apple-spotlight: radial-gradient(ellipse at 50% 0%, rgba(56, 189, 248, 0.12), transparent 70%);
 }
 
 :root[data-theme="emerald"] {

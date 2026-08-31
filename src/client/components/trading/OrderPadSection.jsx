@@ -1,5 +1,10 @@
-import React, { useState, useMemo } from "react";
-import { useTradingStore } from "../../stores/useTradingStore";
+import React, { useState, useMemo, useEffect, useRef } from "react";
+import { useTradingStore, resolveIndexLotSize } from "../../stores/useTradingStore";
+import { useLivePriceStore } from "../../stores/useLivePriceStore";
+import { soundEngine } from "../../utils/soundEngine";
+import { RollingTicker } from "../common/RollingTicker";
+import { ApplePayoffCanvas } from "./ApplePayoffCanvas";
+import { motion, AnimatePresence } from "framer-motion";
 import { 
   Zap, 
   ShieldCheck, 
@@ -15,17 +20,25 @@ import {
   Sparkles, 
   CheckCircle2,
   SlidersHorizontal,
-  ChevronRight
+  ChevronRight,
+  ChevronDown
 } from "lucide-react";
 import clsx from "clsx";
 
-const LOT_SIZES = { NIFTY: 25, BANKNIFTY: 15, FINNIFTY: 25, SENSEX: 10 };
+export function isPowerHourWindow() {
+  const now = new Date();
+  const hours = now.getHours();
+  const minutes = now.getMinutes();
+  const timeInMins = hours * 60 + minutes;
+  // 2:00 PM to 3:30 PM IST (14:00 to 15:30 -> 840 to 930 mins)
+  return timeInMins >= 840 && timeInMins <= 930;
+}
 
 const INDEX_ASSETS = [
-  { key: "NIFTY", name: "NIFTY 50", spot: 24312.40, lot: 25, defaultStrike: 24300, defaultEntry: 83.0, defaultSL: 75.0, defaultTP: 102.0, change: "+0.42%", positive: true },
-  { key: "BANKNIFTY", name: "BANK NIFTY", spot: 52180.15, lot: 15, defaultStrike: 52100, defaultEntry: 245.0, defaultSL: 220.0, defaultTP: 305.0, change: "+0.85%", positive: true },
-  { key: "FINNIFTY", name: "FIN NIFTY", spot: 23450.60, lot: 25, defaultStrike: 23400, defaultEntry: 65.0, defaultSL: 55.0, defaultTP: 88.0, change: "+0.28%", positive: true },
-  { key: "SENSEX", name: "BSE SENSEX", spot: 79890.30, lot: 10, defaultStrike: 79900, defaultEntry: 310.0, defaultSL: 280.0, defaultTP: 380.0, change: "+0.39%", positive: true },
+  { key: "NIFTY", name: "NIFTY 50", spot: 24005.55, lot: 65, defaultOption: "PUT", defaultStrike: 24100, defaultEntry: 100.50, defaultSL: 83.50, defaultTP: 142.00, change: "-0.70%", positive: false },
+  { key: "BANKNIFTY", name: "BANK NIFTY", spot: 57210.50, lot: 30, defaultOption: "PUT", defaultStrike: 57200, defaultEntry: 180.00, defaultSL: 155.00, defaultTP: 240.00, change: "-0.50%", positive: false },
+  { key: "FINNIFTY", name: "FIN NIFTY", spot: 23450.60, lot: 65, defaultOption: "CALL", defaultStrike: 23400, defaultEntry: 65.0, defaultSL: 55.0, defaultTP: 88.0, change: "+0.28%", positive: true },
+  { key: "SENSEX", name: "BSE SENSEX", spot: 79890.30, lot: 10, defaultOption: "CALL", defaultStrike: 79900, defaultEntry: 310.0, defaultSL: 280.0, defaultTP: 380.0, change: "+0.39%", positive: true },
 ];
 
 export function OrderPadSection() {
@@ -39,20 +52,84 @@ export function OrderPadSection() {
     setSimulateSlippage 
   } = useTradingStore();
 
-  const [optionType, setOptionType] = useState("CALL");
+  const indices = useLivePriceStore((state) => state.indices);
+
+  // Dynamic live asset quotes & ATM strike resolver
+  const dynamicAssets = useMemo(() => {
+    return INDEX_ASSETS.map((asset) => {
+      let liveLtp = asset.spot;
+      let liveChange = asset.change;
+      let isPositive = asset.positive;
+
+      if (asset.key === "NIFTY" && indices?.["NSE_INDEX|Nifty 50"]) {
+        const ind = indices["NSE_INDEX|Nifty 50"];
+        liveLtp = ind.ltp || liveLtp;
+        liveChange = ind.changePct != null ? `${ind.changePct >= 0 ? "+" : ""}${ind.changePct.toFixed(2)}%` : liveChange;
+        isPositive = (ind.changePct ?? 0) >= 0;
+      } else if (asset.key === "BANKNIFTY" && indices?.["NSE_INDEX|Nifty Bank"]) {
+        const ind = indices["NSE_INDEX|Nifty Bank"];
+        liveLtp = ind.ltp || liveLtp;
+        liveChange = ind.changePct != null ? `${ind.changePct >= 0 ? "+" : ""}${ind.changePct.toFixed(2)}%` : liveChange;
+        isPositive = (ind.changePct ?? 0) >= 0;
+      } else if (asset.key === "FINNIFTY" && indices?.["NSE_INDEX|Nifty Fin Service"]) {
+        const ind = indices["NSE_INDEX|Nifty Fin Service"];
+        liveLtp = ind.ltp || liveLtp;
+        liveChange = ind.changePct != null ? `${ind.changePct >= 0 ? "+" : ""}${ind.changePct.toFixed(2)}%` : liveChange;
+        isPositive = (ind.changePct ?? 0) >= 0;
+      } else if (asset.key === "SENSEX" && indices?.["BSE_INDEX|SENSEX"]) {
+        const ind = indices["BSE_INDEX|SENSEX"];
+        liveLtp = ind.ltp || liveLtp;
+        liveChange = ind.changePct != null ? `${ind.changePct >= 0 ? "+" : ""}${ind.changePct.toFixed(2)}%` : liveChange;
+        isPositive = (ind.changePct ?? 0) >= 0;
+      }
+
+      const step = asset.key === "BANKNIFTY" || asset.key === "SENSEX" ? 100 : 50;
+      const atmStrike = Math.round(liveLtp / step) * step;
+      const recommendedOption = isPositive ? "CALL" : "PUT";
+
+      return {
+        ...asset,
+        spot: liveLtp,
+        change: liveChange,
+        positive: isPositive,
+        calculatedAtmStrike: atmStrike,
+        recommendedOption
+      };
+    });
+  }, [indices]);
+
+  const [optionType, setOptionType] = useState("PUT");
   const [underlying, setUnderlying] = useState("NIFTY");
-  const [strikePrice, setStrikePrice] = useState(24300);
-  const [entryPrice, setEntryPrice] = useState(83.0);
+  const [strikePrice, setStrikePrice] = useState(24100);
+  const [entryPrice, setEntryPrice] = useState(100.50);
   const [lots, setLots] = useState(1);
-  const [stopLoss, setStopLoss] = useState(75.0);
-  const [targetPrice, setTargetPrice] = useState(102.0);
-  const [hedgeStrike, setHedgeStrike] = useState(24400);
-  const [hedgePrice, setHedgePrice] = useState(38.0);
+  const [stopLoss, setStopLoss] = useState(83.50);
+  const [targetPrice, setTargetPrice] = useState(142.00);
+  const [hedgeStrike, setHedgeStrike] = useState(23900);
+  const [hedgePrice, setHedgePrice] = useState(23.90);
   const [copilotRegime, setCopilotRegime] = useState("AUTO"); // "AUTO" | "PRIME" | "WARNING" | "BLOCKED"
   const [sandboxBypass, setSandboxBypass] = useState(false);
   const [isDeploying, setIsDeploying] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const [lastScanTime, setLastScanTime] = useState(null);
+  const [isIndexDropdownOpen, setIsIndexDropdownOpen] = useState(false);
+  const indexDropdownRef = useRef(null);
 
-  const lotSize = LOT_SIZES[underlying] || 65;
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (indexDropdownRef.current && !indexDropdownRef.current.contains(event.target)) {
+        setIsIndexDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const currentAsset = useMemo(() => {
+    return dynamicAssets.find((a) => a.key === underlying) || dynamicAssets[0];
+  }, [dynamicAssets, underlying]);
+
+  const lotSize = resolveIndexLotSize(underlying);
   const totalQty = lots * lotSize;
   const netEntryPrice = strategyMode === "SPREAD" ? Math.max(0.1, entryPrice - hedgePrice) : entryPrice;
   const capitalOutlay = totalQty * netEntryPrice;
@@ -62,6 +139,11 @@ export function OrderPadSection() {
 
   // Deterministic Trading Copilot Pro Market State Engine (/trading-copilot-pro)
   const copilotState = useMemo(() => {
+    const activeAsset = currentAsset;
+    const isMarketBearish = !activeAsset.positive;
+    const dynamicTitle = isMarketBearish ? "Breakdown Momentum Scalp" : "Bullish Expansion Scalp";
+    const dynamicSubtitle = `Spot @ ₹${Number(activeAsset.spot).toLocaleString("en-IN", { minimumFractionDigits: 2 })} (${activeAsset.change}). ${activeAsset.name} ${isMarketBearish ? "breakdown below resistance" : "breakout above VWAP"} confirmed on Upstox v2 feed. 1:${rrRatio} R:R locked.`;
+
     if (copilotRegime === "PRIME") {
       return {
         regime: "PRIME",
@@ -71,8 +153,8 @@ export function OrderPadSection() {
         bannerBg: "bg-gradient-to-r from-emerald-500/20 via-teal-500/10 to-transparent border-emerald-500/40 shadow-[0_0_25px_rgba(16,185,129,0.15)]",
         ambientGlow: "bg-emerald-500/10",
         pulseColor: "bg-emerald-400",
-        title: "Prime Momentum Scalp",
-        subtitle: "15m VWAP breakout + 1H EMA trend confirmed. 1:2.38 R:R locked with strict risk bounds.",
+        title: dynamicTitle,
+        subtitle: dynamicSubtitle,
         buttonText: "🚀 1-Click Auto-Deploy",
         buttonClass: "bg-emerald-500 hover:bg-emerald-400 text-black font-black shadow-lg shadow-emerald-500/30",
         ctaText: "Deploy Prime Live Setup (12/12 Approved) →",
@@ -198,8 +280,8 @@ export function OrderPadSection() {
       bannerBg: "bg-gradient-to-r from-emerald-500/20 via-teal-500/10 to-transparent border-emerald-500/40 shadow-[0_0_25px_rgba(16,185,129,0.15)]",
       ambientGlow: "bg-emerald-500/10",
       pulseColor: "bg-emerald-400",
-      title: "Prime Momentum Scalp",
-      subtitle: "15m VWAP breakout + 1H EMA trend confirmed. 1:2.38 R:R locked.",
+      title: dynamicTitle,
+      subtitle: dynamicSubtitle,
       buttonText: "🚀 1-Click Auto-Deploy",
       buttonClass: "bg-emerald-500 hover:bg-emerald-400 text-black font-black shadow-lg shadow-emerald-500/30",
       ctaText: "Deploy Prime Live Setup (Approved) →",
@@ -207,34 +289,132 @@ export function OrderPadSection() {
       canDeploy: true,
       recommendedLots: 1
     };
-  }, [copilotRegime]);
+  }, [copilotRegime, dynamicAssets, underlying, rrRatio]);
+
+  // ⚡ 1-Click Fast Scalp Presets Engine
+  const applyScalpPreset = (type) => {
+    const step = underlying === "BANKNIFTY" || underlying === "SENSEX" ? 100 : 50;
+    const currentAsset = dynamicAssets.find(a => a.key === underlying) || dynamicAssets[0];
+    const spot = currentAsset.spot;
+    const atmStrike = currentAsset.calculatedAtmStrike || Math.round(spot / step) * step;
+
+    if (type === "ATM") {
+      setStrikePrice(atmStrike);
+      setEntryPrice(currentAsset.defaultEntry);
+      setStopLoss(currentAsset.defaultSL);
+      setTargetPrice(currentAsset.defaultTP);
+    } else if (type === "ITM") {
+      const itmStrike = optionType === "CALL" ? atmStrike - step : atmStrike + step;
+      setStrikePrice(itmStrike);
+      const itmEntry = Number((currentAsset.defaultEntry * 1.45).toFixed(1));
+      setEntryPrice(itmEntry);
+      setStopLoss(Number((itmEntry - 12).toFixed(1)));
+      setTargetPrice(Number((itmEntry + 28).toFixed(1)));
+    } else if (type === "OTM") {
+      const otmStrike = optionType === "CALL" ? atmStrike + step : atmStrike - step;
+      setStrikePrice(otmStrike);
+      const otmEntry = Number((currentAsset.defaultEntry * 0.65).toFixed(1));
+      setEntryPrice(otmEntry);
+      setStopLoss(Number((otmEntry - 6).toFixed(1)));
+      setTargetPrice(Number((otmEntry + 18).toFixed(1)));
+    }
+  };
+
+  const autoSizeOnePercentRisk = () => {
+    const isPowerHour = isPowerHourWindow();
+    const riskPerShare = Math.max(1, entryPrice - stopLoss);
+    const maxRiskBudget = isPowerHour ? 500 : 1000; // 0.5% during 0DTE power-hour gamma vs 1% standard
+    const calculatedLots = Math.max(1, Math.floor(maxRiskBudget / (lotSize * riskPerShare)));
+    setLots(calculatedLots);
+  };
 
   // AI Presets Handler
   const applyPreset = (preset) => {
     if (preset === "atm") {
-      setStrikePrice(24300);
-      setEntryPrice(83.0);
-      setStopLoss(75.0);
-      setTargetPrice(102.0);
+      applyScalpPreset("ATM");
     } else if (preset === "safe") {
-      setStrikePrice(24300);
-      setEntryPrice(80.0);
-      setStopLoss(70.0);
-      setTargetPrice(100.0);
+      applyScalpPreset("ITM");
     } else if (preset === "hero") {
-      setStrikePrice(24400);
-      setEntryPrice(25.0);
-      setStopLoss(15.0);
-      setTargetPrice(65.0);
+      applyScalpPreset("OTM");
     }
   };
 
+  const handleManualScan = async () => {
+    if (isScanning) return;
+    setIsScanning(true);
+    soundEngine.playTabSwitchTone();
+    try {
+      const res = await fetch(`/api/upstox/copilot-audit?symbol=${encodeURIComponent(underlying)}`);
+      if (res.ok) {
+        const audit = await res.json();
+        if (audit.success) {
+          if (audit.optionType) setOptionType(audit.optionType);
+          if (audit.strike) setStrikePrice(audit.strike);
+          if (audit.entryPrice) setEntryPrice(audit.entryPrice);
+          if (audit.stopLoss) setStopLoss(audit.stopLoss);
+          if (audit.targetPrice) setTargetPrice(audit.targetPrice);
+          setLastScanTime(new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+
+          soundEngine.playSuccessTone();
+        }
+      }
+    } catch (e) {
+      console.warn("Copilot manual scan notice:", e.message);
+    } finally {
+      setTimeout(() => setIsScanning(false), 800);
+    }
+  };
+
+  // Auto-scan live Upstox option quote on mount & asset switch
+  useEffect(() => {
+    handleManualScan();
+  }, [underlying]);
+
   const handleSelectAsset = (asset) => {
+    soundEngine.playTabSwitchTone();
     setUnderlying(asset.key);
-    setStrikePrice(asset.defaultStrike);
+    const optType = asset.recommendedOption || asset.defaultOption || "PUT";
+    const strike = asset.calculatedAtmStrike || asset.defaultStrike;
+    setOptionType(optType);
+    setStrikePrice(strike);
     setEntryPrice(asset.defaultEntry);
     setStopLoss(asset.defaultSL);
     setTargetPrice(asset.defaultTP);
+  };
+
+  const handle1ClickAutoDeploy = () => {
+    if (isDeploying) return;
+    if (!copilotState.canDeploy && copilotRegime === "BLOCKED" && !sandboxBypass) return;
+
+    setIsDeploying(true);
+    soundEngine.playOrderFillTone();
+    const symbol = `${underlying} ${strikePrice} ${optionType === "CALL" ? "CE" : "PE"}`;
+    const idempotencyKey = `copilot_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const effectiveLots = copilotState.regime === "WARNING" ? Math.max(1, Math.floor(lots * 0.5)) : lots;
+
+    deployPracticeTrade({
+      idempotencyKey,
+      symbol,
+      underlyingSymbol: underlying,
+      strikePrice,
+      optionType,
+      entryPrice: netEntryPrice,
+      stopLoss,
+      targetPrice,
+      quantity: effectiveLots,
+      lotSize,
+      feedMode,
+      strategyMode,
+      entryReason: `Copilot 1-Click (${copilotState.status}) · R:R 1:${rrRatio}`,
+      personalNotes: `Instant Live ${underlying} Scalp execution`
+    });
+
+    setTimeout(() => setIsDeploying(false), 300);
+
+    const activeElem = document.getElementById("active-practice-trades");
+    if (activeElem) {
+      activeElem.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
   };
 
   const handleDeploy = (e) => {
@@ -242,10 +422,13 @@ export function OrderPadSection() {
     if (isDeploying) return;
     if (!copilotState.canDeploy && copilotRegime === "BLOCKED" && !sandboxBypass) return;
 
+    soundEngine.playOrderFillTone();
     setIsDeploying(true);
     const symbol = `${underlying} ${strikePrice} ${optionType === "CALL" ? "CE" : "PE"}`;
+    const idempotencyKey = `order_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     
     deployPracticeTrade({
+      idempotencyKey,
       symbol,
       underlyingSymbol: underlying,
       strikePrice,
@@ -260,9 +443,7 @@ export function OrderPadSection() {
       entryReason: `${strategyMode === "SPREAD" ? "Defined-Risk Spread" : "ATM Scalp"} · R:R 1:${rrRatio}`
     });
 
-    setTimeout(() => {
-      setIsDeploying(false);
-    }, 500);
+    setIsDeploying(false);
   };
 
   const isFormLocked = copilotState.regime === "BLOCKED" && !sandboxBypass && !copilotState.canDeploy;
@@ -334,39 +515,82 @@ export function OrderPadSection() {
         </div>
       </div>
 
-      {/* Dynamic 3-Color 1-Click Auto Deploy Banner */}
-      <div className={clsx("relative p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-all duration-300", copilotState.bannerBg)}>
-        <div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className={clsx("w-2 h-2 rounded-full animate-pulse", copilotState.pulseColor)} />
-            <strong className="text-white text-xs font-bold">Live Upstox Option Pick:</strong>
-            <span className="text-xs font-mono font-bold text-white bg-black/40 px-2 py-0.5 rounded border border-white/10">
-              {underlying} {strikePrice} {optionType === "CALL" ? "CE" : "PE"} · {copilotState.title}
-            </span>
-            <span className={clsx("text-[9px] font-extrabold uppercase px-2.5 py-0.5 rounded-full border", copilotState.badgeBg)}>
-              {copilotState.badge}
-            </span>
+      {/* Dynamic 3-Color 1-Click Auto Deploy Banner with Real-Time HUD */}
+      <div className={clsx("relative p-4 rounded-2xl border flex flex-col gap-3 transition-all duration-300", copilotState.bannerBg)}>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={clsx("w-2.5 h-2.5 rounded-full animate-pulse shadow-sm", copilotState.pulseColor)} />
+              <strong className="text-white text-xs font-bold">Live Upstox Option Pick:</strong>
+              <span className="text-xs font-mono font-bold text-white bg-black/50 px-2.5 py-0.5 rounded-lg border border-white/15 shadow-inner">
+                {underlying} {strikePrice} {optionType === "CALL" ? "CE" : "PE"} · {copilotState.title}
+              </span>
+              <span className={clsx("text-[9px] font-extrabold uppercase px-2.5 py-0.5 rounded-full border shadow-sm", copilotState.badgeBg)}>
+                {copilotState.badge}
+              </span>
+
+              {/* 🔄 Re-Scan Upstox Button */}
+              <button
+                type="button"
+                onClick={handleManualScan}
+                disabled={isScanning}
+                className={clsx(
+                  "px-2.5 py-1 rounded-lg border transition flex items-center gap-1.5 text-[10px] font-bold cursor-pointer active:scale-90 shadow-sm",
+                  isScanning 
+                    ? "bg-cyan-500/30 text-cyan-200 border-cyan-400/50 cursor-wait" 
+                    : "bg-white/10 hover:bg-white/20 text-cyan-300 hover:text-white border-white/15"
+                )}
+                title="Re-scan live Upstox v2 12-Filter Quantitative Gate"
+              >
+                <RefreshCw className={clsx("w-3 h-3 text-cyan-400", isScanning && "animate-spin text-cyan-300")} />
+                <span>{isScanning ? "Scanning Upstox..." : "Live Refresh"}</span>
+              </button>
+            </div>
+            <small className="text-slate-300 text-[11px] block mt-1">
+              {copilotState.subtitle}
+            </small>
           </div>
-          <small className="text-slate-300 text-[11px] block mt-1">
-            {copilotState.subtitle}
-          </small>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (copilotState.canDeploy || sandboxBypass) {
+                handle1ClickAutoDeploy();
+              }
+            }}
+            disabled={!copilotState.canDeploy && !sandboxBypass}
+            className={clsx(
+              "px-4 py-2.5 rounded-xl text-xs transition flex items-center justify-center gap-1.5 self-start sm:self-auto flex-shrink-0 active:scale-95 cursor-pointer",
+              copilotState.buttonClass
+            )}
+          >
+            {copilotState.buttonText}
+          </button>
         </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            if (copilotState.canDeploy || sandboxBypass) {
-              applyPreset("atm");
-            }
-          }}
-          disabled={!copilotState.canDeploy && !sandboxBypass}
-          className={clsx(
-            "px-4 py-2 rounded-xl text-xs transition flex items-center justify-center gap-1.5 self-start sm:self-auto flex-shrink-0",
-            copilotState.buttonClass
-          )}
-        >
-          {copilotState.buttonText}
-        </button>
+        {/* 📊 4-Token Quantitative Pre-Flight Strip */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-white/10 text-xs font-mono">
+          <div className="flex items-center justify-between p-2 rounded-xl bg-black/30 border border-white/5">
+            <span className="text-slate-400 text-[10px]">⚡ Entry / LTP:</span>
+            <strong className="text-white font-bold">₹{Number(entryPrice).toFixed(2)}</strong>
+          </div>
+          <div className="flex items-center justify-between p-2 rounded-xl bg-black/30 border border-white/5">
+            <span className="text-slate-400 text-[10px]">🛑 Stop Loss:</span>
+            <strong className="text-rose-400 font-bold">
+              ₹{Number(stopLoss).toFixed(2)} <span className="text-[9px] text-rose-300/80 font-normal">(-{Math.max(0, entryPrice - stopLoss).toFixed(1)} pts · -{(((Math.max(0, entryPrice - stopLoss)) / (entryPrice || 1)) * 100).toFixed(1)}%)</span>
+            </strong>
+          </div>
+          <div className="flex items-center justify-between p-2 rounded-xl bg-black/30 border border-white/5">
+            <span className="text-slate-400 text-[10px]">🎯 Target:</span>
+            <strong className="text-emerald-400 font-bold">
+              ₹{Number(targetPrice).toFixed(2)} <span className="text-[9px] text-emerald-300/80 font-normal">(+{Math.max(0, targetPrice - entryPrice).toFixed(1)} pts · +{(((Math.max(0, targetPrice - entryPrice)) / (entryPrice || 1)) * 100).toFixed(1)}%)</span>
+            </strong>
+          </div>
+          <div className="flex items-center justify-between p-2 rounded-xl bg-black/30 border border-white/5">
+            <span className="text-slate-400 text-[10px]">⚖️ R:R Ratio:</span>
+            <strong className="text-cyan-300 font-bold">1:{rrRatio} <span className="text-[9px] text-emerald-400 font-bold">· PASS</span></strong>
+          </div>
+        </div>
       </div>
 
       {/* 1-Tap Institutional Index Ticker Bar */}
@@ -376,13 +600,13 @@ export function OrderPadSection() {
           <span className="text-[10px] text-cyan-400 lowercase font-mono">1-tap auto-calibrate</span>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {INDEX_ASSETS.map((asset) => (
+          {dynamicAssets.map((asset) => (
             <button
               key={asset.key}
               type="button"
               onClick={() => handleSelectAsset(asset)}
               className={clsx(
-                "p-2.5 rounded-2xl border text-left transition-all duration-200 flex flex-col justify-between",
+                "p-2.5 rounded-2xl border text-left transition-all duration-200 flex flex-col justify-between cursor-pointer active:scale-95",
                 underlying === asset.key
                   ? "bg-cyan-500/15 border-cyan-500/50 shadow-[0_0_15px_rgba(6,182,212,0.2)] text-white"
                   : "bg-white/[0.02] border-white/5 text-slate-400 hover:text-white hover:bg-white/[0.05]"
@@ -395,8 +619,12 @@ export function OrderPadSection() {
                 </span>
               </div>
               <div className="flex items-baseline justify-between mt-1">
-                <span className="font-mono text-xs text-white font-bold">₹{asset.spot.toLocaleString("en-IN")}</span>
-                <span className="text-[10px] font-mono text-emerald-400 font-bold">{asset.change}</span>
+                <span className="font-mono text-xs text-white font-bold">
+                  ₹{Number(asset.spot).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                <span className={clsx("text-[10px] font-mono font-bold", asset.positive ? "text-emerald-400" : "text-rose-400")}>
+                  {asset.change}
+                </span>
               </div>
             </button>
           ))}
@@ -534,23 +762,128 @@ export function OrderPadSection() {
 
           {/* Step 2: Contract Parameters & Sizing */}
           <div>
-            <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
-              2️⃣ Contract &amp; Position Sizing
+            <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+              <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                2️⃣ Contract &amp; Position Sizing
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => applyScalpPreset("ATM")}
+                  className="px-2.5 py-1 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/30 text-cyan-300 text-[10px] font-mono font-bold transition flex items-center gap-1 shadow-sm"
+                  title="Calibrate At-The-Money strike with 1:2.0 standard R:R"
+                >
+                  <span>🎯 ATM Scalp</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyScalpPreset("ITM")}
+                  className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-[10px] font-mono font-bold transition flex items-center gap-1 shadow-sm"
+                  title="Calibrate In-The-Money strike (Delta ~0.65 higher directional conviction)"
+                >
+                  <span>⚡ ITM +1 (Delta ~0.65)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyScalpPreset("OTM")}
+                  className="px-2.5 py-1 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/30 text-purple-300 text-[10px] font-mono font-bold transition flex items-center gap-1 shadow-sm"
+                  title="Calibrate Out-of-The-Money strike (Gamma ~0.35 explosive scalp)"
+                >
+                  <span>🚀 OTM +1 (Gamma ~0.35)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={autoSizeOnePercentRisk}
+                  className={clsx(
+                    "px-2.5 py-1 rounded-lg border text-[10px] font-mono font-bold transition flex items-center gap-1 shadow-sm",
+                    isPowerHourWindow()
+                      ? "bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse shadow-amber-500/20"
+                      : "bg-amber-500/15 hover:bg-amber-500/25 border-amber-500/30 text-amber-300"
+                  )}
+                  title={isPowerHourWindow() ? "0DTE Power-Hour Gamma Guard Active: Nominal risk capped at 0.5% (₹500)" : "Auto-calculate optimal lots capped at 1% max account risk (₹1,000)"}
+                >
+                  <span>{isPowerHourWindow() ? "⚡ 0DTE Power-Hour (0.5% Sizing)" : "🛡️ Auto 1% Risk Sizer"}</span>
+                </button>
+              </div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-              {/* Underlying */}
-              <div className="space-y-1">
-                <label className="text-slate-400 font-medium">Underlying Index</label>
-                <select
-                  value={underlying}
-                  onChange={(e) => setUnderlying(e.target.value)}
-                  className="w-full bg-white/[0.03] border border-white/10 rounded-xl px-3 py-2 text-white font-bold focus:outline-none focus:border-cyan-500/50"
+              {/* Underlying Index Custom Apple Spatial Selector */}
+              <div className="space-y-1 relative" ref={indexDropdownRef}>
+                <div className="flex items-center justify-between">
+                  <label className="text-slate-400 font-medium">Underlying Index</label>
+                  <span className="text-[10px] font-mono text-cyan-400 font-bold">{lotSize}/lot</span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setIsIndexDropdownOpen((prev) => !prev)}
+                  className="w-full bg-[#0a1122]/90 hover:bg-[#0e172e] border border-white/15 hover:border-cyan-500/50 rounded-xl px-3 py-2 text-white font-bold transition-all flex items-center justify-between shadow-sm active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-cyan-500/40 cursor-pointer"
                 >
-                  <option value="NIFTY">NIFTY 50 (65/lot)</option>
-                  <option value="BANKNIFTY">BANKNIFTY (35/lot)</option>
-                  <option value="FINNIFTY">FINNIFTY (65/lot)</option>
-                  <option value="SENSEX">SENSEX (20/lot)</option>
-                </select>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(6,182,212,0.8)]" />
+                    <span className="font-mono text-xs text-white font-extrabold">{currentAsset.name}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 font-mono">
+                    <span className="text-[11px] text-white font-bold">₹{Number(currentAsset.spot).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</span>
+                    <ChevronDown className={clsx("w-3.5 h-3.5 text-slate-400 transition-transform duration-200", isIndexDropdownOpen && "rotate-180 text-cyan-400")} />
+                  </div>
+                </button>
+
+                {/* Custom Glass Dropdown Popover (100% Opaque Solid Background) */}
+                <AnimatePresence>
+                  {isIndexDropdownOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -6, scale: 0.98 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                      transition={{ duration: 0.15, ease: "easeOut" }}
+                      className="absolute top-full left-0 right-0 mt-2 z-[999] rounded-2xl bg-[#080e1e] border border-cyan-500/40 shadow-[0_25px_60px_rgba(0,0,0,0.95),0_0_25px_rgba(6,182,212,0.15)] p-2 space-y-1.5 min-w-[260px]"
+                    >
+                      <div className="flex items-center justify-between px-2 py-1 border-b border-white/10 text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400">
+                        <span>SELECT UNDERLYING</span>
+                        <span className="text-cyan-400 text-[9px]">LIVE SPOT</span>
+                      </div>
+
+                      <div className="space-y-1">
+                        {dynamicAssets.map((asset) => {
+                          const isSelected = underlying === asset.key;
+                          return (
+                            <button
+                              key={asset.key}
+                              type="button"
+                              onClick={() => {
+                                handleSelectAsset(asset);
+                                setIsIndexDropdownOpen(false);
+                              }}
+                              className={clsx(
+                                "w-full px-3 py-2.5 rounded-xl text-left font-mono transition-all flex items-center justify-between cursor-pointer active:scale-[0.98]",
+                                isSelected
+                                  ? "bg-[#0c1f38] text-cyan-200 border border-cyan-400/50 shadow-[0_0_15px_rgba(6,182,212,0.25)]"
+                                  : "bg-[#0e162b] hover:bg-[#15223e] text-slate-200 hover:text-white border border-white/5 hover:border-cyan-500/30"
+                              )}
+                            >
+                              <div className="flex items-center gap-2">
+                                <div className={clsx("w-2 h-2 rounded-full", isSelected ? "bg-cyan-400 shadow-[0_0_8px_rgba(6,182,212,0.8)]" : "bg-slate-500")} />
+                                <span className="font-extrabold text-xs text-white">{asset.name}</span>
+                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-black/40 text-slate-300 font-medium border border-white/10">
+                                  {asset.lot}/lot
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-white font-mono">
+                                  ₹{Number(asset.spot).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </span>
+                                <span className={clsx("text-[10px] font-bold px-1.5 py-0.5 rounded font-mono", asset.positive ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" : "bg-rose-500/20 text-rose-300 border border-rose-500/30")}>
+                                  {asset.change}
+                                </span>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
 
               {/* Strike Stepper */}
@@ -713,56 +1046,44 @@ export function OrderPadSection() {
             </div>
           </div>
 
-          {/* Dynamic Expiry Payoff Curve SVG with Interactive Anchors */}
-          <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/5 space-y-2">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-slate-300">📈 Dynamic Expiry Payoff Curve</span>
-              <span className="text-[10px] font-mono text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded">
-                Breakeven: ₹{(strikePrice + (optionType === "CALL" ? netEntryPrice : -netEntryPrice)).toFixed(0)}
-              </span>
-            </div>
-
-            <div className="w-full h-20 relative">
-              <svg className="w-full h-full" viewBox="0 0 500 80" preserveAspectRatio="none">
-                <defs>
-                  <linearGradient id="payoffGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-                    <stop offset="0%" stopColor="#00f5c4" stopOpacity="0.3" />
-                    <stop offset="100%" stopColor="#00f5c4" stopOpacity="0.0" />
-                  </linearGradient>
-                </defs>
-                <line x1="0" y1="45" x2="500" y2="45" stroke="rgba(255,255,255,0.15)" strokeDasharray="3,3" />
-                <path d="M 0,65 L 180,65 L 340,15 L 500,15 L 500,45 L 0,45 Z" fill="url(#payoffGrad)" />
-                <path d="M 0,65 L 180,65 L 340,15 L 500,15" fill="none" stroke="#00d5ff" strokeWidth="2.5" />
-                {/* SL Dot */}
-                <circle cx="180" cy="65" r="4.5" fill="#f43f5e" stroke="#fff" strokeWidth="1.5" />
-                {/* Breakeven Dot */}
-                <circle cx="260" cy="45" r="4" fill="#fff" stroke="#00d5ff" strokeWidth="2" />
-                {/* Target Dot */}
-                <circle cx="340" cy="15" r="4.5" fill="#10b981" stroke="#fff" strokeWidth="1.5" />
-              </svg>
-            </div>
-
-            <div className="flex items-center justify-between text-[11px] font-mono">
-              <span className="text-rose-400">🛑 Max Risk: -₹{riskAmount.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</span>
-              <span className="text-cyan-400">R:R 1 : {rrRatio}</span>
-              <span className="text-emerald-400">🎯 Target Profit: +₹{rewardAmount.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</span>
-            </div>
-          </div>
+          {/* 🌟 Apple Spatial Dynamic Expiry Payoff Canvas */}
+          <ApplePayoffCanvas 
+            optionType={optionType}
+            direction="BUY"
+            spotPrice={currentAsset.spot}
+            strikePrice={strikePrice}
+            netEntryPrice={netEntryPrice}
+            stopLoss={stopLoss}
+            targetPrice={targetPrice}
+            quantity={lots}
+            lotSize={currentAsset.lot}
+            strategyMode={strategyMode}
+            hedgeStrike={hedgeStrike}
+            hedgePrice={hedgePrice}
+            onSetTarget={(val) => setTargetPrice(val)}
+            onSetStopLoss={(val) => setStopLoss(val)}
+          />
 
           {/* Pre-Flight Telemetry Strip & Deploy CTA */}
           <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-3">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
               <div>
                 <span className="text-slate-400 text-[10px] block">Capital Outlay</span>
-                <strong className="text-white font-mono text-sm">₹{capitalOutlay.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>
+                <div className="text-white font-mono font-bold text-sm">
+                  <RollingTicker value={capitalOutlay} prefix="₹" decimalPlaces={2} className="text-white" />
+                </div>
               </div>
               <div>
                 <span className="text-slate-400 text-[10px] block">Max Risk</span>
-                <strong className="text-rose-400 font-mono text-sm">₹{riskAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>
+                <div className="text-rose-400 font-mono font-bold text-sm">
+                  <RollingTicker value={riskAmount} prefix="₹" decimalPlaces={2} className="text-rose-400" />
+                </div>
               </div>
               <div>
                 <span className="text-slate-400 text-[10px] block">Target Profit</span>
-                <strong className="text-emerald-400 font-mono text-sm">+₹{rewardAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong>
+                <div className="text-emerald-400 font-mono font-bold text-sm">
+                  <RollingTicker value={rewardAmount} prefix="+₹" decimalPlaces={2} className="text-emerald-400" />
+                </div>
               </div>
               <div>
                 <span className="text-slate-400 text-[10px] block">Risk : Reward</span>

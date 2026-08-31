@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, X, Check, Clock } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import clsx from "clsx";
@@ -16,6 +17,25 @@ export function LuxuryDateRangePicker({
   const _todayIso = _now.toISOString().split("T")[0];
   const [tempStart, setTempStart] = useState(startDate || _todayIso);
   const [tempEnd, setTempEnd] = useState(endDate || _todayIso);
+
+  // Sync state when props change
+  useEffect(() => {
+    if (startDate) setTempStart(startDate);
+    if (endDate) setTempEnd(endDate);
+  }, [startDate, endDate]);
+
+  // Keyboard Escape listener
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape" && isOpen) {
+        onClose();
+      }
+    };
+    if (isOpen) {
+      window.addEventListener("keydown", handleKeyDown);
+    }
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -113,7 +133,6 @@ export function LuxuryDateRangePicker({
     }
   };
 
-
   const handleApply = () => {
     if (tempStart) {
       onApplyRange(tempStart, tempEnd || tempStart);
@@ -121,15 +140,21 @@ export function LuxuryDateRangePicker({
     }
   };
 
-  return (
+  return createPortal(
     <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md">
+      <div 
+        className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) onClose();
+        }}
+      >
         <motion.div
           initial={{ opacity: 0, scale: 0.95, y: 15 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 15 }}
           transition={{ type: "spring", stiffness: 350, damping: 28 }}
-          className="w-full max-w-md p-6 rounded-3xl bg-[#070e1c]/95 border border-cyan-500/30 shadow-2xl shadow-cyan-500/10 space-y-4 text-slate-100 backdrop-blur-2xl"
+          className="w-full max-w-md p-6 rounded-3xl bg-[#070e1c]/98 border border-cyan-500/30 shadow-[0_25px_60px_rgba(0,0,0,0.9),0_0_30px_rgba(6,182,212,0.15)] space-y-4 text-slate-100 backdrop-blur-2xl"
+          onClick={(e) => e.stopPropagation()}
         >
           {/* Modal Header */}
           <div className="flex items-center justify-between pb-3 border-b border-white/10">
@@ -145,7 +170,7 @@ export function LuxuryDateRangePicker({
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 text-slate-400 hover:text-white rounded-xl hover:bg-white/5 transition"
+              className="p-1.5 text-slate-400 hover:text-white rounded-xl hover:bg-white/5 transition cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
@@ -164,7 +189,7 @@ export function LuxuryDateRangePicker({
                 key={p.id}
                 type="button"
                 onClick={() => handleQuickPreset(p.id)}
-                className="px-2.5 py-1 rounded-lg bg-white/[0.03] hover:bg-cyan-500/20 hover:text-cyan-300 border border-white/10 text-[11px] font-mono transition"
+                className="px-2.5 py-1 rounded-lg bg-white/[0.03] hover:bg-cyan-500/20 hover:text-cyan-300 border border-white/10 text-[11px] font-mono transition cursor-pointer"
               >
                 {p.label}
               </button>
@@ -176,7 +201,7 @@ export function LuxuryDateRangePicker({
             <button
               type="button"
               onClick={handlePrevMonth}
-              className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 transition"
+              className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 transition cursor-pointer"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
@@ -186,7 +211,7 @@ export function LuxuryDateRangePicker({
             <button
               type="button"
               onClick={handleNextMonth}
-              className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 transition"
+              className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 transition cursor-pointer"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
@@ -225,7 +250,7 @@ export function LuxuryDateRangePicker({
                     type="button"
                     onClick={() => handleSelectDay(day)}
                     className={clsx(
-                      "h-8 rounded-lg font-mono text-xs font-semibold transition-all relative flex items-center justify-center",
+                      "h-8 rounded-lg font-mono text-xs font-semibold transition-all relative flex items-center justify-center cursor-pointer",
                       isSelected
                         ? "bg-cyan-500 text-black font-bold shadow-md shadow-cyan-500/20"
                         : "hover:bg-white/10 text-slate-200",
@@ -266,14 +291,14 @@ export function LuxuryDateRangePicker({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white transition"
+              className="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white transition cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="button"
               onClick={handleApply}
-              className="px-5 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-sky-400 text-black font-extrabold text-xs shadow-lg shadow-cyan-500/20 hover:from-cyan-400 hover:to-sky-300 transition flex items-center gap-1.5"
+              className="px-5 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-sky-400 text-black font-extrabold text-xs shadow-lg shadow-cyan-500/20 hover:from-cyan-400 hover:to-sky-300 transition flex items-center gap-1.5 cursor-pointer active:scale-95"
             >
               <Check className="w-3.5 h-3.5 stroke-[3]" />
               <span>Apply Date Filter</span>
@@ -281,6 +306,9 @@ export function LuxuryDateRangePicker({
           </div>
         </motion.div>
       </div>
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   );
 }
+
+export default LuxuryDateRangePicker;

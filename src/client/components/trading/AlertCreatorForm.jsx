@@ -1,5 +1,6 @@
-import React, { useState } from "react";
-import { PlusCircle, Target, ShieldAlert, Sparkles, ChevronDown } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { PlusCircle, Target, ShieldAlert, Sparkles, ChevronDown, Zap } from "lucide-react";
+import { useTradingStore } from "../../stores/useTradingStore";
 import { motion } from "framer-motion";
 import clsx from "clsx";
 
@@ -12,12 +13,27 @@ const QUICK_STRIKES = [
 ];
 
 export function AlertCreatorForm({ onCreated }) {
+  const { orderPadPreFill, setOrderPadPreFill } = useTradingStore();
   const [symbol, setSymbol] = useState("NIFTY 24500 CE");
   const [optionType, setOptionType] = useState("CE");
   const [entryPrice, setEntryPrice] = useState("28.50");
   const [targetPrice, setTargetPrice] = useState("40.00");
   const [stopLoss, setStopLoss] = useState("22.00");
   const [submitting, setSubmitting] = useState(false);
+
+  // Auto-consume pre-fill from 1-Click Watchlist Deploy
+  useEffect(() => {
+    if (orderPadPreFill) {
+      if (orderPadPreFill.symbol) {
+        setSymbol(orderPadPreFill.symbol);
+        setOptionType(orderPadPreFill.symbol.endsWith("PE") ? "PE" : "CE");
+      }
+      if (orderPadPreFill.entryPrice) setEntryPrice(String(orderPadPreFill.entryPrice));
+      if (orderPadPreFill.targetPrice) setTargetPrice(String(orderPadPreFill.targetPrice));
+      if (orderPadPreFill.stopLoss) setStopLoss(String(orderPadPreFill.stopLoss));
+      setOrderPadPreFill(null);
+    }
+  }, [orderPadPreFill, setOrderPadPreFill]);
 
   const entry = Number(entryPrice || 0);
   const target = Number(targetPrice || 0);

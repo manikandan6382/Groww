@@ -34,6 +34,24 @@ export class UpstoxClient extends EventEmitter {
     this.activeSubscriptions = new Set();
     this.instrumentCache = null;
     this.instrumentCacheAt = 0;
+
+    // 🚀 Auto-detect token update in data/upstox-session.json when user logs in tomorrow
+    try {
+      if (fs.existsSync(this.sessionFile)) {
+        fs.watchFile(this.sessionFile, { interval: 2000 }, (curr, prev) => {
+          if (curr.mtime !== prev.mtime) {
+            const newToken = this.refreshAccessToken();
+            if (newToken) {
+              this.lastError = "";
+              this.emit("status", { state: "token_refreshed", message: "Upstox session token refreshed from file." });
+              if (this.shouldRun) {
+                this.startPolling();
+              }
+            }
+          }
+        });
+      }
+    } catch {}
   }
 
   isConfigured() {
@@ -164,9 +182,11 @@ export class UpstoxClient extends EventEmitter {
 
     // 1. First attempt Upstox Live Option Contract API for 100% exact strike & token match
     try {
-      const underlying = String(trade.underlyingSymbol || "NIFTY").toUpperCase();
-      const strike = Number(trade.strikePrice || 0);
-      const side = toUpstoxSide(trade.optionType);
+      const sym = String(trade.symbol || trade.tradingsymbol || "");
+      const underlying = String(trade.underlyingSymbol || trade.underlying_symbol || (sym.includes("BANK") ? "BANKNIFTY" : "NIFTY")).toUpperCase();
+      const parsedStrike = Number(trade.strikePrice || trade.strike_price || (sym.match(/\b\d{5}\b/) || [0])[0]);
+      const strike = parsedStrike || Number((sym.match(/\d+/) || [0])[0]);
+      const side = toUpstoxSide(trade.optionType || trade.option_type || (sym.includes("PE") ? "PUT" : "CALL"));
       const underlyingKey = underlying.includes("BANK") ? "NSE_INDEX|Nifty Bank" : (underlying.includes("FIN") ? "NSE_INDEX|Nifty Fin Service" : "NSE_INDEX|Nifty 50");
       
       const endpoint = new URL("https://api.upstox.com/v2/option/contract");
@@ -279,6 +299,7 @@ export class UpstoxClient extends EventEmitter {
     const keys = Array.from(new Set([...this.pendingSubscriptions, ...this.activeSubscriptions])).filter(Boolean);
     if (!keys.length) return;
 
+    this.refreshAccessToken();
     this.polling = true;
     try {
       const endpoint = new URL(UPSTOX_LTP_URL);
@@ -292,9 +313,8 @@ export class UpstoxClient extends EventEmitter {
       });
 
       if (res.status === 401 || res.status === 403) {
-        const message = "Upstox access token expired or rejected. Create a fresh Upstox token.";
+        const message = "Upstox access token expired or rejected. Refresh data/upstox-session.json.";
         this.lastError = message;
-        this.stopPolling();
         this.emit("session_expired", { message });
         this.emit("status", { state: "token_expired", message });
         return;

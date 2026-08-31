@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from "react";
-import { useTradingStore } from "../stores/useTradingStore";
+import { useTradingStore, resolveIndexLotSize } from "../stores/useTradingStore";
+import { useLivePriceStore } from "../stores/useLivePriceStore";
+import { soundEngine } from "../utils/soundEngine";
 import { OrderPadSection } from "../components/trading/OrderPadSection";
 import { PerformanceStudioSection } from "../components/trading/PerformanceStudioSection";
 import { TriggeredHistorySection } from "../components/trading/TriggeredHistorySection";
 import { LiveAlertCard } from "../components/trading/LiveAlertCard";
+import { RollingTicker } from "../components/common/RollingTicker";
 import { 
   Zap, 
   Radio, 
@@ -18,7 +21,9 @@ import {
   Layers, 
   ArrowLeftRight, 
   Sparkles, 
-  Activity 
+  Activity,
+  ArrowUpRight,
+  CheckCircle2
 } from "lucide-react";
 import clsx from "clsx";
 
@@ -26,12 +31,22 @@ export function LiveAlertsView() {
   const { 
     openAlerts, 
     closedAlerts, 
+    squareOffTrade,
     squareOffAll,
+    autoDeployCopilotTrade,
+    deployToast,
+    setDeployToast,
+    settlementToast,
+    setSettlementToast,
     getPortfolioTelemetry 
   } = useTradingStore();
 
   const [timeStr, setTimeStr] = useState(new Date().toLocaleTimeString("en-IN"));
   const [showSquareOffModal, setShowSquareOffModal] = useState(false);
+
+  const handleSquareOffWithToast = (id, exitPrice) => {
+    squareOffTrade(id, exitPrice);
+  };
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -39,6 +54,22 @@ export function LiveAlertsView() {
     }, 1000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!deployToast) return;
+    const timer = setTimeout(() => {
+      setDeployToast(null);
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [deployToast, setDeployToast]);
+
+  useEffect(() => {
+    if (!settlementToast) return;
+    const timer = setTimeout(() => {
+      setSettlementToast(null);
+    }, 6000);
+    return () => clearTimeout(timer);
+  }, [settlementToast, setSettlementToast]);
 
   // Centralized Single-Source-Of-Truth Telemetry
   const telemetry = getPortfolioTelemetry ? getPortfolioTelemetry() : {
@@ -70,6 +101,7 @@ export function LiveAlertsView() {
   } = telemetry;
 
   const handleConfirmSquareOff = () => {
+    soundEngine.playStopLossTone();
     squareOffAll();
     setShowSquareOffModal(false);
   };
@@ -154,9 +186,9 @@ export function LiveAlertsView() {
                 <Wallet className="w-4 h-4 text-slate-300" />
               </div>
             </div>
-            <strong className="text-2xl sm:text-3xl font-black font-mono text-white tracking-tight block">
-              ₹{startingCapital.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-            </strong>
+            <div className="text-2xl sm:text-3xl font-black font-mono text-white tracking-tight block">
+              <RollingTicker value={startingCapital} prefix="₹" decimalPlaces={2} />
+            </div>
             <div className="mt-3 flex items-center justify-between text-[11px] text-slate-400 border-t border-white/5 pt-2.5">
               <span>Virtual Sandbox Cash</span>
               <span className="font-mono text-slate-500 font-bold">100% Buffered</span>
@@ -173,9 +205,9 @@ export function LiveAlertsView() {
                 <TrendingUp className="w-4 h-4 text-cyan-300" />
               </div>
             </div>
-            <strong className="text-2xl sm:text-3xl font-black font-mono text-cyan-300 tracking-tight block drop-shadow-[0_0_20px_rgba(6,182,212,0.25)]">
-              ₹{currentAccountValue.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-            </strong>
+            <div className="text-2xl sm:text-3xl font-black font-mono text-cyan-300 tracking-tight block drop-shadow-[0_0_20px_rgba(6,182,212,0.25)]">
+              <RollingTicker value={currentAccountValue} prefix="₹" decimalPlaces={2} className="text-cyan-300" />
+            </div>
             <div className="mt-3 flex items-center justify-between text-[11px] text-cyan-300/80 border-t border-cyan-500/15 pt-2.5">
               <span>Live Mark-to-Market</span>
               <span className="font-mono font-bold text-cyan-400">Upstox Real-Time</span>
@@ -202,12 +234,18 @@ export function LiveAlertsView() {
                 {netPnl >= 0 ? "+" : ""}{pnlPct}%
               </span>
             </div>
-            <strong className={clsx(
+            <div className={clsx(
               "text-2xl sm:text-3xl font-black font-mono tracking-tight block",
               netPnl >= 0 ? "text-emerald-400 drop-shadow-[0_0_20px_rgba(16,185,129,0.25)]" : "text-rose-400 drop-shadow-[0_0_20px_rgba(244,63,94,0.25)]"
             )}>
-              {netPnl >= 0 ? "+" : ""}₹{netPnl.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
-            </strong>
+              <RollingTicker 
+                value={netPnl} 
+                prefix="₹" 
+                showSign={true} 
+                decimalPlaces={2} 
+                className={netPnl >= 0 ? "text-emerald-400" : "text-rose-400"}
+              />
+            </div>
             <div className="mt-3 flex items-center justify-between text-[11px] text-slate-400 border-t border-white/5 pt-2.5">
               <span>Realized + Open Live P&amp;L</span>
               <span className={clsx("font-mono font-bold", netPnl >= 0 ? "text-emerald-400" : "text-rose-400")}>
@@ -313,7 +351,7 @@ export function LiveAlertsView() {
       <OrderPadSection />
 
       {/* 3️⃣ SECTION 3: MY CREATED ACTIVE TRADES LIST */}
-      <div className="p-6 sm:p-7 rounded-3xl bg-app-card/75 backdrop-blur-2xl border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.4)] space-y-6 relative overflow-hidden">
+      <div id="active-practice-trades" className="p-6 sm:p-7 rounded-3xl bg-app-card/75 backdrop-blur-2xl border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.4)] space-y-6 relative overflow-hidden">
         {/* Soft Ambient Studio Lighting */}
         <div className="absolute top-0 left-1/3 w-80 h-80 bg-cyan-500/[0.03] rounded-full blur-3xl pointer-events-none" />
 
@@ -353,19 +391,38 @@ export function LiveAlertsView() {
 
         {/* Active Trade Cards */}
         {openAlerts.length === 0 ? (
-          <div className="py-12 px-6 rounded-2xl bg-white/[0.01] border border-dashed border-white/10 text-center space-y-3">
+          <div className="py-12 px-6 rounded-2xl bg-white/[0.01] border border-dashed border-white/10 text-center space-y-4">
             <div className="w-12 h-12 rounded-2xl bg-white/[0.03] border border-white/10 flex items-center justify-center text-2xl mx-auto shadow-inner">
               🏖️
             </div>
-            <div className="text-base font-bold text-white tracking-tight">No Active Practice Trades</div>
-            <p className="text-xs text-slate-400 max-w-sm mx-auto leading-relaxed">
-              Configure an Option Scalp or Defined-Risk Spread in Section 2 above and click <strong className="text-cyan-300">Deploy Live Practice Trade</strong>.
-            </p>
+            <div className="space-y-1">
+              <div className="text-base font-bold text-white tracking-tight">No Active Practice Trades</div>
+              <p className="text-xs text-slate-400 max-w-sm mx-auto leading-relaxed">
+                Configure an Option Scalp in Section 2 above and click <strong className="text-cyan-300">Deploy Live Practice Trade</strong>, or auto-deploy below:
+              </p>
+            </div>
+            <div className="flex items-center justify-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  soundEngine.playOrderFillTone();
+                  autoDeployCopilotTrade({ underlying: "NIFTY", strikePrice: 24500, entryPrice: 85.0, stopLoss: 75.0, targetPrice: 105.0 });
+                }}
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-sky-400 hover:from-cyan-400 text-black font-extrabold text-xs shadow-lg shadow-cyan-500/20 active:scale-95 transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <Zap className="w-3.5 h-3.5 fill-current" />
+                <span>🚀 Instant 1-Lot NIFTY Scalp</span>
+              </button>
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
             {openAlerts.map((trade) => (
-              <LiveAlertCard key={trade.id} alert={trade} />
+              <LiveAlertCard 
+                key={trade.id} 
+                alert={trade} 
+                onClose={(tradeId, exitPrice) => handleSquareOffWithToast(tradeId, exitPrice)} 
+              />
             ))}
           </div>
         )}
@@ -418,6 +475,127 @@ export function LiveAlertsView() {
               >
                 Confirm Liquidation
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🌟 Interactive Glassmorphic Settlement HUD Toast */}
+      {settlementToast && (
+        <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-5 duration-300">
+          <div className="p-4 sm:p-5 rounded-3xl bg-[#060e1d]/95 border border-cyan-500/30 shadow-[0_20px_50px_rgba(0,0,0,0.6)] backdrop-blur-2xl max-w-sm w-full space-y-3 relative overflow-hidden">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+                <strong className="text-white font-mono text-xs font-bold">{settlementToast.symbol}</strong>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 font-bold border border-cyan-500/20">
+                  Squared Off @ ₹{settlementToast.exitPrice}
+                </span>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setSettlementToast(null)} 
+                className="text-slate-400 hover:text-white p-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between text-xs font-mono pt-1 border-t border-white/5">
+              <span className="text-slate-400">Net Realized P&amp;L:</span>
+              <strong className={settlementToast.netPnl >= 0 ? "text-emerald-400 font-black text-sm" : "text-rose-400 font-black text-sm"}>
+                {settlementToast.netPnl >= 0 ? "+" : ""}₹{settlementToast.netPnl?.toFixed(2)}
+              </strong>
+            </div>
+
+            <div className="space-y-1 text-[10px] text-slate-400 pt-0.5 border-t border-white/5">
+              <div className="flex items-center justify-between">
+                <span>Statutory Friction: -₹{settlementToast.taxesAndCharges?.toFixed(2) || "56.00"}</span>
+                {settlementToast.slippageCost > 0 && (
+                  <span className="text-amber-400/90 font-mono font-bold">Slippage Penalty: -₹{settlementToast.slippageCost?.toFixed(1)}</span>
+                )}
+              </div>
+              <div className="flex items-center justify-end pt-1">
+                <a
+                  href="/journal"
+                  className="text-cyan-400 hover:text-cyan-300 font-bold flex items-center gap-1 underline"
+                >
+                  <span>View in Forensic Journal</span>
+                  <ArrowUpRight className="w-3 h-3" />
+                </a>
+              </div>
+            </div>
+
+            {/* Auto-dismiss animated progress bar */}
+            <div className="w-full bg-white/5 h-1 rounded-full overflow-hidden">
+              <div className="bg-cyan-400 h-full rounded-full animate-pulse" style={{ width: "100%" }} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🚀 Glassmorphic Position Deployment Toast HUD */}
+      {deployToast && (
+        <div className="fixed bottom-4 inset-x-4 sm:inset-x-auto sm:right-6 sm:bottom-6 z-50 animate-in slide-in-from-bottom-5 duration-300">
+          <div className="p-4 sm:p-5 rounded-3xl bg-[#060e1d]/95 border border-emerald-500/40 shadow-[0_20px_50px_rgba(16,185,129,0.25)] backdrop-blur-2xl max-w-sm sm:max-w-md w-full space-y-3 relative overflow-hidden">
+            {/* Soft Emerald Ambient Glow */}
+            <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none -mr-8 -mt-8" />
+
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                  🚀 Trade Deployed
+                </span>
+                <strong className="text-white font-mono text-xs font-bold">{deployToast.symbol}</strong>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setDeployToast(null)} 
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 py-1.5 px-2.5 rounded-xl bg-white/[0.03] border border-white/5 text-center text-[10px] font-mono">
+              <div>
+                <span className="text-slate-400 block text-[9px]">Entry (Fill)</span>
+                <strong className="text-white font-bold">₹{Number(deployToast.entryPrice || 0).toFixed(2)}</strong>
+              </div>
+              <div className="border-x border-white/5">
+                <span className="text-rose-400 block text-[9px]">Stop Loss</span>
+                <strong className="text-rose-300 font-bold">₹{Number(deployToast.stopLoss || 0).toFixed(2)}</strong>
+              </div>
+              <div>
+                <span className="text-emerald-400 block text-[9px]">Target</span>
+                <strong className="text-emerald-300 font-bold">₹{Number(deployToast.targetPrice || 0).toFixed(2)}</strong>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between text-[11px] pt-0.5">
+              <span className="text-slate-400 font-mono text-[10px]">
+                {deployToast.quantity || 1} Lot ({resolveIndexLotSize(deployToast.symbol, deployToast.lotSize) * (deployToast.quantity || 1)} Qty)
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  const activeSection = document.getElementById("active-practice-trades");
+                  if (activeSection) {
+                    activeSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                  }
+                  setDeployToast(null);
+                }}
+                className="text-emerald-400 hover:text-emerald-300 font-bold flex items-center gap-1 hover:underline text-xs cursor-pointer"
+              >
+                <span>🎯 Jump to Active Card</span>
+                <ArrowUpRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Auto-dismiss animated countdown progress bar */}
+            <div className="w-full bg-white/5 h-1 rounded-full overflow-hidden">
+              <div className="bg-gradient-to-r from-emerald-400 to-cyan-400 h-full rounded-full animate-pulse" style={{ width: "100%" }} />
             </div>
           </div>
         </div>

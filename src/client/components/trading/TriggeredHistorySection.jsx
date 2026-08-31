@@ -1,6 +1,14 @@
 import React, { useState, useRef } from "react";
 import { useTradingStore } from "../../stores/useTradingStore";
+import { soundEngine } from "../../utils/soundEngine";
 import { LuxuryDateRangePicker } from "../common/LuxuryDateRangePicker";
+import { RollingTicker } from "../common/RollingTicker";
+import { 
+  formatLocalDateTime, 
+  getLocalDateKey, 
+  calculateTradeDuration, 
+  formatLocalTime12h 
+} from "../../utils/dateUtils";
 import { 
   Download, 
   Upload, 
@@ -11,8 +19,10 @@ import {
   ArrowDownRight, 
   Calendar as CalendarIcon, 
   Filter, 
-  ShieldCheck 
+  ShieldCheck,
+  Clock
 } from "lucide-react";
+import { motion } from "framer-motion";
 import clsx from "clsx";
 
 export function TriggeredHistorySection() {
@@ -29,13 +39,13 @@ export function TriggeredHistorySection() {
   const [isCalendarOpen, setCalendarOpen] = useState(false);
   const fileInputRef = useRef(null);
 
-  // 1. Date Filtering — all bounds computed from real Date()
+  // 1. Date Filtering — timezone-safe local calendar day comparison
   const dateFilteredAlerts = closedAlerts.filter((trade) => {
-    const todayStr = new Date().toISOString().split("T")[0];
-    const tradeDate = trade.exitDatetime?.split("T")[0] || trade.entryDatetime?.split("T")[0] || todayStr;
+    const todayKey = getLocalDateKey();
+    const tradeDate = getLocalDateKey(trade.exitDatetime || trade.entryDatetime);
 
     if (dateRangeFilter === "today") {
-      return tradeDate === todayStr;
+      return tradeDate === todayKey;
     }
     if (dateRangeFilter === "week") {
       const d = new Date();
@@ -45,14 +55,15 @@ export function TriggeredHistorySection() {
       monday.setHours(0, 0, 0, 0);
       const sunday = new Date(monday);
       sunday.setDate(monday.getDate() + 6);
-      const weekStart = monday.toISOString().split("T")[0];
-      const weekEnd = sunday.toISOString().split("T")[0];
-      return tradeDate >= weekStart && tradeDate <= weekEnd;
+      sunday.setHours(23, 59, 59, 999);
+      const startKey = getLocalDateKey(monday);
+      const endKey = getLocalDateKey(sunday);
+      return tradeDate >= startKey && tradeDate <= endKey;
     }
     if (dateRangeFilter === "month") {
-      const now = new Date();
-      const prefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-      return tradeDate.startsWith(prefix);
+      const d = new Date();
+      const currentMonthPrefix = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      return tradeDate.startsWith(currentMonthPrefix);
     }
     if (dateRangeFilter === "custom") {
       if (!customStart) return true;
@@ -150,7 +161,7 @@ export function TriggeredHistorySection() {
     : "All Time";
 
   return (
-    <div className="p-6 sm:p-7 rounded-3xl bg-app-card/75 backdrop-blur-2xl border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.4)] space-y-6 relative overflow-hidden">
+    <div className="p-6 sm:p-7 rounded-3xl bg-app-card/75 backdrop-blur-2xl border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.4)] space-y-6 relative overflow-hidden min-h-[420px]">
       {/* Soft Ambient Radial Lighting Accent */}
       <div className="absolute top-0 right-0 w-96 h-96 bg-cyan-500/[0.03] rounded-full blur-3xl pointer-events-none -mr-20 -mt-20" />
       <div className="absolute bottom-0 left-0 w-96 h-96 bg-emerald-500/[0.02] rounded-full blur-3xl pointer-events-none -ml-20 -mb-20" />
@@ -213,16 +224,22 @@ export function TriggeredHistorySection() {
                   key={tab.id}
                   type="button"
                   onClick={() => {
+                    soundEngine.playTabSwitchTone();
                     setDateRangeFilter(tab.id);
                     if (tab.id === "custom") setCalendarOpen(true);
                   }}
                   className={clsx(
-                    "px-3 py-1.5 rounded-xl font-bold transition-all text-xs flex items-center gap-1.5 whitespace-nowrap",
-                    isActive
-                      ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-[0_0_12px_rgba(6,182,212,0.2)]"
-                      : "text-slate-400 hover:text-slate-200"
+                    "relative px-3 py-1.5 rounded-xl font-bold transition-colors text-xs flex items-center gap-1.5 whitespace-nowrap z-10",
+                    isActive ? "text-cyan-300" : "text-slate-400 hover:text-slate-200"
                   )}
                 >
+                  {isActive && (
+                    <motion.div
+                      layoutId="activeHistoryTimeframePill"
+                      transition={{ type: "spring", stiffness: 450, damping: 32 }}
+                      className="absolute inset-0 rounded-xl bg-cyan-500/20 border border-cyan-500/35 shadow-[0_0_12px_rgba(6,182,212,0.25)] -z-10"
+                    />
+                  )}
                   {Icon && <Icon className="w-3 h-3 text-cyan-400" />}
                   <span>{tab.label}</span>
                 </button>
@@ -234,7 +251,10 @@ export function TriggeredHistorySection() {
           {dateRangeFilter === "custom" && (
             <button
               type="button"
-              onClick={() => setCalendarOpen(true)}
+              onClick={() => {
+                soundEngine.playTabSwitchTone();
+                setCalendarOpen(true);
+              }}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 text-xs font-mono font-bold transition shadow-sm"
             >
               <CalendarIcon className="w-3 h-3" />
@@ -318,7 +338,7 @@ export function TriggeredHistorySection() {
       </div>
 
       {/* Luxury Financial Data Table with Max Height & Sticky Frosted Header */}
-      <div className="max-h-[520px] overflow-y-auto overflow-x-auto rounded-2xl border border-white/10 bg-black/20 backdrop-blur-md shadow-inner relative">
+      <div className="min-h-[220px] max-h-[520px] overflow-y-auto overflow-x-auto rounded-2xl border border-white/10 bg-black/20 backdrop-blur-md shadow-inner relative">
         <table className="w-full text-left text-xs border-collapse">
           <thead className="sticky top-0 z-10 bg-[#060e1d]/95 backdrop-blur-xl border-b border-white/10 shadow-sm">
             <tr className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
@@ -344,9 +364,9 @@ export function TriggeredHistorySection() {
               filteredAlerts.map((trade) => {
                 const isGain = trade.netPnl >= 0;
                 const isCE = trade.optionType === "CALL" || trade.symbol.includes("CE");
-                const _tdFmt = new Date().toISOString().replace("T", " ").slice(0, 16);
-                const formattedEntryTime = trade.entryDatetime ? trade.entryDatetime.replace("T", " ").slice(0, 16) : _tdFmt;
-                const formattedExitTime = trade.exitDatetime ? trade.exitDatetime.replace("T", " ").slice(0, 16) : _tdFmt;
+                const formattedEntryTime = formatLocalDateTime(trade.entryDatetime);
+                const formattedExitTime = formatLocalDateTime(trade.exitDatetime || trade.entryDatetime);
+                const duration = calculateTradeDuration(trade.entryDatetime, trade.exitDatetime, trade.duration);
                 const entry = Number(trade.entryPrice || 0);
                 const exit = Number(trade.exitPrice || 0);
                 const pts = exit - entry;
@@ -374,27 +394,31 @@ export function TriggeredHistorySection() {
                     </td>
 
                     <td className="py-3.5 px-3 text-slate-400 text-[11px] whitespace-nowrap font-mono">
-                      {formattedEntryTime}
+                      <span>{formattedEntryTime}</span>
                     </td>
 
-                    <td className="py-3.5 px-3 text-cyan-300 font-bold text-[11px] whitespace-nowrap font-mono">
-                      {formattedExitTime}
+                    <td className="py-3.5 px-3 whitespace-nowrap font-mono">
+                      <span className="text-cyan-300 font-bold text-[11px] block">{formattedExitTime}</span>
+                      <span className="text-[10px] text-slate-400 flex items-center gap-1 font-sans mt-0.5">
+                        <Clock className="w-2.5 h-2.5 text-cyan-400" />
+                        <span>{duration}</span>
+                      </span>
                     </td>
 
                     <td className="py-3.5 px-3 text-right text-slate-300">
-                      ₹{Number(trade.entryPrice).toFixed(2)}
+                      <RollingTicker value={Number(trade.entryPrice || 0)} prefix="₹" decimalPlaces={2} className="text-slate-300" />
                     </td>
 
                     <td className="py-3.5 px-3 text-right text-white font-bold">
-                      ₹{Number(trade.exitPrice).toFixed(2)}
+                      <RollingTicker value={Number(trade.exitPrice || 0)} prefix="₹" decimalPlaces={2} className="text-white font-bold" />
                     </td>
 
                     <td className="py-3.5 px-3 text-right text-emerald-400 font-semibold">
-                      ₹{Number(trade.targetPrice).toFixed(2)}
+                      <RollingTicker value={Number(trade.targetPrice || 0)} prefix="₹" decimalPlaces={2} className="text-emerald-400" />
                     </td>
 
                     <td className="py-3.5 px-3 text-right text-rose-400 font-semibold">
-                      ₹{Number(trade.stopLoss).toFixed(2)}
+                      <RollingTicker value={Number(trade.stopLoss || 0)} prefix="₹" decimalPlaces={2} className="text-rose-400" />
                     </td>
 
                     <td className="py-3.5 px-3 text-center">
@@ -410,9 +434,15 @@ export function TriggeredHistorySection() {
                     </td>
 
                     <td className="py-3.5 px-4 text-right">
-                      <strong className={clsx("text-sm font-black block tracking-tight", isGain ? "text-emerald-400" : "text-rose-400")}>
-                        {isGain ? "+" : ""}₹{Number(trade.netPnl).toFixed(2)}
-                      </strong>
+                      <div className={clsx("text-sm font-black block tracking-tight", isGain ? "text-emerald-400" : "text-rose-400")}>
+                        <RollingTicker 
+                          value={Number(trade.netPnl || 0)} 
+                          prefix="₹" 
+                          showSign={true} 
+                          decimalPlaces={2} 
+                          className={isGain ? "text-emerald-400" : "text-rose-400"}
+                        />
+                      </div>
                       <span className={clsx("text-[10px] font-mono font-bold", isGain ? "text-emerald-400/80" : "text-rose-400/80")}>
                         {isGain ? "+" : ""}{pnlPct.toFixed(2)}%
                       </span>
