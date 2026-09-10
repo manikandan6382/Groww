@@ -6,7 +6,7 @@ import { createTrade, getTradeById, listTrades } from "./trades.repository.js";
 const paperAccountName = "Paper Trading Lab";
 const defaultCapital = 100000;
 
-export function getPaperLab({ range = "week", from, to } = {}) {
+export function getPaperLab({ range = "all", from, to } = {}) {
   const db = getDb();
   const account = getPaperAccount(db);
   const window = getRangeWindow(range, from, to);
@@ -147,61 +147,86 @@ export function deletePaperTrade(id) {
   return { deleted: true, id: trade.id };
 }
 
-export function calculateFrictionAndCharges(trade, exitPrice) {
+export function calculateFrictionAndCharges(trade, exitPrice, closeReason = "") {
   const units = Number(trade.quantity || 0) * Math.max(1, Number(trade.lotSize || 1));
   const entryPrice = Number(trade.entryPrice || 0);
-  const exit = Number(exitPrice || entryPrice);
+  const rawExit = Number(exitPrice || entryPrice);
   
+  // 1. Realistic Execution Slippage (Adjusts effective fill price)
+  // - TARGET_HIT (passive limit order fill): 0.15 pts
+  // - STOP_LOSS_HIT (urgent market exit under adverse liquidity): 0.60 pts
+  // - TRAILING_SL_HIT / BREAKEVEN: 0.30 pts
+  // - DISCRETIONARY / MANUAL: 0.25 pts
+  let slippagePts = 0.25;
+  const reasonUpper = String(closeReason || trade.closeReason || trade.exitReason || "").toUpperCase();
+  if (reasonUpper.includes("TARGET")) {
+    slippagePts = 0.15;
+  } else if (reasonUpper.includes("TRAILING") || reasonUpper.includes("BREAKEVEN") || reasonUpper.includes("BE_HIT") || reasonUpper.includes("RISK_FREE")) {
+    slippagePts = 0.30;
+  } else if (reasonUpper.includes("STOP_LOSS") || reasonUpper.includes("SL_HIT") || reasonUpper.includes("PROTECTED")) {
+    slippagePts = 0.60;
+  }
+
+  const isShort = trade.direction === "SHORT";
+  const filledExit = isShort 
+    ? Number((rawExit + slippagePts).toFixed(2)) 
+    : Number(Math.max(0.05, rawExit - slippagePts).toFixed(2));
+
   const buyTurnover = entryPrice * units;
-  const exitTurnover = exit * units;
+  const exitTurnover = filledExit * units;
   const totalTurnover = buyTurnover + exitTurnover;
 
-  // 1. Brokerage (Standard institutional/discount broker: ₹20 buy + ₹20 sell = ₹40 flat)
+  // 2. Upstox Standard Brokerage (Flat ₹20 buy + ₹20 sell = ₹40 flat)
   const brokerage = 40.0;
 
-  // 2. STT (Securities Transaction Tax: 0.1% on Option Sell turnover)
-  const stt = Number((exitTurnover * 0.001).toFixed(2));
+  // 3. STT (Securities Transaction Tax: 0.1% on Option SELL premium turnover only, 0% on Buy)
+  const sellTurnover = isShort ? buyTurnover : exitTurnover;
+  const stt = Number((sellTurnover * 0.001).toFixed(2));
 
-  // 3. Exchange Transaction Charges (NSE Options: 0.05% on total turnover)
-  const exchangeCharges = Number((totalTurnover * 0.0005).toFixed(2));
+  // 4. Exchange Transaction Charges (NSE Options: 0.0505% on total premium turnover)
+  const exchangeCharges = Number((totalTurnover * 0.000505).toFixed(2));
 
-  // 4. GST (18% on Brokerage + Exchange Charges)
-  const gst = Number(((brokerage + exchangeCharges) * 0.18).toFixed(2));
+  // 5. SEBI Turnover Charges (₹10 per Crore = 0.0001%)
+  const sebiCharges = Number((totalTurnover * 0.000001).toFixed(2));
 
-  // 5. Stamp Duty (0.003% on buy side)
-  const stampDuty = Number((buyTurnover * 0.00003).toFixed(2));
+  // 6. Stamp Duty (0.003% on Buy side premium only)
+  const buyLegTurnover = isShort ? exitTurnover : buyTurnover;
+  const stampDuty = Number((buyLegTurnover * 0.00003).toFixed(2));
 
-  // 6. Total statutory charges
-  const statutoryCharges = Number((brokerage + stt + exchangeCharges + gst + stampDuty).toFixed(2));
+  // 7. GST (18% on Brokerage + Exchange Charges + SEBI Charges)
+  const gst = Number(((brokerage + exchangeCharges + sebiCharges) * 0.18).toFixed(2));
 
-  // 7. Slippage drag (0.50 pt per unit on simulated execution)
-  const slippagePts = 0.50;
+  // 8. Total statutory Upstox charges (Flat ~₹55 - ₹62 for 1 lot)
+  const statutoryCharges = Number((brokerage + stt + exchangeCharges + sebiCharges + stampDuty + gst).toFixed(2));
+
+  // 9. Gross Realized P&L based on filled exit
+  const grossPnl = Number(((isShort ? entryPrice - filledExit : filledExit - entryPrice) * units).toFixed(2));
+
+  // 10. Net Take-Home P&L
+  const netPnl = Number((grossPnl - statutoryCharges).toFixed(2));
   const slippageDrag = Number((slippagePts * units).toFixed(2));
-
-  // 8. Gross P&L
-  const grossPnl = Number(((trade.direction === "SHORT" ? entryPrice - exit : exit - entryPrice) * units).toFixed(2));
-
-  // 9. Net Realized P&L
-  const totalFriction = Number((statutoryCharges + slippageDrag).toFixed(2));
-  const netPnl = Number((grossPnl - totalFriction).toFixed(2));
 
   return {
     units,
+    rawExit,
+    filledExit,
+    slippagePts,
+    slippageDrag,
     grossPnl,
     statutoryCharges,
-    slippageDrag,
-    totalFriction,
+    totalFriction: statutoryCharges,
     netPnl,
     brokerage,
     stt,
     exchangeCharges,
-    gst,
+    sebiCharges,
     stampDuty,
+    gst,
   };
 }
 
 function closePaperTradeInTransaction(db, trade, exitPrice, closeReason, exitDatetime) {
-  const friction = calculateFrictionAndCharges(trade, exitPrice);
+  const friction = calculateFrictionAndCharges(trade, exitPrice, closeReason);
   db.prepare(`
     UPDATE trades
     SET status = 'CLOSED',
@@ -215,12 +240,12 @@ function closePaperTradeInTransaction(db, trade, exitPrice, closeReason, exitDat
         last_marked_at = ?,
         updated_at = datetime('now')
     WHERE id = ?
-  `).run(exitDatetime, exitPrice, friction.grossPnl, friction.totalFriction, friction.netPnl, closeReason, exitPrice, exitDatetime, trade.id);
+  `).run(exitDatetime, friction.filledExit, friction.grossPnl, friction.statutoryCharges, friction.netPnl, closeReason, friction.filledExit, exitDatetime, trade.id);
 
   db.prepare(`
     INSERT INTO trade_executions(trade_id, execution_type, execution_datetime, price, quantity, charges, notes)
     VALUES (?, 'EXIT', ?, ?, ?, ?, ?)
-  `).run(trade.id, exitDatetime, exitPrice, trade.quantity, friction.totalFriction, `${closeReason.replace(/_/g, " ")} (Charges ₹${friction.statutoryCharges} + Slippage ₹${friction.slippageDrag})`);
+  `).run(trade.id, exitDatetime, friction.filledExit, trade.quantity, friction.statutoryCharges, `${closeReason.replace(/_/g, " ")} (Upstox Charges ₹${friction.statutoryCharges} · Slippage ₹${friction.slippageDrag})`);
 }
 
 function getPaperAccount(db) {
@@ -284,14 +309,23 @@ function filterTradesByWindow(trades, { start, end }) {
 
 function getTrigger(trade, markPrice, reason) {
   if (reason === "MANUAL_EXIT") return { shouldClose: true, closeReason: "MANUAL_EXIT" };
+  // MARK_ONLY is for recording entry/intermediate marks without triggering closures
+  if (reason === "MARK_ONLY") return { shouldClose: false, closeReason: null };
   if (trade.status !== "OPEN") return { shouldClose: false, closeReason: trade.closeReason };
+
+  const sl = Number(trade.stopLoss || 0);
+  const tp = Number(trade.targetPrice || 0);
+
   if (trade.direction === "SHORT") {
-    if (trade.targetPrice && markPrice <= trade.targetPrice) return { shouldClose: true, closeReason: "TARGET_HIT" };
-    if (trade.stopLoss && markPrice >= trade.stopLoss) return { shouldClose: true, closeReason: "STOP_LOSS_HIT" };
+    if (tp > 0 && markPrice <= tp) return { shouldClose: true, closeReason: "TARGET_HIT" };
+    if (sl > 0 && markPrice > sl) return { shouldClose: true, closeReason: "STOP_LOSS_HIT" };
     return { shouldClose: false, closeReason: null };
   }
-  if (trade.targetPrice && markPrice >= trade.targetPrice) return { shouldClose: true, closeReason: "TARGET_HIT" };
-  if (trade.stopLoss && markPrice <= trade.stopLoss) return { shouldClose: true, closeReason: "STOP_LOSS_HIT" };
+
+  // LONG trade:
+  if (tp > 0 && markPrice >= tp) return { shouldClose: true, closeReason: "TARGET_HIT" };
+  // Strictly less than stopLoss prevents instant kill on initial mark if SL equals entry price
+  if (sl > 0 && markPrice < sl) return { shouldClose: true, closeReason: "STOP_LOSS_HIT" };
   return { shouldClose: false, closeReason: null };
 }
 

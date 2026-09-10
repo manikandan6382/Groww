@@ -9,9 +9,14 @@
     "server": "node src/web-server.js",
     "client": "vite src/client --port 3003",
     "dev": "concurrently -n \"BACKEND,FRONTEND\" -c \"blue,cyan\" \"node -e \\\"process.env.PORT='3004'; import('./src/web-server.js')\\\"\" \"vite src/client\"",
+    "audit:scope": "node scripts/audit-bindings.mjs",
+    "predev": "node scripts/audit-bindings.mjs",
+    "prebuild": "node scripts/audit-bindings.mjs",
     "build": "vite build src/client",
     "dashboard": "npm run build && node src/web-server.js",
-    "smoke": "node scripts/smoke.js"
+    "smoke": "node scripts/smoke.js",
+    "token:refresh": "node scripts/upstox-token-refresh.js",
+    "backup": "node scripts/backup-database.js"
   },
   "engines": {
     "node": ">=24"

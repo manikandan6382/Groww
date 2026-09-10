@@ -327,7 +327,7 @@ export function ForeignStocksView() {
     <div className="space-y-6">
       
       {/* 🌟 1. Wall Street ↔ Dalal Street Master Command HUD */}
-      <div className="p-6 rounded-3xl bg-[#070b14]/80 backdrop-blur-3xl border border-white/[0.08] shadow-[0_16px_40px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.18)] relative overflow-hidden">
+      <div className="p-6 rounded-3xl bg-[var(--card)] backdrop-blur-3xl border border-[var(--line)] shadow-[0_16px_40px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.12)] relative overflow-hidden">
         <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-bl from-cyan-500/10 via-indigo-500/5 to-transparent rounded-full blur-3xl pointer-events-none" />
 
         <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
@@ -402,7 +402,7 @@ export function ForeignStocksView() {
       {/* 💡 2. "Why Invest in US Equities?" — 3-Pillar Plain-English Rosetta Bar */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Pillar 1: Dual Compounding */}
-        <div className="p-5 rounded-2xl bg-[#070b14]/75 border border-white/[0.08] backdrop-blur-2xl shadow-xl space-y-2 relative group hover:border-cyan-500/30 transition">
+        <div className="p-5 rounded-2xl bg-[#0d0f14]/85 border border-white/[0.07] backdrop-blur-2xl shadow-xl space-y-2 relative group hover:border-cyan-500/30 transition">
           <div className="w-8 h-8 rounded-xl bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
             <Coins className="w-4 h-4" />
           </div>
@@ -416,7 +416,7 @@ export function ForeignStocksView() {
         </div>
 
         {/* Pillar 2: Fractional Shares */}
-        <div className="p-5 rounded-2xl bg-[#070b14]/75 border border-white/[0.08] backdrop-blur-2xl shadow-xl space-y-2 relative group hover:border-indigo-500/30 transition">
+        <div className="p-5 rounded-2xl bg-[#0d0f14]/85 border border-white/[0.07] backdrop-blur-2xl shadow-xl space-y-2 relative group hover:border-indigo-500/30 transition">
           <div className="w-8 h-8 rounded-xl bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
             <Layers className="w-4 h-4" />
           </div>
@@ -430,7 +430,7 @@ export function ForeignStocksView() {
         </div>
 
         {/* Pillar 3: RBI LRS & Tax Safety */}
-        <div className="p-5 rounded-2xl bg-[#070b14]/75 border border-white/[0.08] backdrop-blur-2xl shadow-xl space-y-2 relative group hover:border-emerald-500/30 transition">
+        <div className="p-5 rounded-2xl bg-[#0d0f14]/85 border border-white/[0.07] backdrop-blur-2xl shadow-xl space-y-2 relative group hover:border-emerald-500/30 transition">
           <div className="w-8 h-8 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
             <ShieldCheck className="w-4 h-4" />
           </div>
@@ -445,7 +445,7 @@ export function ForeignStocksView() {
       </div>
 
       {/* 💱 3. Interactive "Rupee-to-Dollar" Investment & Compounding Simulator */}
-      <div className="p-6 rounded-3xl bg-gradient-to-br from-[#080f24]/90 via-[#070c18]/90 to-[#040810]/95 border border-cyan-500/20 backdrop-blur-3xl shadow-[0_16px_40px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.15)] space-y-6">
+      <div className="p-6 rounded-3xl bg-gradient-to-br from-[#121424]/95 via-[#0d0f14]/95 to-[#060709]/95 border border-cyan-500/20 backdrop-blur-3xl shadow-[0_16px_40px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.08)] space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-white/[0.08]">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
@@ -640,7 +640,7 @@ export function ForeignStocksView() {
               return (
                 <div
                   key={stock.symbol}
-                  className="p-4 rounded-3xl bg-[#070b14]/75 hover:bg-[#0c1326]/90 border border-white/[0.08] hover:border-cyan-500/40 transition-all duration-300 backdrop-blur-3xl shadow-[0_12px_36px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.18)] group flex flex-col justify-between space-y-3 cursor-default"
+                  className="p-4 rounded-3xl bg-[#0d0f14]/85 hover:bg-[#121424]/95 border border-white/[0.07] hover:border-cyan-500/40 transition-all duration-300 backdrop-blur-3xl shadow-[0_12px_36px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.08)] group flex flex-col justify-between space-y-3 cursor-default"
                 >
                   {/* Card Header: Emblem, Symbol & Sector */}
                   <div>
@@ -737,7 +737,7 @@ export function ForeignStocksView() {
           </div>
         ) : (
           /* 📊 View Option B: High-Density Table View */
-          <div className="p-4 rounded-3xl bg-[#070b14]/75 border border-white/[0.08] backdrop-blur-3xl shadow-xl overflow-x-auto">
+          <div className="p-4 rounded-3xl bg-[#0d0f14]/85 border border-white/[0.07] backdrop-blur-3xl shadow-xl overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-white/10 text-[10px] font-mono uppercase text-slate-400">
@@ -801,7 +801,7 @@ export function ForeignStocksView() {
       </div>
 
       {/* 🛡️ 5. Indian Investor Onboarding & Compliance 3-Step Roadmap */}
-      <div className="p-6 rounded-3xl bg-[#070b14]/75 border border-white/[0.08] backdrop-blur-3xl shadow-xl space-y-4">
+      <div className="p-6 rounded-3xl bg-[#0d0f14]/85 border border-white/[0.07] backdrop-blur-3xl shadow-[0_16px_40px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.08)] space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-white/[0.08]">
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-5 h-5 text-emerald-400" />

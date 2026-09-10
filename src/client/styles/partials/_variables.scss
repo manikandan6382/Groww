@@ -4,20 +4,46 @@
 // ==========================================
 
 :root {
-  // Spatial Dark Backgrounds
-  --bg-obsidian: #070b14;
-  --bg-surface-elevated: rgba(14, 23, 42, 0.75);
-  --bg-surface-card: rgba(15, 23, 42, 0.65);
-  --bg-surface-subtle: rgba(255, 255, 255, 0.03);
-  --bg-surface-hover: rgba(255, 255, 255, 0.06);
+  color-scheme: dark;
+
+  // PortfolioX Atmospheric Design System (Stripe / Linear Spatial Gradient Mesh)
+  --bg: #070815;
+  --bg-obsidian: #070815;
+  --card: rgba(16, 18, 36, 0.74);
+  --card-elevated: rgba(24, 26, 52, 0.88);
+  --sidebar: rgba(10, 11, 24, 0.88);
+  --panel: rgba(16, 18, 36, 0.74);
+  --panel-2: rgba(24, 26, 52, 0.88);
+  --panel-glass: rgba(16, 18, 36, 0.74);
+
+  --app-bg-gradient: 
+    radial-gradient(ellipse 95% 65% at 50% -12%, rgba(129, 140, 248, 0.35) 0%, rgba(99, 102, 241, 0.22) 40%, transparent 75%),
+    radial-gradient(ellipse 70% 55% at 92% 12%, rgba(168, 85, 247, 0.26) 0%, rgba(139, 92, 246, 0.12) 45%, transparent 65%),
+    radial-gradient(ellipse 55% 45% at 6% 32%, rgba(56, 189, 248, 0.16) 0%, transparent 60%),
+    radial-gradient(ellipse 80% 60% at 50% 75%, rgba(99, 102, 241, 0.08) 0%, transparent 80%),
+    #070815;
+
+  --bg-surface-elevated: var(--card-elevated);
+  --bg-surface-card: var(--card);
+  --bg-surface-subtle: rgba(255, 255, 255, 0.04);
+  --bg-surface-hover: rgba(255, 255, 255, 0.08);
 
   // Borders & Dividers
+  --line: rgba(168, 85, 247, 0.18);
+  --line-soft: rgba(255, 255, 255, 0.05);
   --border-subtle: rgba(255, 255, 255, 0.08);
-  --border-highlight: rgba(255, 255, 255, 0.16);
-  --border-glass: rgba(255, 255, 255, 0.12);
+  --border-highlight: rgba(255, 255, 255, 0.22);
+  --border-glass: rgba(168, 85, 247, 0.14);
   --border-cyan-glow: rgba(56, 189, 248, 0.35);
 
+  // Typography
+  --text: #f4f6f8;
+  --text-muted: #8892a0;
+  --text-dim: #4e5868;
+
   // Primary Financial Brand Accents
+  --cyan: #38bdf8;
+  --blue: #3b82f6;
   --color-brand-cyan: #38bdf8;
   --color-brand-blue: #3b82f6;
   --color-brand-indigo: #6366f1;
@@ -44,7 +70,16 @@
   --radius-full: 9999px;
 
   // Elevation & Inset Rims
-  --shadow-spatial-sm: 0 4px 12px rgba(0, 0, 0, 0.35);
-  --shadow-spatial-lg: 0 16px 40px -8px rgba(0, 0, 0, 0.6);
-  --shadow-inset-rim: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  --shadow-spatial-sm: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-spatial-lg: 0 20px 50px rgba(0, 0, 0, 0.65);
+  --shadow-inset-rim: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  --shadow-main: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 20px 50px rgba(0, 0, 0, 0.65);
+  --shadow-glow: 0 0 30px rgba(56, 189, 248, 0.12);
+
+  // Spatial Materials
+  --apple-glass-surface: rgba(17, 17, 19, 0.92);
+  --apple-glass-blur: blur(28px) saturate(180%);
+  --apple-specular-rim: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 20px 50px rgba(0, 0, 0, 0.65);
+  --apple-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --apple-spotlight: radial-gradient(circle 900px at 50% -120px, rgba(255, 255, 255, 0.035), transparent 85%);
 }

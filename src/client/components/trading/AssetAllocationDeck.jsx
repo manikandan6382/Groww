@@ -87,7 +87,7 @@ export function AssetAllocationDeck({ holdings = [], margins = {} }) {
   const cashStroke = (cashPct / 100) * circ;
 
   return (
-    <div className="p-6 sm:p-7 rounded-[32px] bg-[#070b14]/80 backdrop-blur-3xl border border-white/[0.08] shadow-[0_16px_40px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.18)] relative overflow-hidden flex flex-col justify-between space-y-5 hover:border-white/[0.12] transition-colors">
+    <div className="p-6 sm:p-7 rounded-[32px] bg-[var(--card)] backdrop-blur-3xl border border-[var(--line)] shadow-[0_16px_40px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.12)] relative overflow-hidden flex flex-col justify-between space-y-5 hover:border-white/[0.18] transition-colors">
       {/* 🌌 Apple Ambient Glow */}
       <div className="absolute top-0 right-0 w-[260px] h-[260px] bg-cyan-500/[0.06] rounded-full blur-[80px] pointer-events-none -mt-20 -mr-20" />
       <div className="absolute bottom-0 left-0 w-[240px] h-[240px] bg-emerald-500/[0.05] rounded-full blur-[70px] pointer-events-none -mb-16 -ml-16" />

@@ -296,7 +296,7 @@ export function RosettaDrawer() {
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: "100%", opacity: 0.9 }}
             transition={{ type: "spring", stiffness: 320, damping: 30 }}
-            className="relative w-full max-w-2xl h-full bg-[#060c18]/98 border-l border-white/10 p-5 sm:p-7 flex flex-col justify-between shadow-2xl backdrop-blur-3xl z-10 overflow-hidden"
+            className="relative w-full max-w-2xl h-full bg-[#0d0f14]/98 border-l border-white/10 p-5 sm:p-7 flex flex-col justify-between shadow-2xl backdrop-blur-3xl z-10 overflow-hidden"
           >
             {/* Top Navigation & Master Search Header */}
             <div className="space-y-4 pb-4 border-b border-white/10 flex-shrink-0">

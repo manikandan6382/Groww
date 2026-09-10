@@ -62,18 +62,25 @@ export const useLivePriceStore = create(
       set({ ticks: newTicks, sparklines: newSparklines });
     },
 
-    updateIndexTick: (symbol, ltp, change = 0, changePct = 0) => {
+    updateIndexTick: (symbol, ltp, change = 0, changePct = 0, extra = {}) => {
       const numLtp = Number(ltp);
+      const prev = get().indices?.[symbol];
       const prevSparkline = get().sparklines?.[symbol] ?? [numLtp];
       const nextSparkline = [...prevSparkline.slice(-14), numLtp];
       set((state) => ({
         indices: {
           ...state.indices,
           [symbol]: {
+            ...prev,
+            ...extra,
             ltp: numLtp,
-            change,
-            changePct,
-            timestamp: Date.now(),
+            change: Number(change),
+            changePct: Number(changePct),
+            open: extra.open != null ? Number(extra.open) : prev?.open,
+            high: extra.high != null ? Number(extra.high) : prev?.high,
+            low: extra.low != null ? Number(extra.low) : prev?.low,
+            close: extra.close != null ? Number(extra.close) : prev?.close,
+            timestamp: extra.receivedAt || extra.timestamp || Date.now(),
           },
         },
         sparklines: {
@@ -81,6 +88,23 @@ export const useLivePriceStore = create(
           [symbol]: nextSparkline,
         }
       }));
+    },
+
+    setAllIndices: (indicesMap) => {
+      set((state) => {
+        const nextIndices = { ...state.indices };
+        const nextSparklines = { ...state.sparklines };
+        for (const [key, data] of Object.entries(indicesMap)) {
+          if (!data || data.ltp == null) continue;
+          nextIndices[key] = {
+            ...(nextIndices[key] || {}),
+            ...data,
+          };
+          const prevSpark = nextSparklines[key] || [];
+          nextSparklines[key] = [...prevSpark.slice(-14), data.ltp];
+        }
+        return { indices: nextIndices, sparklines: nextSparklines };
+      });
     },
 
     setBulkTicks: (newTicksMap) => {

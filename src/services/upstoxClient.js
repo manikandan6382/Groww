@@ -187,7 +187,7 @@ export class UpstoxClient extends EventEmitter {
       const parsedStrike = Number(trade.strikePrice || trade.strike_price || (sym.match(/\b\d{5}\b/) || [0])[0]);
       const strike = parsedStrike || Number((sym.match(/\d+/) || [0])[0]);
       const side = toUpstoxSide(trade.optionType || trade.option_type || (sym.includes("PE") ? "PUT" : "CALL"));
-      const underlyingKey = underlying.includes("BANK") ? "NSE_INDEX|Nifty Bank" : (underlying.includes("FIN") ? "NSE_INDEX|Nifty Fin Service" : "NSE_INDEX|Nifty 50");
+      const underlyingKey = underlying.includes("SENSEX") ? "BSE_INDEX|SENSEX" : (underlying.includes("BANK") ? "NSE_INDEX|Nifty Bank" : (underlying.includes("FIN") ? "NSE_INDEX|Nifty Fin Service" : "NSE_INDEX|Nifty 50"));
       
       const endpoint = new URL("https://api.upstox.com/v2/option/contract");
       endpoint.searchParams.set("instrument_key", underlyingKey);
@@ -212,8 +212,50 @@ export class UpstoxClient extends EventEmitter {
             );
           });
           if (matches.length) {
+            // Sort ascending by expiry date (nearest first)
             matches.sort((a, b) => new Date(a.expiry).getTime() - new Date(b.expiry).getTime());
-            return normalizeInstrumentKey(matches[0].instrument_key);
+
+            // Check if user or trade requested a specific expiry date
+            const reqExp = String(trade.expiryDate || trade.expiry || "").trim().toLowerCase();
+            const symDateMatch = sym.match(/\b(\d{1,2})[-_\s]?([A-Za-z]{3,4})[-_\s]?(\d{2,4})?\b/);
+
+            let matchedContract = null;
+            if (reqExp) {
+              matchedContract = matches.find((c) => {
+                const cExp = String(c.expiry).toLowerCase(); // e.g. "2026-09-15"
+                const cSym = String(c.trading_symbol).toLowerCase(); // e.g. "nifty 23700 pe 15 sep 26"
+                return cExp.includes(reqExp) || cSym.includes(reqExp) || reqExp.includes(cExp);
+              });
+            } else if (symDateMatch) {
+              const dayStr = String(symDateMatch[1]).padStart(2, "0");
+              const monStr = symDateMatch[2].toLowerCase().slice(0, 3);
+              matchedContract = matches.find((c) => {
+                const cSym = String(c.trading_symbol).toLowerCase();
+                const cExp = String(c.expiry).toLowerCase();
+                return (cSym.includes(dayStr) && cSym.includes(monStr)) || (cExp.includes(dayStr) && cExp.includes(monStr));
+              });
+            }
+
+            if (!matchedContract) {
+              matchedContract = matches[0];
+            }
+
+            if (trade.returnFullDetails) {
+              return {
+                instrumentKey: normalizeInstrumentKey(matchedContract.instrument_key),
+                expiry: matchedContract.expiry,
+                tradingSymbol: matchedContract.trading_symbol,
+                availableContracts: matches.map((m) => ({
+                  instrumentKey: normalizeInstrumentKey(m.instrument_key),
+                  expiry: m.expiry,
+                  tradingSymbol: m.trading_symbol,
+                  strike: m.strike_price,
+                  type: m.instrument_type
+                }))
+              };
+            }
+
+            return normalizeInstrumentKey(matchedContract.instrument_key);
           }
         }
       }

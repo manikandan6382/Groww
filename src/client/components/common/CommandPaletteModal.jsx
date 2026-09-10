@@ -53,7 +53,7 @@ export function CommandPaletteModal() {
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: -20 }}
           transition={{ type: "spring", stiffness: 400, damping: 30 }}
-          className="relative w-full max-w-xl rounded-2xl bg-[#080d1a] border border-white/15 shadow-2xl overflow-hidden z-10"
+          className="relative w-full max-w-xl rounded-2xl bg-[#121424]/95 backdrop-blur-3xl border border-white/10 shadow-[0_24px_60px_rgba(0,0,0,0.8),inset_0_1px_0_rgba(255,255,255,0.08)] overflow-hidden z-10"
         >
           {/* Search Header */}
           <div className="flex items-center gap-3 px-4 py-3.5 border-b border-white/10">

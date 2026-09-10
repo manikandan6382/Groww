@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { getDb } from "../db/connection.js";
 import { getPaperLab, markPaperTrade } from "../repositories/paper-lab.repository.js";
 import { getTradeById } from "../repositories/trades.repository.js";
 import { createUpstoxClient } from "./upstoxClient.js";
@@ -20,6 +21,7 @@ export class PaperTradeEngine extends EventEmitter {
     this.events = [];
     this.refreshTimer = null;
     this.flushTimer = null;
+    this.indicesTimer = null;
     this.started = false;
 
     this.client.on("tick", (tick) => this.handleTick(tick));
@@ -35,14 +37,18 @@ export class PaperTradeEngine extends EventEmitter {
     this.refreshActiveTrades();
     this.refreshTimer = setInterval(() => this.refreshActiveTrades(), ACTIVE_REFRESH_MS);
     this.flushTimer = setInterval(() => this.flushPendingMarks(), 1000);
+    this.indicesTimer = setInterval(() => this.pollIndices(), 3000);
+    this.pollIndices();
   }
 
   stop() {
     this.started = false;
     if (this.refreshTimer) clearInterval(this.refreshTimer);
     if (this.flushTimer) clearInterval(this.flushTimer);
+    if (this.indicesTimer) clearInterval(this.indicesTimer);
     this.refreshTimer = null;
     this.flushTimer = null;
+    this.indicesTimer = null;
     this.flushPendingMarks();
     this.client.stop();
   }
@@ -100,6 +106,59 @@ export class PaperTradeEngine extends EventEmitter {
     for (const trade of openTrades) {
       await this.ensureTradeSubscription(trade);
     }
+  }
+
+  async pollIndices() {
+    if (!this.started) return;
+    this.client.refreshAccessToken();
+    const token = this.client.accessToken;
+    if (!token) return;
+
+    try {
+      const keys = "NSE_INDEX|Nifty 50,NSE_INDEX|Nifty Bank,NSE_INDEX|India VIX,NSE_INDEX|Nifty Fin Service,BSE_INDEX|SENSEX";
+      const res = await fetch(`https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(keys)}`, {
+        headers: {
+          "Accept": "application/json",
+          "Authorization": `Bearer ${token}`
+        }
+      });
+      if (res.ok) {
+        const body = await res.json();
+        const raw = body?.data || {};
+
+        const items = [
+          { key: "NSE_INDEX|Nifty 50", lookup: "NSE_INDEX:Nifty 50", name: "NIFTY 50" },
+          { key: "NSE_INDEX|Nifty Bank", lookup: "NSE_INDEX:Nifty Bank", name: "BANKNIFTY" },
+          { key: "NSE_INDEX|India VIX", lookup: "NSE_INDEX:India VIX", name: "INDIA VIX" },
+          { key: "NSE_INDEX|Nifty Fin Service", lookup: "NSE_INDEX:Nifty Fin Service", name: "FINNIFTY" },
+          { key: "BSE_INDEX|SENSEX", lookup: "BSE_INDEX:SENSEX", name: "BSE SENSEX" }
+        ];
+
+        for (const item of items) {
+          const q = raw[item.lookup] || raw[item.key];
+          if (q && q.last_price != null) {
+            const ltp = Number(q.last_price);
+            const change = Number(q.net_change || 0);
+            const prevClose = q.ohlc?.close != null ? Number(q.ohlc.close) : (ltp - change);
+            const changePct = prevClose > 0 ? Number(((change / prevClose) * 100).toFixed(2)) : 0;
+
+            this.publish("index_tick", {
+              symbol: item.key,
+              tokenKey: item.key,
+              name: item.name,
+              ltp,
+              change,
+              changePct,
+              open: q.ohlc?.open != null ? Number(q.ohlc.open) : ltp,
+              high: q.ohlc?.high != null ? Number(q.ohlc.high) : ltp,
+              low: q.ohlc?.low != null ? Number(q.ohlc.low) : ltp,
+              close: prevClose,
+              receivedAt: q.timestamp || new Date().toISOString()
+            });
+          }
+        }
+      }
+    } catch { /* non-fatal poll error */ }
   }
 
   async syncTrade(tradeId) {
@@ -228,21 +287,20 @@ export class PaperTradeEngine extends EventEmitter {
     this.pendingMarks.clear();
 
     try {
-      import("../db/connection.js").then(({ getDb }) => {
-        const db = getDb();
-        db.exec("BEGIN;");
-        try {
-          const stmt = db.prepare("UPDATE trades SET last_mark_price = ?, last_marked_at = ? WHERE id = ? AND status = 'OPEN'");
-          for (const [id, data] of entries) {
-            stmt.run(data.price, data.time || new Date().toISOString(), id);
-          }
-          db.exec("COMMIT;");
-        } catch {
-          db.exec("ROLLBACK;");
+      const db = getDb();
+      db.exec("BEGIN;");
+      try {
+        const stmt = db.prepare("UPDATE trades SET last_mark_price = ?, last_marked_at = ? WHERE id = ? AND status = 'OPEN'");
+        for (const [id, data] of entries) {
+          stmt.run(data.price, data.time || new Date().toISOString(), id);
         }
-      }).catch(() => {});
-    } catch {
-      // non-fatal
+        db.exec("COMMIT;");
+      } catch (err) {
+        db.exec("ROLLBACK;");
+        console.warn("[paperTradeEngine] flushPendingMarks rollback:", err.message);
+      }
+    } catch (err) {
+      console.warn("[paperTradeEngine] flushPendingMarks error:", err.message);
     }
   }
 
@@ -254,36 +312,61 @@ export class PaperTradeEngine extends EventEmitter {
     const entry = Number(trade.entryPrice || 0);
     const ltp = Number(tick.ltp || 0);
     if (!ltp || ltp <= 0) return;
+
+    // Noise jitter guard: protect against sub-second tick bounce on initial order fill
+    const entryTime = new Date(trade.entryDatetime || trade.created_at || 0).getTime();
+    const tradeAgeMs = entryTime > 0 ? (Date.now() - entryTime) : 999999;
+    if (tradeAgeMs < 2000 && Math.abs(ltp - entry) < 0.50) {
+      return;
+    }
+
+    // 🛡️ Contract / Price Anomaly Guard:
+    // If trade was created recently (< 5s) and LTP diverges from entry by > 35%, or if target is already hit
+    // at entry time, suppress execution as a contract mismatch anomaly rather than triggering a false target hit!
+    if (entry > 0 && tradeAgeMs < 5000 && (Math.abs(ltp - entry) / entry > 0.35)) {
+      console.warn(`[paperTradeEngine] Anomaly suppressed on trade ${id} (${trade.symbol}): entry ₹${entry} vs tick LTP ₹${ltp}. False trigger blocked.`);
+      return;
+    }
+
     let reason = null;
 
-    // --- 1. Automated Institutional Breakeven Lock ---
+    const isShortTrade = trade.direction === "SHORT" || (target < entry && stopLoss > entry);
+
+    // --- 1. Automated Institutional True Breakeven Lock ---
     if (entry > 0) {
-      if (target > entry && stopLoss < entry) {
-        // Long Option Buying setup
-        if (ltp >= entry + 8.0 && stopLoss < entry + 0.5) {
-          this.lockBreakeven(trade, entry + 0.5, ltp);
+      // Calculate true friction drag per unit to guarantee net zero loss upon exit
+      const units = Number(trade.quantity || 1) * Math.max(1, Number(trade.lotSize || 65));
+      const estimatedCharges = 55.20 + (entry * units * 0.001); // Brokerage + STT + GST
+      const frictionPoints = Math.max(1.50, Number((estimatedCharges / units + 0.30).toFixed(2)));
+
+      if (isShortTrade) {
+        // Short Option Selling setup: locks below entry
+        const bePrice = Number((entry - frictionPoints).toFixed(2));
+        if (ltp <= entry - 8.0 && (stopLoss === 0 || stopLoss > bePrice)) {
+          this.lockBreakeven(trade, bePrice, ltp);
         }
-      } else if (target < entry && stopLoss > entry) {
-        // Short Option Selling setup
-        if (ltp <= entry - 8.0 && stopLoss > entry - 0.5) {
-          this.lockBreakeven(trade, entry - 0.5, ltp);
+      } else {
+        // Long Option Buying setup: locks above entry
+        const bePrice = Number((entry + frictionPoints).toFixed(2));
+        if (ltp >= entry + 8.0 && (stopLoss === 0 || stopLoss < bePrice)) {
+          this.lockBreakeven(trade, bePrice, ltp);
         }
       }
     }
 
     // --- 2. Target & Stop Loss Execution ---
-    if (target > entry && stopLoss < entry) {
-      // Long option / Standard buyer setup
-      if (target > 0 && ltp >= target) reason = "TARGET_HIT";
-      if (!reason && stopLoss > 0 && ltp <= stopLoss) reason = "STOP_LOSS_HIT";
-    } else if (target < entry && stopLoss > entry) {
+    if (isShortTrade) {
       // Short option / Seller setup
       if (target > 0 && ltp <= target) reason = "TARGET_HIT";
-      if (!reason && stopLoss > 0 && ltp >= stopLoss) reason = "STOP_LOSS_HIT";
+      if (!reason && stopLoss > 0 && ltp >= stopLoss) {
+        reason = stopLoss <= entry ? "TRAILING_SL_HIT" : "STOP_LOSS_HIT";
+      }
     } else {
-      // Fallback
+      // Long option / Standard buyer setup
       if (target > 0 && ltp >= target) reason = "TARGET_HIT";
-      if (!reason && stopLoss > 0 && ltp <= stopLoss) reason = "STOP_LOSS_HIT";
+      if (!reason && stopLoss > 0 && ltp <= stopLoss) {
+        reason = stopLoss >= entry ? "TRAILING_SL_HIT" : "STOP_LOSS_HIT";
+      }
     }
 
     if (!reason) return;
@@ -293,24 +376,22 @@ export class PaperTradeEngine extends EventEmitter {
   lockBreakeven(trade, newStopLoss, currentLtp) {
     const id = Number(trade.id);
     try {
-      import("../db/connection.js").then(({ getDb }) => {
-        const db = getDb();
-        db.prepare("UPDATE trades SET stop_loss = ?, updated_at = datetime('now') WHERE id = ?").run(newStopLoss, id);
-        trade.stopLoss = newStopLoss;
-        const item = this.activeTrades.get(id);
-        if (item) item.trade.stopLoss = newStopLoss;
-        this.publish("breakeven_locked", {
-          tradeId: id,
-          symbol: trade.symbol,
-          newStopLoss,
-          entryPrice: trade.entryPrice,
-          currentLtp,
-          message: `Breakeven Locked at ₹${newStopLoss.toFixed(2)} (+0.50 pt buffer)`,
-        });
-        telegramNotifier.notifyBreakevenLocked(trade, newStopLoss, currentLtp).catch(() => {});
+      const db = getDb();
+      db.prepare("UPDATE trades SET stop_loss = ?, updated_at = datetime('now') WHERE id = ?").run(newStopLoss, id);
+      trade.stopLoss = newStopLoss;
+      const item = this.activeTrades.get(id);
+      if (item) item.trade.stopLoss = newStopLoss;
+      this.publish("breakeven_locked", {
+        tradeId: id,
+        symbol: trade.symbol,
+        newStopLoss,
+        entryPrice: trade.entryPrice,
+        currentLtp,
+        message: `Breakeven Locked at ₹${newStopLoss.toFixed(2)} (+0.50 pt buffer)`,
       });
-    } catch {
-      // Non-fatal if DB is locked
+      telegramNotifier.notifyBreakevenLocked(trade, newStopLoss, currentLtp).catch(() => {});
+    } catch (err) {
+      console.warn(`[paperTradeEngine] lockBreakeven error on trade ${id}:`, err.message);
     }
   }
 

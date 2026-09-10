@@ -4,18 +4,29 @@ import { useTradingStore } from "../../stores/useTradingStore";
 import { RollingTicker } from "../common/RollingTicker";
 import clsx from "clsx";
 
-export function Sidebar() {
-  const { activeView, setActiveView, brokerStatus, journalTrades } = useTradingStore();
+export const Sidebar = React.memo(function Sidebar() {
+  const activeView = useTradingStore((s) => s.activeView);
+  const setActiveView = useTradingStore((s) => s.setActiveView);
+  const brokerStatus = useTradingStore((s) => s.brokerStatus);
+  const journalTrades = useTradingStore((s) => s.journalTrades);
 
-  // Compute Today's Session Metrics
-  const todayStr = new Date().toISOString().split("T")[0];
-  const todayTrades = (journalTrades || []).filter(
-    (t) => (t.exitDatetime?.split("T")[0] || t.entryDatetime?.split("T")[0]) === todayStr
-  );
-  const todayNetPnl = todayTrades.reduce((acc, t) => acc + Number(t.netPnl || 0), 0);
-  const todayWins = todayTrades.filter((t) => Number(t.netPnl || 0) > 0).length;
-  const todayLosses = todayTrades.filter((t) => Number(t.netPnl || 0) <= 0).length;
-  const isTodayProfitable = todayNetPnl >= 0;
+  // Compute Today's Session Metrics (Memoized)
+  const { todayTrades, todayNetPnl, todayWins, todayLosses, isTodayProfitable } = React.useMemo(() => {
+    const todayStr = new Date().toISOString().split("T")[0];
+    const todayTrades = (journalTrades || []).filter(
+      (t) => (t.exitDatetime?.split("T")[0] || t.entryDatetime?.split("T")[0]) === todayStr
+    );
+    const netPnl = todayTrades.reduce((acc, t) => acc + Number(t.netPnl || 0), 0);
+    const wins = todayTrades.filter((t) => Number(t.netPnl || 0) > 0).length;
+    const losses = todayTrades.filter((t) => Number(t.netPnl || 0) <= 0).length;
+    return {
+      todayTrades,
+      todayNetPnl: netPnl,
+      todayWins: wins,
+      todayLosses: losses,
+      isTodayProfitable: netPnl >= 0
+    };
+  }, [journalTrades]);
 
   const navItems = [
     { id: "dashboard", label: "My Stocks & Wealth", sub: "Net Worth & Holdings", key: "1", icon: LayoutDashboard },
@@ -25,12 +36,12 @@ export function Sidebar() {
   ];
 
   return (
-    <aside className="hidden md:flex w-64 bg-[#060913]/85 backdrop-blur-3xl border-r border-white/[0.08] flex-col justify-between p-4 flex-shrink-0 h-screen sticky top-0 shadow-[0_16px_40px_rgba(0,0,0,0.6)]">
+    <aside className="hidden md:flex w-64 bg-[var(--sidebar)] backdrop-blur-3xl border-r border-[var(--line)] flex-col justify-between p-4 flex-shrink-0 h-screen sticky top-0 shadow-[0_16px_40px_rgba(0,0,0,0.6)]">
       <div className="space-y-4">
         {/* Brand Header */}
         <div className="flex items-center gap-3 px-2">
           <div className="w-9 h-9 rounded-2xl bg-gradient-to-tr from-cyan-500 via-sky-400 to-indigo-600 p-0.5 flex items-center justify-center shadow-[0_0_15px_rgba(6,182,212,0.4)] flex-shrink-0">
-            <div className="w-full h-full bg-[#070c18] rounded-xl flex items-center justify-center">
+            <div className="w-full h-full bg-[var(--bg)] rounded-xl flex items-center justify-center">
               <Zap className="w-4 h-4 text-cyan-400 fill-cyan-400/20" />
             </div>
           </div>
@@ -45,7 +56,7 @@ export function Sidebar() {
         </div>
 
         {/* User Profile Pill */}
-        <div className="p-2.5 rounded-2xl bg-white/[0.03] border border-white/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)] flex items-center gap-3">
+        <div className="p-2.5 rounded-2xl bg-[var(--card)] border border-[var(--line)] shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] flex items-center gap-3">
           <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-cyan-500 to-indigo-600 flex items-center justify-center font-bold text-white text-xs shadow-sm">
             M
           </div>
@@ -59,7 +70,7 @@ export function Sidebar() {
         </div>
 
         {/* 🌟 Live Odometer Telemetry Deck */}
-        <div className="p-3 rounded-2xl bg-[#080d1a]/80 border border-white/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,0.1)] space-y-2">
+        <div className="p-3 rounded-2xl bg-[var(--card)] border border-[var(--line)] shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] space-y-2">
           <div className="flex items-center justify-between text-[10px] font-bold text-slate-400">
             <span className="flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
@@ -115,7 +126,7 @@ export function Sidebar() {
         </nav>
 
         {/* Dual Broker Hub */}
-        <div className="p-3 rounded-2xl bg-[#080d1a]/80 border border-white/[0.08] space-y-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.1)]">
+        <div className="p-3 rounded-2xl bg-[var(--card)] border border-[var(--line)] space-y-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
           <div className="flex items-center justify-between text-[11px] font-bold text-slate-300">
             <div className="flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
@@ -126,34 +137,47 @@ export function Sidebar() {
 
           <div className="space-y-2">
             {/* Zerodha Kite */}
-            <div className="p-2 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-between">
+            <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="w-5 h-5 rounded-lg bg-orange-500/20 text-orange-400 flex items-center justify-center font-black text-[10px]">
                   K
                 </span>
-                <span className="text-xs font-semibold text-slate-200">Zerodha</span>
+                <div className="flex flex-col">
+                  <span className="text-xs font-semibold text-slate-200">Zerodha Kite</span>
+                  <span className={clsx("text-[9px] font-medium flex items-center gap-1", brokerStatus?.kiteConnected ? "text-emerald-400" : "text-amber-400")}>
+                    <span className={clsx("w-1.5 h-1.5 rounded-full", brokerStatus?.kiteConnected ? "bg-emerald-400 animate-pulse" : "bg-amber-400")} />
+                    {brokerStatus?.kiteConnected ? (brokerStatus.kiteUserName ? brokerStatus.kiteUserName.split(" ")[0] : "Active") : "OAuth Ready"}
+                  </span>
+                </div>
               </div>
               <a
                 href="https://kite.zerodha.com/connect/login?v=3&api_key=3fm9odz8emxrymjo"
                 target="_blank"
                 rel="noreferrer"
-                className="text-[10px] px-2 py-1 bg-orange-500/10 hover:bg-orange-500/20 text-orange-300 rounded-lg border border-orange-500/20 flex items-center gap-1 transition font-mono"
+                className={clsx(
+                  "text-[10px] px-2 py-1 rounded-lg border flex items-center gap-1 transition font-mono",
+                  brokerStatus?.kiteConnected
+                    ? "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border-emerald-500/20"
+                    : "bg-orange-500/10 hover:bg-orange-500/20 text-orange-300 border-orange-500/20"
+                )}
+                title={brokerStatus?.kiteConnected ? "Zerodha Session Active — Click to Re-authenticate" : "Connect Zerodha Demat"}
               >
-                <span>Login</span>
+                <span>{brokerStatus?.kiteConnected ? "Active" : "Login"}</span>
                 <ExternalLink className="w-2.5 h-2.5" />
               </a>
             </div>
 
             {/* Upstox Pro */}
-            <div className="p-2 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-between">
+            <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/5 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="w-5 h-5 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center font-black text-[10px]">
                   U
                 </span>
                 <div className="flex flex-col">
                   <span className="text-xs font-semibold text-slate-200">Upstox Pro</span>
-                  <span className="text-[9px] text-emerald-400 font-medium">
-                    {brokerStatus.upstoxConnected ? "Feed Active" : "OAuth Ready"}
+                  <span className={clsx("text-[9px] font-medium flex items-center gap-1", brokerStatus?.upstoxConnected ? "text-emerald-400" : "text-amber-400")}>
+                    <span className={clsx("w-1.5 h-1.5 rounded-full", brokerStatus?.upstoxConnected ? "bg-emerald-400 animate-pulse" : "bg-amber-400")} />
+                    {brokerStatus?.upstoxConnected ? "Feed Active" : "OAuth Ready"}
                   </span>
                 </div>
               </div>
@@ -161,9 +185,15 @@ export function Sidebar() {
                 href="https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=61557114-951e-4b68-af88-e5121939f2e4&redirect_uri=http://127.0.0.1:3003/upstox/callback"
                 target="_blank"
                 rel="noreferrer"
-                className="text-[10px] px-2 py-1 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 rounded-lg border border-purple-500/20 flex items-center gap-1 transition font-mono"
+                className={clsx(
+                  "text-[10px] px-2 py-1 rounded-lg border flex items-center gap-1 transition font-mono",
+                  brokerStatus?.upstoxConnected
+                    ? "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border-emerald-500/20"
+                    : "bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border-purple-500/20"
+                )}
+                title={brokerStatus?.upstoxConnected ? "Upstox Feed Active — Click to Re-authenticate" : "Connect Upstox Demat"}
               >
-                <span>Login</span>
+                <span>{brokerStatus?.upstoxConnected ? "Active" : "Login"}</span>
                 <ExternalLink className="w-2.5 h-2.5" />
               </a>
             </div>
@@ -180,4 +210,4 @@ export function Sidebar() {
       </div>
     </aside>
   );
-}
+});

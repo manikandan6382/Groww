@@ -302,7 +302,7 @@ export function PortfolioHeroBento({
   const marginShare = totalNetWorth > 0 ? ((safeAvailableMargin / totalNetWorth) * 100).toFixed(1) : "0.0";
 
   return (
-    <div className="p-6 sm:p-8 rounded-[32px] bg-[#060a14] border border-white/[0.08] shadow-[0_24px_60px_rgba(0,0,0,0.7),inset_0_1px_0_rgba(255,255,255,0.14)] relative overflow-hidden flex flex-col justify-between space-y-6 hover:border-white/[0.12] transition-colors">
+    <div className="p-6 sm:p-8 rounded-[32px] bg-[var(--card)] backdrop-blur-3xl border border-[var(--line)] shadow-[0_24px_60px_rgba(0,0,0,0.7),inset_0_1px_0_rgba(255,255,255,0.12)] relative overflow-hidden flex flex-col justify-between space-y-6 hover:border-white/[0.18] transition-colors">
       {/* 🌌 Apple Spatial Ambient Spotlights */}
       <div className="absolute top-0 right-1/4 w-[480px] h-[280px] bg-cyan-500/[0.07] rounded-full blur-[100px] pointer-events-none -mt-24" />
       <div className="absolute bottom-0 left-10 w-[400px] h-[240px] bg-emerald-500/[0.06] rounded-full blur-[90px] pointer-events-none -mb-20" />
@@ -341,7 +341,7 @@ export function PortfolioHeroBento({
             </div>
             <div className="text-xs font-mono text-slate-400 flex items-center gap-1 bg-white/[0.03] px-3 py-1 rounded-full border border-white/10 self-start sm:self-auto shadow-sm">
               <Globe className="w-3 h-3 text-cyan-400" />
-              <span>≈ $${usdNetWorth} USD</span>
+              <span>≈ ${usdNetWorth} USD</span>
             </div>
           </div>
 
@@ -373,7 +373,7 @@ export function PortfolioHeroBento({
           <motion.div 
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="p-3 rounded-2xl bg-[#091122]/95 border border-cyan-500/40 backdrop-blur-2xl text-right self-start lg:self-auto shadow-2xl space-y-0.5 pointer-events-none"
+            className="p-3 rounded-2xl bg-[#121424]/95 border border-cyan-500/40 backdrop-blur-2xl text-right self-start lg:self-auto shadow-2xl space-y-0.5 pointer-events-none"
           >
             <span className="text-[10px] text-slate-400 block font-mono">
               {activeTf === "today" ? `Intraday Point #${hoverIndex + 1}` : `Timeline Point #${hoverIndex + 1}`}
@@ -387,7 +387,7 @@ export function PortfolioHeroBento({
 
       {/* 🌟 3. Dedicated Apple Glass Segmented Timeframe Switcher */}
       <div className="relative w-full">
-        <div className="grid grid-cols-6 gap-1 p-1 rounded-2xl bg-[#050811]/90 border border-white/[0.1] backdrop-blur-2xl shadow-inner w-full">
+        <div className="grid grid-cols-6 gap-1 p-1 rounded-2xl bg-[#050608]/90 border border-white/[0.06] backdrop-blur-2xl shadow-inner w-full">
           {TIMEFRAMES.map((tf) => {
             const isSelected = activeTf === tf.id;
             return (
@@ -428,7 +428,7 @@ export function PortfolioHeroBento({
             <linearGradient id="appleSpatialNavGradient" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#00d5ff" stopOpacity="0.32" />
               <stop offset="60%" stopColor="#00f5c4" stopOpacity="0.06" />
-              <stop offset="100%" stopColor="#060a14" stopOpacity="0.0" />
+              <stop offset="100%" stopColor="#060709" stopOpacity="0.0" />
             </linearGradient>
             <linearGradient id="appleNavStrokeGradient" x1="0" y1="0" x2="1" y2="0">
               <stop offset="0%" stopColor="#168fff" />
@@ -487,7 +487,7 @@ export function PortfolioHeroBento({
                   cy={y}
                   r={isHovered ? 6 : 2}
                   fill={isHovered ? "#00f5c4" : "#00d5ff"}
-                  stroke="#060a14"
+                  stroke="#060709"
                   strokeWidth={isHovered ? 2.5 : 1}
                   className="transition-all duration-150"
                 />

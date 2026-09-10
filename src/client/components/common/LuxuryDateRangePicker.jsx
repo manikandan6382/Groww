@@ -153,7 +153,7 @@ export function LuxuryDateRangePicker({
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 15 }}
           transition={{ type: "spring", stiffness: 350, damping: 28 }}
-          className="w-full max-w-md p-6 rounded-3xl bg-[#070e1c]/98 border border-cyan-500/30 shadow-[0_25px_60px_rgba(0,0,0,0.9),0_0_30px_rgba(6,182,212,0.15)] space-y-4 text-slate-100 backdrop-blur-2xl"
+          className="w-full max-w-md p-6 rounded-3xl bg-[#121424]/98 border border-white/10 shadow-[0_25px_60px_rgba(0,0,0,0.9),inset_0_1px_0_rgba(255,255,255,0.08)] space-y-4 text-slate-100 backdrop-blur-2xl"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Modal Header */}

@@ -22,7 +22,7 @@ export function SafetyGuardModal() {
           initial={{ opacity: 0, scale: 0.95, y: 15 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 15 }}
-          className="w-full max-w-lg p-6 rounded-3xl bg-[#060c18]/98 border border-cyan-500/30 shadow-2xl shadow-cyan-500/10 space-y-5 text-slate-100 backdrop-blur-2xl"
+          className="w-full max-w-lg p-6 rounded-3xl bg-[#121424]/98 border border-white/10 shadow-[0_25px_60px_rgba(0,0,0,0.9),inset_0_1px_0_rgba(255,255,255,0.08)] space-y-5 text-slate-100 backdrop-blur-2xl"
         >
           {/* Header */}
           <div className="flex items-center justify-between pb-3 border-b border-white/10">

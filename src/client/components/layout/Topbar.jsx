@@ -108,12 +108,12 @@ export function Topbar() {
   };
 
   return (
-    <header className="sticky top-0 z-40 bg-[#060913]/75 backdrop-blur-3xl border-b border-white/[0.08] px-4 sm:px-6 h-16 flex items-center justify-between gap-4 shadow-[0_16px_40px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.1)] transition-all">
+    <header className="sticky top-0 z-40 bg-[var(--sidebar)] backdrop-blur-3xl border-b border-[var(--line)] px-4 sm:px-6 h-16 flex items-center justify-between gap-4 shadow-[0_16px_40px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.08)] transition-all">
       {/* 🌟 Zone 1: Apple Luxury Hologram Brand Emblem (Left) */}
       <div className="flex-shrink-0 flex items-center min-w-0">
         <div className="flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-white/[0.03] border border-white/[0.08] hover:border-cyan-500/30 transition-all duration-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.15)] group cursor-default flex-shrink-0">
           <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-cyan-500 via-sky-400 to-indigo-600 p-0.5 flex items-center justify-center shadow-[0_0_15px_rgba(6,182,212,0.4)] group-hover:scale-105 transition-transform flex-shrink-0">
-            <div className="w-full h-full bg-[#070c18] rounded-full flex items-center justify-center">
+            <div className="w-full h-full bg-[var(--bg)] rounded-full flex items-center justify-center">
               <Zap className="w-3.5 h-3.5 text-cyan-400 fill-cyan-400/20" />
             </div>
           </div>
@@ -149,7 +149,7 @@ export function Topbar() {
               ⌘K
             </kbd>
           </button>
-          <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 px-2.5 py-1 bg-[#08101e]/95 border border-white/10 rounded-xl text-[10px] font-mono text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-[60] shadow-xl backdrop-blur-md">
+          <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 px-2.5 py-1 bg-[#121424]/95 border border-white/10 rounded-xl text-[10px] font-mono text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-[60] shadow-xl backdrop-blur-md">
             Spotlight Command Palette (⌘K)
           </div>
         </div>
@@ -167,7 +167,7 @@ export function Topbar() {
             <BookMarked className="w-3.5 h-3.5" />
             <span className="whitespace-nowrap">60s Guide</span>
           </button>
-          <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 px-2.5 py-1 bg-[#08101e]/95 border border-white/10 rounded-xl text-[10px] font-mono text-amber-300 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-[60] shadow-xl backdrop-blur-md">
+          <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 px-2.5 py-1 bg-[#121424]/95 border border-white/10 rounded-xl text-[10px] font-mono text-amber-300 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-[60] shadow-xl backdrop-blur-md">
             Learn Trading in 60s
           </div>
         </div>
@@ -188,7 +188,7 @@ export function Topbar() {
             >
               {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
             </button>
-            <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 px-2.5 py-1 bg-[#08101e]/95 border border-white/10 rounded-xl text-[10px] font-mono text-cyan-300 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-[60] shadow-xl backdrop-blur-md">
+            <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 px-2.5 py-1 bg-[#121424]/95 border border-white/10 rounded-xl text-[10px] font-mono text-cyan-300 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-[60] shadow-xl backdrop-blur-md">
               {isMuted ? "Sound Muted" : "Haptic Sound ON"}
             </div>
           </div>
@@ -210,49 +210,85 @@ export function Topbar() {
             >
               {isPrivacyMode ? <EyeOff className="w-3.5 h-3.5 text-indigo-300" /> : <Eye className="w-3.5 h-3.5" />}
             </button>
-            <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 px-2.5 py-1 bg-[#08101e]/95 border border-white/10 rounded-xl text-[10px] font-mono text-indigo-300 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-[60] shadow-xl backdrop-blur-md">
+            <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 px-2.5 py-1 bg-[#121424]/95 border border-white/10 rounded-xl text-[10px] font-mono text-indigo-300 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-[60] shadow-xl backdrop-blur-md">
               {isPrivacyMode ? "Streamer Mode: ON" : "Privacy Mode (Ctrl+H)"}
             </div>
           </div>
 
-          {/* Theme Palette Switcher */}
+          {/* Ambient Gradient Vibe Switcher */}
           <div className="relative flex items-center">
-            <div className="flex items-center gap-1 px-1">
-              <button
-                type="button"
-                onClick={() => {
-                  soundEngine.playTabSwitchTone();
-                  setTheme("blue");
-                }}
-                className={clsx("w-3.5 h-3.5 rounded-full transition-all cursor-pointer", activeTheme === "blue" ? "bg-sky-400 ring-2 ring-sky-300 shadow-md scale-110" : "bg-sky-500/40 hover:bg-sky-500/70")}
-                title="Cyber Blue"
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  soundEngine.playTabSwitchTone();
-                  setTheme("emerald");
-                }}
-                className={clsx("w-3.5 h-3.5 rounded-full transition-all cursor-pointer", activeTheme === "emerald" ? "bg-emerald-400 ring-2 ring-emerald-300 shadow-md scale-110" : "bg-emerald-500/40 hover:bg-emerald-500/70")}
-                title="Neon Emerald"
-              />
+            <div className="flex items-center gap-1 p-0.5 bg-white/[0.03] border border-white/10 rounded-full backdrop-blur-xl shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+              {/* Violet Vibe */}
               <button
                 type="button"
                 onClick={() => {
                   soundEngine.playTabSwitchTone();
                   setTheme("violet");
                 }}
-                className={clsx("w-3.5 h-3.5 rounded-full transition-all cursor-pointer", activeTheme === "violet" ? "bg-purple-400 ring-2 ring-purple-300 shadow-md scale-110" : "bg-purple-500/40 hover:bg-purple-500/70")}
-                title="Royal Violet"
-              />
+                className={clsx(
+                  "flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all text-[11px] font-bold cursor-pointer",
+                  activeTheme === "violet" 
+                    ? "bg-gradient-to-r from-indigo-500/30 to-purple-500/30 text-purple-200 border border-purple-400/40 shadow-[0_0_15px_rgba(168,85,247,0.35)]" 
+                    : "text-slate-400 hover:text-purple-300 hover:bg-white/5"
+                )}
+                title="Cosmic Violet Gradient Vibe"
+              >
+                <span className="w-2.5 h-2.5 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 shadow-sm" />
+                <span className="hidden sm:inline">Violet</span>
+              </button>
+
+              {/* Blue Vibe */}
+              <button
+                type="button"
+                onClick={() => {
+                  soundEngine.playTabSwitchTone();
+                  setTheme("blue");
+                }}
+                className={clsx(
+                  "flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all text-[11px] font-bold cursor-pointer",
+                  activeTheme === "blue" 
+                    ? "bg-gradient-to-r from-blue-500/30 to-cyan-500/30 text-cyan-200 border border-cyan-400/40 shadow-[0_0_15px_rgba(56,189,248,0.35)]" 
+                    : "text-slate-400 hover:text-cyan-300 hover:bg-white/5"
+                )}
+                title="Oceanic Sapphire Blue Gradient Vibe"
+              >
+                <span className="w-2.5 h-2.5 rounded-full bg-gradient-to-tr from-blue-600 to-cyan-400 shadow-sm" />
+                <span className="hidden sm:inline">Blue</span>
+              </button>
+
+              {/* Emerald Vibe */}
+              <button
+                type="button"
+                onClick={() => {
+                  soundEngine.playTabSwitchTone();
+                  setTheme("emerald");
+                }}
+                className={clsx(
+                  "flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-all text-[11px] font-bold cursor-pointer",
+                  activeTheme === "emerald" 
+                    ? "bg-gradient-to-r from-emerald-500/30 to-teal-500/30 text-emerald-200 border border-emerald-400/40 shadow-[0_0_15px_rgba(16,185,129,0.35)]" 
+                    : "text-slate-400 hover:text-emerald-300 hover:bg-white/5"
+                )}
+                title="Aurora Emerald Green Gradient Vibe"
+              >
+                <span className="w-2.5 h-2.5 rounded-full bg-gradient-to-tr from-emerald-500 to-teal-400 shadow-sm" />
+                <span className="hidden sm:inline">Green</span>
+              </button>
+
+              {/* Custom Color Palette Opener */}
               <button
                 type="button"
                 onClick={() => {
                   soundEngine.playTabSwitchTone();
                   setThemePanelOpen(!isThemePanelOpen);
                 }}
-                className={clsx("w-3.5 h-3.5 rounded-full flex items-center justify-center text-[8px] transition-all cursor-pointer", activeTheme === "custom" ? "bg-cyan-400 text-black font-bold ring-2 ring-cyan-300 shadow-md scale-110" : "bg-white/15 text-slate-300 hover:bg-white/30")}
-                title="Custom Theme Palette"
+                className={clsx(
+                  "w-5 h-5 rounded-full flex items-center justify-center text-[10px] transition-all cursor-pointer",
+                  activeTheme === "custom" 
+                    ? "bg-cyan-400 text-black font-bold ring-2 ring-cyan-300 shadow-md" 
+                    : "bg-white/10 text-slate-300 hover:bg-white/20"
+                )}
+                title="Custom Color Studio"
               >
                 ✦
               </button>
@@ -260,7 +296,7 @@ export function Topbar() {
 
             {/* Custom Theme Color Picker Popover */}
             {isThemePanelOpen && (
-              <div className="absolute right-0 top-full mt-2 w-56 p-3.5 rounded-2xl bg-[#08101e]/95 border border-white/15 shadow-[0_20px_50px_rgba(0,0,0,0.6)] backdrop-blur-2xl z-[60] text-xs space-y-2.5">
+              <div className="absolute right-0 top-full mt-2 w-56 p-3.5 rounded-2xl bg-[#121424]/98 border border-white/15 shadow-[0_20px_50px_rgba(0,0,0,0.7)] backdrop-blur-2xl z-[60] text-xs space-y-2.5">
                 <div className="font-extrabold text-white mb-1 flex items-center justify-between">
                   <span>Custom Glass Palette</span>
                   <Palette className="w-3.5 h-3.5 text-cyan-400" />
@@ -309,7 +345,7 @@ export function Topbar() {
 
         {/* User Profile Avatar with Luxury Obsidian Rim */}
         <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-cyan-500 via-sky-400 to-indigo-600 p-0.5 flex items-center justify-center shadow-md cursor-pointer hover:scale-105 transition-transform flex-shrink-0" title="Manikandan (Pro Trader Desk)">
-          <div className="w-full h-full bg-[#070b14] rounded-full flex items-center justify-center font-black text-white text-xs">
+          <div className="w-full h-full bg-[var(--bg)] rounded-full flex items-center justify-center font-black text-white text-xs">
             M
           </div>
         </div>
@@ -318,7 +354,7 @@ export function Topbar() {
       {/* 🚀 Broker Connection & Daily Token Manager Modal */}
       {showBrokerModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-2xl animate-in fade-in duration-200">
-          <div className="w-full max-w-md p-6 rounded-3xl bg-[#08101e]/95 border border-cyan-500/30 shadow-[0_20px_50px_rgba(0,0,0,0.7)] space-y-4 relative text-left">
+          <div className="w-full max-w-md p-6 rounded-3xl bg-[#121424]/95 border border-cyan-500/30 shadow-[0_20px_50px_rgba(0,0,0,0.7)] space-y-4 relative text-left">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 shadow-sm">
@@ -352,9 +388,9 @@ export function Topbar() {
               </div>
               <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/5 space-y-1">
                 <span className="text-[10px] text-slate-400 block font-bold">ZERODHA KITE</span>
-                <span className="text-emerald-400 font-bold flex items-center gap-1.5 text-xs">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                  Kite Ready
+                <span className={clsx("font-bold flex items-center gap-1.5 text-xs", brokerStatus?.kiteConnected ? "text-emerald-400" : "text-amber-400")}>
+                  <span className={clsx("w-1.5 h-1.5 rounded-full", brokerStatus?.kiteConnected ? "bg-emerald-400 animate-ping" : "bg-amber-400")} />
+                  {brokerStatus?.kiteConnected ? (brokerStatus.kiteUserName || "Live Connected") : "Expired / Login"}
                 </span>
               </div>
             </div>

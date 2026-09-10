@@ -29,6 +29,15 @@ export function createTrade(input) {
     throw error;
   }
 
+  // Idempotency check before BEGIN - returns existing trade immediately without duplicate inserts
+  if (trade.idempotencyKey) {
+    const existing = db.prepare("SELECT id FROM trades WHERE idempotency_key = ?").get(trade.idempotencyKey);
+    if (existing) {
+      const existingTrade = getTradeById(existing.id);
+      return { ...existingTrade, deduplicated: true };
+    }
+  }
+
   db.exec("BEGIN;");
   try {
     const accountId = resolveAccountId(db, trade);
@@ -99,6 +108,7 @@ export function listTrades({ start, end, tradeMode, status, accountId } = {}) {
         t.close_reason AS closeReason,
         t.last_mark_price AS lastMarkPrice,
         t.last_marked_at AS lastMarkedAt,
+        t.idempotency_key AS idempotencyKey,
         t.created_at AS createdAt,
         i.symbol,
         i.display_name AS displayName,
@@ -210,6 +220,11 @@ function upsertInstrument(db, trade) {
 }
 
 function insertTrade(db, trade) {
+  if (trade.idempotencyKey) {
+    const existing = db.prepare("SELECT id FROM trades WHERE idempotency_key = ?").get(trade.idempotencyKey);
+    if (existing) return Number(existing.id);
+  }
+
   const result = db
     .prepare(`
       INSERT INTO trades(
@@ -217,9 +232,9 @@ function insertTrade(db, trade) {
         entry_datetime, exit_datetime, entry_price, exit_price, quantity,
         capital_used, position_size, target_price, stop_loss,
         risk_amount, risk_percentage, expected_reward, risk_reward_ratio,
-        realized_pnl, charges, net_pnl
+        realized_pnl, charges, net_pnl, idempotency_key
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     .run(
       trade.accountId,
@@ -244,6 +259,7 @@ function insertTrade(db, trade) {
       trade.realizedPnl,
       trade.charges,
       trade.netPnl,
+      trade.idempotencyKey || null,
     );
   return Number(result.lastInsertRowid);
 }

@@ -229,13 +229,11 @@ export function buildDynamicSessionDataset(allTrades = [], range = "week", custo
   };
 }
 
-export function PerformanceStudioSection() {
-  const { 
-    closedAlerts, 
-    paperPnlRange, 
-    setPaperPnlRange,
-    logJournalTrade
-  } = useTradingStore();
+export const PerformanceStudioSection = React.memo(function PerformanceStudioSection() {
+  const closedAlerts = useTradingStore((s) => s.closedAlerts);
+  const paperPnlRange = useTradingStore((s) => s.paperPnlRange);
+  const setPaperPnlRange = useTradingStore((s) => s.setPaperPnlRange);
+  const logJournalTrade = useTradingStore((s) => s.logJournalTrade);
 
   const todayIso = new Date().toISOString().split("T")[0];
   const [isCalendarOpen, setCalendarOpen] = useState(false);
@@ -406,7 +404,11 @@ export function PerformanceStudioSection() {
       ? (totalLossPnl === 0 ? "4.00" : "0.00") 
       : "0.00";
   const isPureWins = totalWinPnl > 0 && totalLossPnl === 0;
-  const planFollowedCount = (closedAlerts || []).filter((t) => t.followedPlan !== false && t.mistakeTags !== "Chased Extended Wick" && t.mistakeTags !== "Moved Stop Loss").length;
+  const planFollowedCount = (closedAlerts || []).filter((t) => {
+    if (t.followedPlan === false) return false;
+    const m = Array.isArray(t.mistakeTags) ? t.mistakeTags.join(" ") : String(t.mistakeTags || "");
+    return !m.includes("Chased Extended Wick") && !m.includes("Moved Stop Loss");
+  }).length;
   const gateDisciplinePct = (closedAlerts || []).length > 0 
     ? Math.round((planFollowedCount / closedAlerts.length) * 100) 
     : 100;
@@ -433,7 +435,7 @@ export function PerformanceStudioSection() {
   const worstAlert = activeLossTrades.length > 0 ? [...activeLossTrades].sort((a, b) => a.netPnl - b.netPnl)[0] : null;
 
   return (
-    <div className="p-5 sm:p-6 rounded-3xl bg-gradient-to-b from-[#0e1628]/95 via-[#090e1c]/95 to-[#060a14]/95 backdrop-blur-2xl border border-white/[0.08] shadow-[0_16px_40px_rgba(0,0,0,0.45),inset_0_1px_0_rgba(255,255,255,0.08)] space-y-6">
+    <div className="p-5 sm:p-6 rounded-3xl bg-[#0d0f14]/95 backdrop-blur-2xl border border-white/[0.08] shadow-[0_20px_50px_rgba(0,0,0,0.65),inset_0_1px_0_rgba(255,255,255,0.08)] space-y-6">
       {/* Master Header & Telemetry */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-white/5">
         <div>
@@ -592,7 +594,7 @@ export function PerformanceStudioSection() {
                     "p-3.5 rounded-2xl border transition-all duration-200 cursor-pointer flex flex-col justify-between space-y-2 relative overflow-hidden select-none",
                     isSelected
                       ? "bg-cyan-950/40 border-cyan-400/80 shadow-xl shadow-cyan-500/20 ring-1 ring-cyan-400/50"
-                      : "bg-[#060e1d]/70 hover:bg-[#081226] border-white/10 hover:border-white/20"
+                      : "bg-[#0d0f14]/70 hover:bg-[#121424] border-white/10 hover:border-white/20"
                   )}
                 >
                   {/* Top Row: Day Name & Date */}
@@ -659,7 +661,7 @@ export function PerformanceStudioSection() {
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.25, ease: "easeOut" }}
-            className="p-5 rounded-3xl bg-[#060e1d]/90 border border-cyan-500/30 shadow-2xl backdrop-blur-2xl space-y-4 w-full"
+            className="p-5 rounded-3xl bg-[#0d0f14]/95 border border-white/10 shadow-2xl backdrop-blur-2xl space-y-4 w-full"
           >
             {/* Drawer Header */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-white/10 pb-3 gap-2">
@@ -773,7 +775,7 @@ export function PerformanceStudioSection() {
               className="p-3.5 rounded-2xl bg-gradient-to-b from-white/[0.04] to-white/[0.01] border border-white/10 shadow-[0_8px_20px_rgba(0,0,0,0.3),inset_0_1px_0_rgba(255,255,255,0.06)] text-center relative group/matrix hover:border-cyan-500/50 transition-colors duration-300 cursor-help"
             >
               {/* Tooltip */}
-              <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 p-3 rounded-2xl bg-[#060e1d]/95 border border-cyan-500/30 shadow-2xl backdrop-blur-xl opacity-0 group-hover/matrix:opacity-100 transition-all duration-200 pointer-events-none z-30 scale-95 group-hover/matrix:scale-100 transform space-y-1 text-left">
+              <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 p-3 rounded-2xl bg-[#121424]/95 border border-white/10 shadow-2xl backdrop-blur-xl opacity-0 group-hover/matrix:opacity-100 transition-all duration-200 pointer-events-none z-30 scale-95 group-hover/matrix:scale-100 transform space-y-1 text-left">
                 <div className="flex items-center gap-1 text-cyan-300 font-bold text-xs pb-1 border-b border-white/10 whitespace-nowrap">
                   <Info className="w-3.5 h-3.5" />
                   <span>Win Rate ({matrixWinRate}%)</span>
@@ -781,7 +783,7 @@ export function PerformanceStudioSection() {
                 <p className="text-[11px] text-slate-300 leading-relaxed">
                   Formula: <strong>(Targets Won ÷ Total Setups) × 100</strong>. At a 1:{avgRRValue} R:R, any win rate above 35% generates strong compounding profit.
                 </p>
-                <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-[#060e1d] border-r border-b border-cyan-500/30 rotate-45" />
+                <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-[#121424] border-r border-b border-white/10 rotate-45" />
               </div>
 
               <span className="text-[10px] text-slate-400 block flex items-center justify-center gap-1 font-semibold uppercase tracking-wider">
@@ -798,7 +800,7 @@ export function PerformanceStudioSection() {
               className="p-3.5 rounded-2xl bg-gradient-to-b from-white/[0.04] to-white/[0.01] border border-white/10 shadow-[0_8px_20px_rgba(0,0,0,0.3),inset_0_1px_0_rgba(255,255,255,0.06)] text-center relative group/matrix hover:border-emerald-500/50 transition-colors duration-300 cursor-help"
             >
               {/* Tooltip */}
-              <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 p-3 rounded-2xl bg-[#060e1d]/95 border border-emerald-500/30 shadow-2xl backdrop-blur-xl opacity-0 group-hover/matrix:opacity-100 transition-all duration-200 pointer-events-none z-30 scale-95 group-hover/matrix:scale-100 transform space-y-1 text-left">
+              <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 p-3 rounded-2xl bg-[#121424]/95 border border-white/10 shadow-2xl backdrop-blur-xl opacity-0 group-hover/matrix:opacity-100 transition-all duration-200 pointer-events-none z-30 scale-95 group-hover/matrix:scale-100 transform space-y-1 text-left">
                 <div className="flex items-center gap-1 text-emerald-300 font-bold text-xs pb-1 border-b border-white/10 whitespace-nowrap">
                   <Info className="w-3.5 h-3.5" />
                   <span>Profit Factor ({isMatrixPureWins ? "100% Win Rate" : `${matrixProfitFactor}x`})</span>
@@ -806,7 +808,7 @@ export function PerformanceStudioSection() {
                 <p className="text-[11px] text-slate-300 leading-relaxed">
                   Formula: <strong>Gross Wins ÷ Gross Losses</strong>. Measures expectancy. Any factor &gt; 2.0x represents an institutional-grade trading edge.
                 </p>
-                <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-[#060e1d] border-r border-b border-emerald-500/30 rotate-45" />
+                <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-[#121424] border-r border-b border-white/10 rotate-45" />
               </div>
 
               <span className="text-[10px] text-slate-400 block flex items-center justify-center gap-1 font-semibold uppercase tracking-wider">
@@ -825,7 +827,7 @@ export function PerformanceStudioSection() {
               className="p-3.5 rounded-2xl bg-gradient-to-b from-white/[0.04] to-white/[0.01] border border-white/10 shadow-[0_8px_20px_rgba(0,0,0,0.3),inset_0_1px_0_rgba(255,255,255,0.06)] text-center relative group/matrix hover:border-cyan-500/50 transition-colors duration-300 cursor-help"
             >
               {/* Tooltip */}
-              <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 p-3 rounded-2xl bg-[#060e1d]/95 border border-cyan-500/30 shadow-2xl backdrop-blur-xl opacity-0 group-hover/matrix:opacity-100 transition-all duration-200 pointer-events-none z-30 scale-95 group-hover/matrix:scale-100 transform space-y-1 text-left">
+              <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 p-3 rounded-2xl bg-[#121424]/95 border border-white/10 shadow-2xl backdrop-blur-xl opacity-0 group-hover/matrix:opacity-100 transition-all duration-200 pointer-events-none z-30 scale-95 group-hover/matrix:scale-100 transform space-y-1 text-left">
                 <div className="flex items-center gap-1 text-cyan-300 font-bold text-xs pb-1 border-b border-white/10 whitespace-nowrap">
                   <Info className="w-3.5 h-3.5" />
                   <span>Risk-to-Reward (1:{avgRRValue})</span>
@@ -833,7 +835,7 @@ export function PerformanceStudioSection() {
                 <p className="text-[11px] text-slate-300 leading-relaxed">
                   Formula: <strong>Target Points ÷ Stop Loss Points</strong>. On average, you capture ₹{avgRRValue} for every ₹1.00 risked across {calculatedRRs.length > 0 ? `${calculatedRRs.length} logged setups` : "simulated setups"}.
                 </p>
-                <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-[#060e1d] border-r border-b border-cyan-500/30 rotate-45" />
+                <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-[#121424] border-r border-b border-white/10 rotate-45" />
               </div>
 
               <span className="text-[10px] text-slate-400 block flex items-center justify-center gap-1 font-semibold uppercase tracking-wider">
@@ -850,7 +852,7 @@ export function PerformanceStudioSection() {
               className="p-3.5 rounded-2xl bg-gradient-to-b from-white/[0.04] to-white/[0.01] border border-white/10 shadow-[0_8px_20px_rgba(0,0,0,0.3),inset_0_1px_0_rgba(255,255,255,0.06)] text-center relative group/matrix hover:border-amber-500/50 transition-colors duration-300 cursor-help"
             >
               {/* Tooltip */}
-              <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 p-3 rounded-2xl bg-[#060e1d]/95 border border-amber-500/30 shadow-2xl backdrop-blur-xl opacity-0 group-hover/matrix:opacity-100 transition-all duration-200 pointer-events-none z-30 scale-95 group-hover/matrix:scale-100 transform space-y-1 text-left">
+              <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 p-3 rounded-2xl bg-[#121424]/95 border border-white/10 shadow-2xl backdrop-blur-xl opacity-0 group-hover/matrix:opacity-100 transition-all duration-200 pointer-events-none z-30 scale-95 group-hover/matrix:scale-100 transform space-y-1 text-left">
                 <div className="flex items-center gap-1 text-amber-300 font-bold text-xs pb-1 border-b border-white/10 whitespace-nowrap">
                   <Flame className="w-3.5 h-3.5 text-amber-400" />
                   <span>Best Streak ({matrixBestStreak} {matrixBestStreak === 1 ? "Win" : "Wins"})</span>
@@ -860,7 +862,7 @@ export function PerformanceStudioSection() {
                     ? `Longest run: ${matrixBestStreak} consecutive winning trades without triggering a single stop-loss.`
                     : "Consecutive profitable executions without triggering a single stop-loss."}
                 </p>
-                <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-[#060e1d] border-r border-b border-amber-500/30 rotate-45" />
+                <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-[#121424] border-r border-b border-white/10 rotate-45" />
               </div>
 
               <span className="text-[10px] text-slate-400 block flex items-center justify-center gap-1 font-semibold uppercase tracking-wider">
@@ -1193,7 +1195,7 @@ export function PerformanceStudioSection() {
           {/* Step 1: Sample Size with Hover Tooltip */}
           <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/5 space-y-2 relative group/gate hover:border-cyan-500/40 transition cursor-help">
             {/* Tooltip */}
-            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 p-3 rounded-2xl bg-[#060e1d]/95 border border-cyan-500/30 shadow-2xl backdrop-blur-xl opacity-0 group-hover/gate:opacity-100 transition-all duration-200 pointer-events-none z-30 scale-95 group-hover/gate:scale-100 transform space-y-1.5">
+            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 p-3 rounded-2xl bg-[#121424]/95 border border-cyan-500/30 shadow-2xl backdrop-blur-xl opacity-0 group-hover/gate:opacity-100 transition-all duration-200 pointer-events-none z-30 scale-95 group-hover/gate:scale-100 transform space-y-1.5">
               <div className="flex items-center gap-1.5 text-cyan-300 font-bold text-xs pb-1 border-b border-white/10">
                 <Info className="w-3.5 h-3.5" />
                 <span>Why 30 Trades?</span>
@@ -1204,7 +1206,7 @@ export function PerformanceStudioSection() {
               <div className="text-[10px] font-mono text-cyan-400 pt-0.5">
                 {30 - practiceCompleted} more trades needed for graduation.
               </div>
-              <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-[#060e1d] border-r border-b border-cyan-500/30 rotate-45" />
+              <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-[#121424] border-r border-b border-cyan-500/30 rotate-45" />
             </div>
 
             <div className="flex items-center justify-between">
@@ -1229,7 +1231,7 @@ export function PerformanceStudioSection() {
           {/* Step 2: Profit Factor with Hover Tooltip */}
           <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/5 space-y-2 relative group/gate hover:border-emerald-500/40 transition cursor-help">
             {/* Tooltip */}
-            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 p-3 rounded-2xl bg-[#060e1d]/95 border border-emerald-500/30 shadow-2xl backdrop-blur-xl opacity-0 group-hover/gate:opacity-100 transition-all duration-200 pointer-events-none z-30 scale-95 group-hover/gate:scale-100 transform space-y-1.5">
+            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 p-3 rounded-2xl bg-[#121424]/95 border border-emerald-500/30 shadow-2xl backdrop-blur-xl opacity-0 group-hover/gate:opacity-100 transition-all duration-200 pointer-events-none z-30 scale-95 group-hover/gate:scale-100 transform space-y-1.5">
               <div className="flex items-center gap-1.5 text-emerald-300 font-bold text-xs pb-1 border-b border-white/10">
                 <Info className="w-3.5 h-3.5" />
                 <span>Profit Factor ≥ 1.5 Target</span>
@@ -1240,7 +1242,7 @@ export function PerformanceStudioSection() {
               <div className="text-[10px] font-mono text-emerald-400 pt-0.5">
                 Current status: Strong positive expectancy.
               </div>
-              <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-[#060e1d] border-r border-b border-emerald-500/30 rotate-45" />
+              <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-[#121424] border-r border-b border-emerald-500/30 rotate-45" />
             </div>
 
             <div className="flex items-center justify-between">
@@ -1270,7 +1272,7 @@ export function PerformanceStudioSection() {
           {/* Step 3: Stop Loss Discipline with Hover Tooltip */}
           <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/5 space-y-2 relative group/gate hover:border-emerald-500/40 transition cursor-help">
             {/* Tooltip */}
-            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 p-3 rounded-2xl bg-[#060e1d]/95 border border-emerald-500/30 shadow-2xl backdrop-blur-xl opacity-0 group-hover/gate:opacity-100 transition-all duration-200 pointer-events-none z-30 scale-95 group-hover/gate:scale-100 transform space-y-1.5">
+            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-64 p-3 rounded-2xl bg-[#121424]/95 border border-emerald-500/30 shadow-2xl backdrop-blur-xl opacity-0 group-hover/gate:opacity-100 transition-all duration-200 pointer-events-none z-30 scale-95 group-hover/gate:scale-100 transform space-y-1.5">
               <div className="flex items-center gap-1.5 text-emerald-300 font-bold text-xs pb-1 border-b border-white/10">
                 <Info className="w-3.5 h-3.5" />
                 <span>Zero Stop-Loss Overrides</span>
@@ -1281,7 +1283,7 @@ export function PerformanceStudioSection() {
               <div className="text-[10px] font-mono text-emerald-400 pt-0.5">
                 Current status: {gateDisciplinePct}% plan adherence rate.
               </div>
-              <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-[#060e1d] border-r border-b border-emerald-500/30 rotate-45" />
+              <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-[#121424] border-r border-b border-emerald-500/30 rotate-45" />
             </div>
 
             <div className="flex items-center justify-between">
@@ -1329,4 +1331,4 @@ export function PerformanceStudioSection() {
       />
     </div>
   );
-}
+});

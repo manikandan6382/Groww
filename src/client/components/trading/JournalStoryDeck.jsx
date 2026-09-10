@@ -70,7 +70,10 @@ export function evaluateTradeIntegrity(trade) {
   }
 
   // 3. Execution Discipline & Wick Chasing Audit
-  const isChased = trade.mistakeTags?.toLowerCase().includes("chase") || trade.mistakeTags?.toLowerCase().includes("fomo");
+  const mistakeStr = Array.isArray(trade.mistakeTags) 
+    ? trade.mistakeTags.join(" ").toLowerCase() 
+    : String(trade.mistakeTags || "").toLowerCase();
+  const isChased = mistakeStr.includes("chase") || mistakeStr.includes("fomo");
   if (!isChased && trade.followedPlan !== false) {
     passedRules.push("Entry Triggered on Retest Without Chasing Wicks");
   } else {
@@ -199,7 +202,7 @@ export function JournalStoryDeck() {
     const text = `📊 **TRADE AUTOPSY: ${trade.symbol}** (${trade.direction || "LONG"})\n` +
       `• **Outcome**: ${isWin ? "🟢 TARGET HIT" : "🛑 STOP LOSS"} (Net: ${trade.netPnl >= 0 ? "+" : ""}₹${trade.netPnl?.toFixed(2)})\n` +
       `• **Entry / Exit**: ₹${trade.entryPrice} → ₹${trade.exitPrice} (Target: ₹${trade.targetPrice} | SL: ₹${trade.stopLoss})\n` +
-      `• **Strategy**: ${trade.strategyTags || trade.strategyTag || "Delta Momentum"}\n` +
+      `• **Strategy**: ${Array.isArray(trade.strategyTags) ? (trade.strategyTags.join(", ") || trade.strategyTag || "Delta Momentum") : (trade.strategyTags || trade.strategyTag || "Delta Momentum")}\n` +
       `• **Catalyst**: ${trade.catalyst || "Technical VWAP structure breakout"}\n` +
       `• **Execution**: ${trade.executionDetails || "Market fill at planned entry"}\n` +
       `• **Mindset**: ${trade.mindsetEmotion || "Calm & Disciplined"}\n` +
@@ -273,7 +276,7 @@ export function JournalStoryDeck() {
         exch.toFixed(2),
         gst.toFixed(2),
         (t.netPnl !== undefined ? t.netPnl : net).toFixed(2),
-        `"${t.strategyTags || t.strategyTag || t.setupTag || "Quantitative Setup"}"`,
+        `"${(Array.isArray(t.strategyTags) ? t.strategyTags.join("; ") : String(t.strategyTags || t.strategyTag || t.setupTag || "Quantitative Setup")).replace(/"/g, '""')}"`,
         `${t.setupIntegrityScore || 90}%`,
         `"${(t.notes || t.executionDetails || "Executed on quantitative criteria").replace(/"/g, '""')}"`
       ];
@@ -331,8 +334,12 @@ export function JournalStoryDeck() {
 
   // 2. Outcome, Strategy & Search Filter
   const filteredTrades = dateFilteredTrades.filter((trade) => {
+    const rawStrat = Array.isArray(trade.strategyTags)
+      ? (trade.strategyTags[0] || trade.strategyTag || trade.entryReason || "")
+      : (trade.strategyTags || trade.strategyTag || trade.entryReason || "");
+    const tradeStrat = String(rawStrat || "").trim();
+
     if (selectedStrategyFilter) {
-      const tradeStrat = (trade.strategyTags || trade.strategyTag || trade.entryReason || "").trim();
       if (tradeStrat !== selectedStrategyFilter) return false;
     }
     if (journalFilter === "WIN" && !(trade.closeReason === "TARGET_HIT" || trade.netPnl > 0)) return false;
@@ -342,7 +349,7 @@ export function JournalStoryDeck() {
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       const matchSymbol = trade.symbol?.toLowerCase().includes(q);
-      const matchStrategy = (trade.strategyTags || trade.strategyTag)?.toLowerCase().includes(q);
+      const matchStrategy = tradeStrat.toLowerCase().includes(q);
       const matchLesson = trade.lessonsLearned?.toLowerCase().includes(q);
       const matchCatalyst = trade.catalyst?.toLowerCase().includes(q);
       if (!matchSymbol && !matchStrategy && !matchLesson && !matchCatalyst) return false;
@@ -716,10 +723,11 @@ export function JournalStoryDeck() {
           {filteredTrades.map((trade) => {
             const isGain = (trade.netPnl ?? 0) >= 0;
             const isExpanded = expandedTradeIds.has(trade.id);
-            const isCE = trade.optionType === "CALL" || trade.symbol.includes("CE");
+            const sym = String(trade.symbol || "");
+            const isCE = trade.optionType === "CALL" || sym.includes("CE");
             const entry = Number(trade.entryPrice || 0);
             const pts = Number(trade.exitPrice || 0) - entry;
-            const pnlPercent = entry > 0 ? (pts / entry) * 100 : 0;
+            const pnlPercent = entry > 0 && Number.isFinite(pts) ? (pts / entry) * 100 : 0;
             const audit = evaluateTradeIntegrity(trade);
 
             return (
@@ -731,8 +739,8 @@ export function JournalStoryDeck() {
                 className={clsx(
                   "p-5 sm:p-6 rounded-3xl border transition-all duration-300 relative overflow-hidden backdrop-blur-2xl space-y-4",
                   isGain 
-                    ? "bg-[#060e1d]/85 hover:bg-[#071228] border-emerald-500/20 hover:border-emerald-500/40 shadow-xl shadow-emerald-500/5" 
-                    : "bg-[#060e1d]/85 hover:bg-[#071228] border-rose-500/20 hover:border-rose-500/40 shadow-xl shadow-rose-500/5",
+                    ? "bg-[#0d0f14]/90 hover:bg-[#121424]/95 border-emerald-500/20 hover:border-emerald-500/40 shadow-xl shadow-emerald-500/5" 
+                    : "bg-[#0d0f14]/90 hover:bg-[#121424]/95 border-rose-500/20 hover:border-rose-500/40 shadow-xl shadow-rose-500/5",
                   isExpanded && "ring-1 ring-cyan-400/50 border-cyan-500/40 shadow-[0_0_25px_rgba(6,182,212,0.15)]"
                 )}
               >
@@ -752,7 +760,7 @@ export function JournalStoryDeck() {
                           {trade.symbol}
                         </strong>
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 font-sans shadow-sm">
-                          {trade.strategyTags || "Intraday Momentum"}
+                          {Array.isArray(trade.strategyTags) ? (trade.strategyTags[0] || trade.strategyTag || "Intraday Momentum") : (trade.strategyTags || trade.strategyTag || "Intraday Momentum")}
                         </span>
                       </div>
                       <div className="flex items-center gap-2 text-[10px] text-slate-400 font-mono mt-0.5">
@@ -900,7 +908,9 @@ export function JournalStoryDeck() {
                       <div className="flex items-center justify-between text-slate-300">
                         <span className="text-slate-400">Mistakes Avoided:</span>
                         <span className={clsx("font-mono text-[10px] font-bold", audit.isHighQualitySetup ? "text-emerald-400" : "text-amber-400")}>
-                          {trade.mistakeTags || "Zero Tilt / Slipped Stops"}
+                          {Array.isArray(trade.mistakeTags)
+                            ? (trade.mistakeTags.length > 0 ? trade.mistakeTags.join(", ") : "Zero Tilt / Slipped Stops")
+                            : (trade.mistakeTags && trade.mistakeTags !== "None" ? trade.mistakeTags : "Zero Tilt / Slipped Stops")}
                         </span>
                       </div>
                     </div>

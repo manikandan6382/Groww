@@ -1,0 +1,6 @@
+[     872ms] ReferenceError: Cannot access 'paperSse' before initialization
+    at connectPaperSse (http://127.0.0.1:3000/js/paper-lab.js?v=20260623-single-toast:1000:3)
+    at initPaperLab (http://127.0.0.1:3000/js/paper-lab.js?v=20260623-single-toast:69:3)
+    at http://127.0.0.1:3000/js/paper-lab.js?v=20260623-single-toast:36:1
+[    1132ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://127.0.0.1:3000/api/portfolio:0
+[   81333ms] [ERROR] Failed to load resource: the server responded with a status of 404 () @ https://cdn.corenexis.com/favicon.ico:0

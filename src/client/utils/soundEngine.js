@@ -147,6 +147,14 @@ class SoundEngine {
     const jitter = (Math.random() - 0.5) * 30;
     this._playTone({ type: "sine", freq: 650 + jitter, duration: 0.05, gain: 0.07 });
   }
+
+  /**
+   * Subtle Haptic Micro-Pip on Timeline Milestone Crossing (Entry / High / Low / Exit)
+   * 780 Hz with ultra-fast 35ms decay
+   */
+  playMilestoneTone() {
+    this._playTone({ type: "sine", freq: 780, duration: 0.035, gain: 0.06 });
+  }
 }
 
 export const soundEngine = new SoundEngine();

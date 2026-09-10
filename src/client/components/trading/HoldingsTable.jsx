@@ -147,7 +147,7 @@ export function HoldingsTable({ holdings = [] }) {
   };
 
   return (
-    <div className="p-6 sm:p-8 rounded-[32px] bg-[#070b14]/80 backdrop-blur-3xl border border-white/[0.08] shadow-[0_16px_40px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.18)] relative overflow-hidden space-y-6 hover:border-white/[0.12] transition-colors">
+    <div className="p-6 sm:p-8 rounded-[32px] bg-[var(--card)] backdrop-blur-3xl border border-[var(--line)] shadow-[0_16px_40px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.12)] relative overflow-hidden space-y-6 hover:border-white/[0.18] transition-colors">
       {/* 🌌 Apple Spatial Ambient Spotlight */}
       <div className="absolute top-0 left-1/4 w-[480px] h-[220px] bg-cyan-500/[0.06] rounded-full blur-[90px] pointer-events-none -mt-24" />
 

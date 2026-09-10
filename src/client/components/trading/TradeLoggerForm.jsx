@@ -1,8 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { useTradingStore } from "../../stores/useTradingStore";
 import { soundEngine } from "../../utils/soundEngine";
 import { calculateTradeDuration, getLocalDateKey } from "../../utils/dateUtils";
-import { PlusCircle, Calculator, Tag, Sparkles, ShieldCheck, AlertCircle, Info } from "lucide-react";
+import { PlusCircle, Calculator, Tag, Sparkles, ShieldCheck, AlertCircle, Info, DownloadCloud } from "lucide-react";
 import clsx from "clsx";
 
 export function TradeLoggerForm({ onLogged }) {
@@ -21,7 +21,13 @@ export function TradeLoggerForm({ onLogged }) {
   const [submitting, setSubmitting] = useState(false);
   const [overrideTiltBreaker, setOverrideTiltBreaker] = useState(false);
 
-  const { journalTrades, logJournalTrade } = useTradingStore();
+  const { journalTrades, logJournalTrade, closedAlerts } = useTradingStore();
+
+  // 1-Click Journal Bridge: Recent Settled Paper Trades
+  const recentSettledTrades = useMemo(() => {
+    const list = (closedAlerts && closedAlerts.length > 0) ? closedAlerts : (journalTrades || []);
+    return list.slice(0, 4);
+  }, [closedAlerts, journalTrades]);
 
   // 🛡️ Psychological Circuit Breaker & Consecutive Loss Check
   const recentTrades = (journalTrades || []).slice(0, 2);
@@ -55,6 +61,12 @@ export function TradeLoggerForm({ onLogged }) {
   const netTakeHomePnl = grossPnl - totalFriction;
   const isProfit = netTakeHomePnl >= 0;
 
+  // 🛡️ Micro-Scalp Friction vs. Expectancy Guard (Pivot 2)
+  const targetVal = Number(targetPrice || 0);
+  const targetPts = side === "BUY" ? (targetVal - entry) : (entry - targetVal);
+  const frictionPts = qty > 0 ? (totalFriction / qty) : 0;
+  const isHighFrictionDrag = targetVal > 0 && targetPts > 0 && targetPts < (frictionPts * 2.5);
+
   // 1-Click Story Preset Handlers
   const applyPreset = (tag, noteText, emotion, conf, mistake) => {
     setSetupTag(tag);
@@ -73,6 +85,35 @@ export function TradeLoggerForm({ onLogged }) {
     setTargetPrice(String(defaultTP));
     setQuantity(String(defaultQty));
     if (defaultTag) setSetupTag(defaultTag);
+  };
+
+  // 1-Click Import from Recent Settled Paper Trade
+  const importSettledTrade = (trade) => {
+    if (!trade) return;
+    const sym = trade.symbol || "";
+    setSymbol(sym);
+    setSide(trade.direction === "SHORT" || trade.transaction_type === "SELL" ? "SELL" : "BUY");
+    setEntryPrice(String(trade.entryPrice || trade.entry_price || "0"));
+    setExitPrice(String(trade.exitPrice || trade.exit_price || trade.lastMarkPrice || trade.entryPrice || "0"));
+    setStopLoss(String(trade.stopLoss || trade.stop_loss || trade.entryPrice || "0"));
+    setTargetPrice(String(trade.targetPrice || trade.target_price || trade.exitPrice || "0"));
+    const calculatedQty = (trade.quantity || 1) * (trade.lotSize || 25);
+    setQuantity(String(calculatedQty));
+    if (trade.strategyTag || trade.setupTag) {
+      setSetupTag(trade.strategyTag || trade.setupTag);
+    }
+    if (trade.mindsetEmotion) {
+      setMindsetEmotion(trade.mindsetEmotion);
+    }
+    if (trade.mistakeTags) {
+      setMistakeTag(trade.mistakeTags);
+    }
+    if (trade.confidenceScore) {
+      setConfidenceScore(trade.confidenceScore);
+    }
+    const net = trade.netPnl !== undefined ? trade.netPnl : 0;
+    setNotes(trade.lessonsLearned || trade.catalyst || trade.notes || `Settled ${sym} trade closed with ${net >= 0 ? "+" : ""}₹${Number(net).toFixed(2)} P&L.`);
+    soundEngine.playSuccessTone();
   };
 
   async function handleSubmit(e) {
@@ -194,6 +235,47 @@ export function TradeLoggerForm({ onLogged }) {
             />
             <span>I have completed my trade autopsy and am calm, centered &amp; following my written plan.</span>
           </label>
+        </div>
+      )}
+
+      {/* 🚀 1-Click Import Settled Paper Trade Bridge */}
+      {recentSettledTrades.length > 0 && (
+        <div className="p-3 rounded-2xl bg-gradient-to-r from-emerald-500/[0.08] via-white/[0.02] to-transparent border border-emerald-500/20 space-y-2">
+          <div className="flex items-center justify-between text-[11px]">
+            <span className="font-bold text-emerald-300 flex items-center gap-1.5">
+              <DownloadCloud className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Import Recent Settled Paper Trade (1-Click Journal Bridge):</span>
+            </span>
+            <span className="text-[10px] text-slate-400 font-mono">Pulls real entry, exit, stop-loss, and lot sizes</span>
+          </div>
+
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs flex-nowrap scrollbar-none">
+            {recentSettledTrades.map((t) => {
+              const isProfit = Number(t.netPnl || 0) >= 0;
+              const formattedPnl = `${isProfit ? "+" : ""}₹${Number(t.netPnl || 0).toFixed(0)}`;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => importSettledTrade(t)}
+                  title={`Import ${t.symbol} (Entry: ₹${t.entryPrice}, Exit: ₹${t.exitPrice || t.lastMarkPrice})`}
+                  className={clsx(
+                    "px-2.5 py-1.5 rounded-xl border text-[11px] font-mono font-bold whitespace-nowrap transition flex items-center gap-2 cursor-pointer shadow-sm active:scale-95 group",
+                    isProfit 
+                      ? "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border-emerald-500/30" 
+                      : "bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border-rose-500/30"
+                  )}
+                >
+                  <span className="text-white group-hover:text-cyan-300 transition-colors">{t.symbol}</span>
+                  <span className="text-slate-500">|</span>
+                  <span className={isProfit ? "text-emerald-400" : "text-rose-400"}>{formattedPnl}</span>
+                  <span className="text-[10px] font-normal text-slate-400 bg-white/5 px-1.5 py-0.5 rounded">
+                    {t.strategyTag || t.setupTag || "Practice"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -467,6 +549,21 @@ export function TradeLoggerForm({ onLogged }) {
           />
         </div>
       </div>
+
+      {/* ⚠️ High Friction Drag Expectancy Warning (Pivot 2) */}
+      {isHighFrictionDrag && (
+        <div className="p-3 rounded-2xl bg-gradient-to-r from-amber-500/15 via-amber-500/10 to-transparent border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-amber-200 animate-fadeIn">
+          <span className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>
+              <strong>Micro-Scalp Friction Warning:</strong> Target (+{targetPts.toFixed(1)} pts) is too narrow compared to statutory drag ({frictionPts.toFixed(1)} pts / {Math.round((frictionPts / targetPts) * 100)}% drag). To maintain positive live expectancy after taxes, target should be &ge; {Math.ceil(frictionPts * 3)} pts.
+            </span>
+          </span>
+          <span className="text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/40 shrink-0 self-start sm:self-auto">
+            Low Expectancy
+          </span>
+        </div>
+      )}
 
       {/* Bottom P&L & Statutory Tax Deductor Output Ribbon */}
       <div className="pt-3 border-t border-white/5 flex flex-wrap items-center justify-between gap-4">

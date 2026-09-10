@@ -73,13 +73,17 @@ export function CustomTradeModal({ isOpen, onClose }) {
   const pts = direction === "LONG" ? (exit - entry) : (entry - exit);
   const grossPnl = pts * qty * lot;
 
-  // Indian statutory tax estimation
-  const turnover = (entry + exit) * qty * lot;
+  // Indian statutory Upstox F&O tax estimation (Flat ₹40 Brokerage + Sell STT + GST)
+  const buyTurnover = entry * qty * lot;
+  const sellTurnover = exit * qty * lot;
+  const turnover = buyTurnover + sellTurnover;
   const brokerage = 40.0;
-  const stt = turnover * 0.0005;
-  const exchangeFees = turnover * 0.00053;
-  const gst = 0.18 * (brokerage + exchangeFees);
-  const totalTaxes = Math.round((brokerage + stt + exchangeFees + gst) * 100) / 100;
+  const stt = sellTurnover * 0.001; // 0.1% on option sell
+  const exchangeFees = turnover * 0.000505;
+  const sebi = turnover * 0.000001;
+  const stampDuty = buyTurnover * 0.00003;
+  const gst = 0.18 * (brokerage + exchangeFees + sebi);
+  const totalTaxes = Math.round((brokerage + stt + exchangeFees + stampDuty + gst) * 100) / 100;
   const netPnl = Math.round((grossPnl - totalTaxes) * 100) / 100;
   const isGain = netPnl >= 0;
 
@@ -216,7 +220,7 @@ export function CustomTradeModal({ isOpen, onClose }) {
         initial={{ opacity: 0, scale: 0.95, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 20 }}
-        className="w-full max-w-2xl bg-[#060e1d] border border-white/10 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+        className="w-full max-w-2xl bg-[#121424]/98 backdrop-blur-3xl border border-white/10 rounded-3xl shadow-[0_24px_60px_rgba(0,0,0,0.85),inset_0_1px_0_rgba(255,255,255,0.08)] overflow-hidden flex flex-col max-h-[90vh]"
       >
         {/* Modal Header */}
         <div className="p-5 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">

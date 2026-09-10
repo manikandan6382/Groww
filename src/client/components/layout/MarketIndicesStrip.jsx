@@ -102,27 +102,55 @@ export function MarketIndicesStrip() {
   const { isPrivacyMode, closedAlerts, openAlerts, startingCapital } = useTradingStore();
 
   // Real-time Upstox live tick prices & dynamic in-memory sparklines
-  const nifty = useLivePriceStore((s) => s.indices?.["NSE_INDEX|Nifty 50"] ?? s.ticks?.["NSE_INDEX|Nifty 50"]);
-  const bankNifty = useLivePriceStore((s) => s.indices?.["NSE_INDEX|Nifty Bank"] ?? s.ticks?.["NSE_INDEX|Nifty Bank"]);
+  const nifty = useLivePriceStore((s) => s.indices?.["NSE_INDEX|Nifty 50"]);
+  const bankNifty = useLivePriceStore((s) => s.indices?.["NSE_INDEX|Nifty Bank"]);
+  const indiaVix = useLivePriceStore((s) => s.indices?.["NSE_INDEX|India VIX"]);
   const sparklines = useLivePriceStore((s) => s.sparklines);
 
   // NIFTY 50 Telemetry
-  const niftyLtp = nifty?.ltp ? Number(nifty.ltp) : 24031.45;
-  const niftyChange = nifty?.netChange ?? nifty?.change ?? -144.20;
-  const niftyChangePct = nifty?.changePct ?? ((niftyChange / (niftyLtp - niftyChange)) * 100).toFixed(2);
+  const niftyLtp = nifty?.ltp != null ? Number(nifty.ltp) : 23813.70;
+  const niftyChange = nifty?.change != null ? Number(nifty.change) : -242.10;
+  const niftyChangePct = nifty?.changePct != null ? Number(nifty.changePct) : -1.01;
   const isNiftyGain = Number(niftyChange) >= 0;
-  const niftyHigh = nifty?.high ? Number(nifty.high) : 24185.00;
-  const niftyLow = nifty?.low ? Number(nifty.low) : 23970.50;
-  const niftySparkline = sparklines?.["NSE_INDEX|Nifty 50"] ?? [24120, 24110, 24150, 24135, 24180, 24210, 24080, 24031.45];
+  const niftyHigh = nifty?.high != null ? Number(nifty.high) : 23896.05;
+  const niftyLow = nifty?.low != null ? Number(nifty.low) : 23786.80;
+  const niftySparkline = sparklines?.["NSE_INDEX|Nifty 50"] ?? [23858, 23896, 23840, 23800, 23786, 23813.70];
 
   // BANKNIFTY Telemetry
-  const bankNiftyLtp = bankNifty?.ltp ? Number(bankNifty.ltp) : 57317.75;
-  const bankNiftyChange = bankNifty?.netChange ?? bankNifty?.change ?? -178.55;
-  const bankNiftyChangePct = bankNifty?.changePct ?? ((bankNiftyChange / (bankNiftyLtp - bankNiftyChange)) * 100).toFixed(2);
+  const bankNiftyLtp = bankNifty?.ltp != null ? Number(bankNifty.ltp) : 56942.40;
+  const bankNiftyChange = bankNifty?.change != null ? Number(bankNifty.change) : -467.20;
+  const bankNiftyChangePct = bankNifty?.changePct != null ? Number(bankNifty.changePct) : -0.81;
   const isBankGain = Number(bankNiftyChange) >= 0;
-  const bankNiftyHigh = bankNifty?.high ? Number(bankNifty.high) : 57520.00;
-  const bankNiftyLow = bankNifty?.low ? Number(bankNifty.low) : 57110.00;
-  const bankNiftySparkline = sparklines?.["NSE_INDEX|Nifty Bank"] ?? [57400, 57350, 57450, 57320, 57280, 57317.75];
+  const bankNiftyHigh = bankNifty?.high != null ? Number(bankNifty.high) : 57221.10;
+  const bankNiftyLow = bankNifty?.low != null ? Number(bankNifty.low) : 56823.20;
+  const bankNiftySparkline = sparklines?.["NSE_INDEX|Nifty Bank"] ?? [57006, 57221, 57100, 56900, 56823, 56942.40];
+
+  // INDIA VIX Telemetry
+  const vixLtp = indiaVix?.ltp != null ? Number(indiaVix.ltp) : 11.88;
+  const vixChange = indiaVix?.change != null ? Number(indiaVix.change) : 0.39;
+  const vixChangePct = indiaVix?.changePct != null ? Number(indiaVix.changePct) : 3.39;
+  const isVixUp = Number(vixChange) >= 0;
+  const vixSparkline = sparklines?.["NSE_INDEX|India VIX"] ?? [11.49, 11.60, 11.80, 12.11, 11.88];
+
+  // Dynamic VIX Risk Regime
+  let vixRegimeLabel = "Optimal Risk";
+  let vixRegimeDesc = "Low Regime (10.00 – 15.00)";
+  let vixRegimeBadge = "bg-emerald-500/15 border-emerald-500/30 text-emerald-400";
+  let vixDotColor = "bg-emerald-400";
+
+  if (vixLtp >= 20.0) {
+    vixRegimeLabel = "Extreme Risk";
+    vixRegimeDesc = "Danger Zone (> 20.00)";
+    vixRegimeBadge = "bg-rose-500/15 border-rose-500/30 text-rose-400";
+    vixDotColor = "bg-rose-400";
+  } else if (vixLtp >= 15.0) {
+    vixRegimeLabel = "Elevated Risk";
+    vixRegimeDesc = "Medium Regime (15.00 – 20.00)";
+    vixRegimeBadge = "bg-amber-500/15 border-amber-500/30 text-amber-400";
+    vixDotColor = "bg-amber-400";
+  }
+
+  const vixSliderPct = Math.min(Math.max(((vixLtp - 9.0) / (28.0 - 9.0)) * 100, 5), 95);
 
   // Session Portfolio Telemetry
   const closed = closedAlerts || [];
@@ -146,7 +174,7 @@ export function MarketIndicesStrip() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
         
         {/* 🇮🇳 Card 1: NIFTY 50 (Benchmark Index) */}
-        <div className="p-3.5 rounded-2xl bg-[#070b14]/75 hover:bg-[#0c1224]/90 border border-white/[0.08] hover:border-cyan-500/40 transition-all duration-300 backdrop-blur-3xl shadow-[0_12px_36px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.18)] group cursor-default relative overflow-hidden">
+        <div className="p-3.5 rounded-2xl bg-[var(--card)] hover:bg-[var(--card-elevated)] border border-[var(--line)] hover:border-cyan-500/40 transition-all duration-300 backdrop-blur-3xl shadow-[0_12px_36px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.10)] group cursor-default relative overflow-hidden">
           {/* Subtle Ambient Radial Highlight */}
           <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-500/5 rounded-full blur-2xl pointer-events-none group-hover:bg-cyan-500/10 transition-colors" />
 
@@ -191,7 +219,7 @@ export function MarketIndicesStrip() {
         </div>
 
         {/* 🏦 Card 2: BANKNIFTY (Banking Bellwether) */}
-        <div className="p-3.5 rounded-2xl bg-[#070b14]/75 hover:bg-[#0c1224]/90 border border-white/[0.08] hover:border-cyan-500/40 transition-all duration-300 backdrop-blur-3xl shadow-[0_12px_36px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.18)] group cursor-default relative overflow-hidden">
+        <div className="p-3.5 rounded-2xl bg-[var(--card)] hover:bg-[var(--card-elevated)] border border-[var(--line)] hover:border-indigo-500/40 transition-all duration-300 backdrop-blur-3xl shadow-[0_12px_36px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.10)] group cursor-default relative overflow-hidden">
           {/* Subtle Ambient Radial Highlight */}
           <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-2xl pointer-events-none group-hover:bg-indigo-500/10 transition-colors" />
 
@@ -236,7 +264,7 @@ export function MarketIndicesStrip() {
         </div>
 
         {/* ⚡ Card 3: INDIA VIX & Risk Regime */}
-        <div className="p-3.5 rounded-2xl bg-[#070b14]/75 hover:bg-[#0c1224]/90 border border-white/[0.08] hover:border-amber-500/40 transition-all duration-300 backdrop-blur-3xl shadow-[0_12px_36px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.18)] group cursor-default relative overflow-hidden">
+        <div className="p-3.5 rounded-2xl bg-[var(--card)] hover:bg-[var(--card-elevated)] border border-[var(--line)] hover:border-amber-500/40 transition-all duration-300 backdrop-blur-3xl shadow-[0_12px_36px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.10)] group cursor-default relative overflow-hidden">
           {/* Subtle Ambient Radial Highlight */}
           <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 rounded-full blur-2xl pointer-events-none group-hover:bg-amber-500/10 transition-colors" />
 
@@ -247,9 +275,9 @@ export function MarketIndicesStrip() {
                 <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
                 <span className="text-[11px] font-black text-white font-mono tracking-wider">INDIA VIX</span>
               </div>
-              <span className="text-[8px] font-mono text-emerald-400 font-bold px-1.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center gap-0.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                Optimal Risk
+              <span className={clsx("text-[8px] font-mono font-bold px-1.5 py-0.5 rounded-full border flex items-center gap-0.5", vixRegimeBadge)}>
+                <span className={clsx("w-1.5 h-1.5 rounded-full animate-pulse", vixDotColor)} />
+                {vixRegimeLabel}
               </span>
             </div>
 
@@ -257,28 +285,28 @@ export function MarketIndicesStrip() {
             <div className="flex items-center justify-between gap-2">
               <div>
                 <div className="text-lg font-black text-amber-400 font-mono tabular-nums tracking-tight">
-                  <RollingTicker value={13.20} decimalPlaces={2} className="text-amber-400 font-black" />
+                  <RollingTicker value={vixLtp} decimalPlaces={2} className="text-amber-400 font-black" />
                 </div>
                 <div className="text-[9px] font-mono text-slate-400 mt-0.5 font-bold">
-                  Low Regime (11.00 – 16.00)
+                  {vixRegimeDesc}
                 </div>
               </div>
 
               {/* Sparkline */}
-              <LuxuryAreaSparkline data={[14.1, 13.9, 13.5, 13.4, 13.2]} isGain={false} width={72} height={26} />
+              <LuxuryAreaSparkline data={vixSparkline} isGain={!isVixUp} width={72} height={26} />
             </div>
 
             {/* Volatility Status Slider */}
             <div className="space-y-1 w-full pt-1">
               <div className="flex items-center justify-between text-[8px] font-mono text-slate-400 font-bold leading-none">
                 <span className="text-emerald-400">Calm</span>
-                <span className="text-amber-300 font-extrabold">13.20</span>
+                <span className="text-amber-300 font-extrabold">{vixLtp.toFixed(2)} ({isVixUp ? "+" : ""}{vixChangePct.toFixed(1)}%)</span>
                 <span className="text-rose-400">Extreme</span>
               </div>
               <div className="relative w-full h-1.5 rounded-full bg-gradient-to-r from-emerald-500/30 via-amber-500/30 to-rose-500/30 overflow-hidden border border-white/5">
                 <div 
-                  className="absolute top-0 bottom-0 w-1.5 bg-amber-400 rounded-full shadow-[0_0_8px_rgba(251,191,36,0.9)] -ml-0.5"
-                  style={{ left: "28%" }}
+                  className="absolute top-0 bottom-0 w-1.5 bg-amber-400 rounded-full shadow-[0_0_8px_rgba(251,191,36,0.9)] -ml-0.5 transition-all duration-500"
+                  style={{ left: `${vixSliderPct}%` }}
                 />
               </div>
             </div>
@@ -286,7 +314,7 @@ export function MarketIndicesStrip() {
         </div>
 
         {/* 💼 Card 4: Session Portfolio Net Telemetry */}
-        <div className="p-3.5 rounded-2xl bg-[#070b14]/75 hover:bg-[#0c1224]/90 border border-white/[0.08] hover:border-emerald-500/40 transition-all duration-300 backdrop-blur-3xl shadow-[0_12px_36px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.18)] group cursor-default relative overflow-hidden">
+        <div className="p-3.5 rounded-2xl bg-[var(--card)] hover:bg-[var(--card-elevated)] border border-[var(--line)] hover:border-emerald-500/40 transition-all duration-300 backdrop-blur-3xl shadow-[0_12px_36px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.10)] group cursor-default relative overflow-hidden">
           {/* Subtle Ambient Radial Highlight */}
           <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none group-hover:bg-emerald-500/10 transition-colors" />
 

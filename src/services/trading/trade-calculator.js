@@ -22,6 +22,7 @@ export function normalizeTradeInput(input = {}) {
 
   return {
     accountId: input.accountId,
+    idempotencyKey: cleanString(input.idempotencyKey) || null,
     symbol: sanitizeSymbol(input.symbol),
     displayName: cleanString(input.displayName),
     market: normalizeEnum(input.market, ["INDIA", "US"], "INDIA"),
@@ -37,7 +38,7 @@ export function normalizeTradeInput(input = {}) {
     tradeType: normalizeEnum(input.tradeType, ["INTRADAY", "SWING"], "SWING"),
     direction,
     status,
-    entryDatetime: cleanString(input.entryDatetime),
+    entryDatetime: cleanString(input.entryDatetime) || cleanString(input.entryDate) || (input.timestamp ? new Date(input.timestamp).toISOString() : new Date().toISOString()),
     exitDatetime: cleanString(input.exitDatetime),
     entryPrice,
     exitPrice,

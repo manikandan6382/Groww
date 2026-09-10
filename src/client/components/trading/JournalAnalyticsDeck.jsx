@@ -114,9 +114,12 @@ export function JournalAnalyticsDeck() {
   // 3. Dynamic Strategy Alpha & Setup Expectancy Matrix with Canonical Normalization
   const strategyMap = new Map();
   for (const t of activeTrades) {
-    const rawStrat = t.strategyTags || t.strategyTag || t.entryReason || "Discretionary Scalp";
+    let rawStrat = t.strategyTag || t.strategyTags || t.entryReason || "Discretionary Scalp";
+    if (Array.isArray(rawStrat)) {
+      rawStrat = rawStrat[0] || "Discretionary Scalp";
+    }
     // Canonicalize strategy tag to eliminate duplicate fragment sprawl
-    const strat = rawStrat.trim();
+    const strat = String(rawStrat || "Discretionary Scalp").trim() || "Discretionary Scalp";
     if (!strategyMap.has(strat)) {
       strategyMap.set(strat, {
         name: strat,

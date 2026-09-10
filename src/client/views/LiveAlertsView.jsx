@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { useTradingStore, resolveIndexLotSize } from "../stores/useTradingStore";
-import { useLivePriceStore } from "../stores/useLivePriceStore";
 import { soundEngine } from "../utils/soundEngine";
 import { OrderPadSection } from "../components/trading/OrderPadSection";
 import { PerformanceStudioSection } from "../components/trading/PerformanceStudioSection";
 import { TriggeredHistorySection } from "../components/trading/TriggeredHistorySection";
+import { ViewErrorBoundary } from "../components/common/ViewErrorBoundary";
 import { LiveAlertCard } from "../components/trading/LiveAlertCard";
 import { RollingTicker } from "../components/common/RollingTicker";
 import { 
@@ -19,40 +19,70 @@ import {
   TrendingUp, 
   TrendingDown, 
   Layers, 
+  LayoutDashboard,
   ArrowLeftRight, 
   Sparkles, 
   Activity,
   ArrowUpRight,
-  CheckCircle2
+  CheckCircle2,
+  Calendar,
+  BarChart3
 } from "lucide-react";
 import clsx from "clsx";
 
-export function LiveAlertsView() {
-  const { 
-    openAlerts, 
-    closedAlerts, 
-    squareOffTrade,
-    squareOffAll,
-    autoDeployCopilotTrade,
-    deployToast,
-    setDeployToast,
-    settlementToast,
-    setSettlementToast,
-    getPortfolioTelemetry 
-  } = useTradingStore();
+function LiveFeedClock() {
+  const [timeStr, setTimeStr] = useState(() => new Date().toLocaleTimeString("en-IN"));
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTimeStr(new Date().toLocaleTimeString("en-IN"));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return <span className="font-semibold text-slate-200">{timeStr}</span>;
+}
 
-  const [timeStr, setTimeStr] = useState(new Date().toLocaleTimeString("en-IN"));
+export function LiveAlertsView() {
+  const openAlerts = useTradingStore((s) => s.openAlerts);
+  const closedAlerts = useTradingStore((s) => s.closedAlerts);
+  const squareOffTrade = useTradingStore((s) => s.squareOffTrade);
+  const squareOffAll = useTradingStore((s) => s.squareOffAll);
+  const autoDeployCopilotTrade = useTradingStore((s) => s.autoDeployCopilotTrade);
+  const deployToast = useTradingStore((s) => s.deployToast);
+  const setDeployToast = useTradingStore((s) => s.setDeployToast);
+  const settlementToast = useTradingStore((s) => s.settlementToast);
+  const setSettlementToast = useTradingStore((s) => s.setSettlementToast);
+  const getPortfolioTelemetry = useTradingStore((s) => s.getPortfolioTelemetry);
+
   const [showSquareOffModal, setShowSquareOffModal] = useState(false);
+  const [activeTradesViewMode, setActiveTradesViewMode] = useState("deck"); // "deck" | "compact"
+  const [scorecardTimeframe, setScorecardTimeframe] = useState("today"); // "today" | "all"
+  const [isScrolledDown, setIsScrolledDown] = useState(false);
+  const [workspaceFocus, setWorkspaceFocus] = useState(() => {
+    try {
+      return localStorage.getItem("portfoliox_workspace_focus") || "all";
+    } catch {
+      return "all";
+    }
+  });
+
+  const handleSetWorkspaceFocus = (focus) => {
+    soundEngine.playTabSwitchTone();
+    setWorkspaceFocus(focus);
+    try {
+      localStorage.setItem("portfoliox_workspace_focus", focus);
+    } catch {}
+  };
 
   const handleSquareOffWithToast = (id, exitPrice) => {
     squareOffTrade(id, exitPrice);
   };
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setTimeStr(new Date().toLocaleTimeString("en-IN"));
-    }, 1000);
-    return () => clearInterval(timer);
+    const handleScroll = () => {
+      setIsScrolledDown(window.scrollY > 450);
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
   useEffect(() => {
@@ -71,8 +101,9 @@ export function LiveAlertsView() {
     return () => clearTimeout(timer);
   }, [settlementToast, setSettlementToast]);
 
-  // Centralized Single-Source-Of-Truth Telemetry
-  const telemetry = getPortfolioTelemetry ? getPortfolioTelemetry() : {
+  // Centralized Single-Source-Of-Truth Telemetry (Scoped to Today's Session or All-Time)
+  const telemetry = getPortfolioTelemetry ? getPortfolioTelemetry(scorecardTimeframe) : {
+    timeframe: scorecardTimeframe,
     startingCapital: 100000,
     currentAccountValue: 100000,
     totalRealizedPnl: 0,
@@ -124,7 +155,7 @@ export function LiveAlertsView() {
               Zero-Risk Simulation Active
             </span>
           </div>
-          <h1 className="text-xl sm:text-2xl md:text-3xl font-black text-white tracking-tight">
+          <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
             Live Practice Terminal &amp; Options Desk
           </h1>
           <p className="text-xs sm:text-sm text-slate-400 mt-1 leading-relaxed max-w-2xl">
@@ -137,7 +168,99 @@ export function LiveAlertsView() {
           <span className="font-extrabold text-cyan-400 tracking-wide">UPSTOX LIVE FEED</span>
           <span className="text-white/20">|</span>
           <Clock className="w-3.5 h-3.5 text-slate-400" />
-          <span className="font-semibold text-slate-200">{timeStr}</span>
+          <LiveFeedClock />
+        </div>
+      </div>
+
+      {/* 🧭 Fast Navigation Anchor Dock (Direct Access to All Sections / Segmented Focus) */}
+      <div className="flex items-center justify-between gap-3 p-2.5 rounded-2xl bg-app-card/85 backdrop-blur-2xl border border-white/[0.08] shadow-[0_12px_36px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(255,255,255,0.06)] flex-wrap">
+        <div className="flex items-center gap-1.5 p-1 rounded-xl bg-black/40 border border-white/10 flex-wrap">
+          <button
+            type="button"
+            onClick={() => handleSetWorkspaceFocus("all")}
+            className={clsx(
+              "px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all flex items-center gap-1.5 cursor-pointer",
+              workspaceFocus === "all"
+                ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm"
+                : "text-slate-400 hover:text-white hover:bg-white/5"
+            )}
+          >
+            <Layers className="w-3.5 h-3.5 text-cyan-400" />
+            <span>All Sections</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              handleSetWorkspaceFocus("cockpit");
+              setTimeout(() => {
+                document.getElementById("active-practice-trades")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }, 50);
+            }}
+            className={clsx(
+              "px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all flex items-center gap-1.5 cursor-pointer",
+              workspaceFocus === "cockpit"
+                ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm"
+                : "text-slate-400 hover:text-white hover:bg-white/5"
+            )}
+          >
+            <Zap className="w-3.5 h-3.5 text-amber-400" />
+            <span>Active Cockpit ({openAlerts.length})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              handleSetWorkspaceFocus("studio");
+              setTimeout(() => {
+                document.getElementById("performance-studio")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }, 50);
+            }}
+            className={clsx(
+              "px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all flex items-center gap-1.5 cursor-pointer",
+              workspaceFocus === "studio"
+                ? "bg-purple-500/20 text-purple-300 border border-purple-500/40 shadow-sm"
+                : "text-slate-400 hover:text-white hover:bg-white/5"
+            )}
+          >
+            <BarChart3 className="w-3.5 h-3.5 text-purple-400" />
+            <span>Performance Studio</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              handleSetWorkspaceFocus("ledger");
+              setTimeout(() => {
+                document.getElementById("practice-history-table")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }, 50);
+            }}
+            className={clsx(
+              "px-3 py-1.5 rounded-lg text-xs font-mono font-bold transition-all flex items-center gap-1.5 cursor-pointer",
+              workspaceFocus === "ledger"
+                ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm"
+                : "text-slate-400 hover:text-white hover:bg-white/5"
+            )}
+          >
+            <Trophy className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Settled Ledger ({closedAlerts.length})</span>
+          </button>
+        </div>
+
+        <div className="hidden md:flex items-center gap-3 text-xs font-mono text-slate-400 pr-2">
+          {workspaceFocus !== "all" && (
+            <button
+              type="button"
+              onClick={() => handleSetWorkspaceFocus("all")}
+              className="text-[11px] text-cyan-400 hover:underline flex items-center gap-1 cursor-pointer"
+            >
+              <span>Showing focused dock · View All</span>
+            </button>
+          )}
+          <span className="text-white/20">|</span>
+          <span>Simulation: <strong className="text-white">Active</strong></span>
+          <span className="text-white/20">|</span>
+          <span className="text-emerald-400 font-bold">{telemetry.winRate}% Win Rate</span>
         </div>
       </div>
 
@@ -186,7 +309,7 @@ export function LiveAlertsView() {
                 <Wallet className="w-4 h-4 text-slate-300" />
               </div>
             </div>
-            <div className="text-2xl sm:text-3xl font-black font-mono text-white tracking-tight block">
+            <div className="text-xl sm:text-2xl font-black font-mono text-white tracking-tight block">
               <RollingTicker value={startingCapital} prefix="₹" decimalPlaces={2} />
             </div>
             <div className="mt-3 flex items-center justify-between text-[11px] text-slate-400 border-t border-white/5 pt-2.5">
@@ -205,7 +328,7 @@ export function LiveAlertsView() {
                 <TrendingUp className="w-4 h-4 text-cyan-300" />
               </div>
             </div>
-            <div className="text-2xl sm:text-3xl font-black font-mono text-cyan-300 tracking-tight block drop-shadow-[0_0_20px_rgba(6,182,212,0.25)]">
+            <div className="text-xl sm:text-2xl font-black font-mono text-cyan-300 tracking-tight block drop-shadow-[0_0_15px_rgba(6,182,212,0.2)]">
               <RollingTicker value={currentAccountValue} prefix="₹" decimalPlaces={2} className="text-cyan-300" />
             </div>
             <div className="mt-3 flex items-center justify-between text-[11px] text-cyan-300/80 border-t border-cyan-500/15 pt-2.5">
@@ -235,8 +358,8 @@ export function LiveAlertsView() {
               </span>
             </div>
             <div className={clsx(
-              "text-2xl sm:text-3xl font-black font-mono tracking-tight block",
-              netPnl >= 0 ? "text-emerald-400 drop-shadow-[0_0_20px_rgba(16,185,129,0.25)]" : "text-rose-400 drop-shadow-[0_0_20px_rgba(244,63,94,0.25)]"
+              "text-xl sm:text-2xl font-black font-mono tracking-tight block",
+              netPnl >= 0 ? "text-emerald-400 drop-shadow-[0_0_15px_rgba(16,185,129,0.2)]" : "text-rose-400 drop-shadow-[0_0_15px_rgba(244,63,94,0.2)]"
             )}>
               <RollingTicker 
                 value={netPnl} 
@@ -255,13 +378,62 @@ export function LiveAlertsView() {
           </div>
         </div>
 
+        {/* Row 2 Header: Apple-style Session Performance Switcher */}
+        <div className="flex items-center justify-between gap-3 flex-wrap pt-2 border-t border-white/5">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-black uppercase tracking-wider text-slate-200 flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+              <span>{scorecardTimeframe === "today" ? "Today's Trading Scoreboard" : "All-Time Practice Ledger"}</span>
+            </span>
+            <span className="text-[10px] font-mono text-slate-400">
+              {scorecardTimeframe === "today" ? "• Real-Time Active IST Day" : "• Lifetime Historical Edge"}
+            </span>
+          </div>
+
+          <div className="p-1 rounded-2xl bg-white/[0.04] border border-white/10 flex items-center gap-1 shadow-inner">
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playTabSwitchTone();
+                setScorecardTimeframe("today");
+              }}
+              className={clsx(
+                "px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer min-h-[32px]",
+                scorecardTimeframe === "today"
+                  ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-sm"
+                  : "text-slate-400 hover:text-white"
+              )}
+              title="Filter to today's active session trades only"
+            >
+              <Calendar className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Today's Session</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playTabSwitchTone();
+                setScorecardTimeframe("all");
+              }}
+              className={clsx(
+                "px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer min-h-[32px]",
+                scorecardTimeframe === "all"
+                  ? "bg-purple-500/20 text-purple-300 border border-purple-500/30 shadow-sm"
+                  : "text-slate-400 hover:text-white"
+              )}
+              title="Show all-time historical practice trades"
+            >
+              <span>All-Time</span>
+            </button>
+          </div>
+        </div>
+
         {/* Row 2: 4-Column Quantitative Execution Matrix */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4">
           {/* Metric 1: Total Trades */}
           <div className="p-4 rounded-2xl bg-white/[0.03] hover:bg-white/[0.05] border border-white/10 backdrop-blur-xl shadow-sm transition-all duration-200">
             <div className="flex items-center justify-between mb-2">
               <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                Total Trades
+                {scorecardTimeframe === "today" ? "Today's Trades" : "Total Trades"}
               </span>
               <div className="w-6 h-6 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-slate-300">
                 <ArrowLeftRight className="w-3.5 h-3.5 text-slate-400" />
@@ -269,13 +441,13 @@ export function LiveAlertsView() {
             </div>
             <div className="flex items-baseline gap-2">
               <strong className="text-xl sm:text-2xl font-black font-mono text-white">
-                {openAlerts.length + closedAlerts.length}
+                {telemetry.openCount + telemetry.totalClosed}
               </strong>
               <span className="text-[10px] text-slate-500 font-sans">Setups</span>
             </div>
             <div className="text-[10px] text-slate-400 mt-1 flex items-center justify-between font-mono">
-              <span>{openAlerts.length} Open</span>
-              <span>{totalClosed} Resolved</span>
+              <span>{telemetry.openCount} Open</span>
+              <span>{telemetry.totalClosed} Resolved</span>
             </div>
           </div>
 
@@ -291,12 +463,12 @@ export function LiveAlertsView() {
             </div>
             <div className="flex items-baseline gap-2">
               <strong className="text-xl sm:text-2xl font-black font-mono text-emerald-400">
-                {winCount}
+                {telemetry.winCount}
               </strong>
               <span className="text-[10px] text-emerald-400/70 font-sans">Targets Hit</span>
             </div>
             <div className="text-[10px] text-emerald-400/80 mt-1 font-mono">
-              Alpha Captured Successfully
+              {scorecardTimeframe === "today" ? "Profitable Trades Today" : "Alpha Captured Successfully"}
             </div>
           </div>
 
@@ -312,12 +484,12 @@ export function LiveAlertsView() {
             </div>
             <div className="flex items-baseline gap-2">
               <strong className="text-xl sm:text-2xl font-black font-mono text-rose-400">
-                {lossCount}
+                {telemetry.lossCount}
               </strong>
               <span className="text-[10px] text-rose-400/70 font-sans">Stops Cut</span>
             </div>
             <div className="text-[10px] text-rose-400/80 mt-1 font-mono">
-              Capital Preserved by Rules
+              {scorecardTimeframe === "today" ? "Cut Cleanly by Rules Today" : "Capital Preserved by Rules"}
             </div>
           </div>
 
@@ -333,25 +505,26 @@ export function LiveAlertsView() {
             </div>
             <div className="flex items-baseline gap-2">
               <strong className="text-xl sm:text-2xl font-black font-mono text-cyan-300">
-                {winRate}%
+                {telemetry.winRate}%
               </strong>
-              <span className="text-[10px] text-cyan-400/70 font-sans">{totalClosed > 0 ? "Edge" : "No Trades"}</span>
+              <span className="text-[10px] text-cyan-400/70 font-sans">{telemetry.totalClosed > 0 ? "Edge" : "No Trades"}</span>
             </div>
             <div className="w-full bg-white/10 h-1.5 rounded-full overflow-hidden mt-2">
               <div 
                 className="bg-gradient-to-r from-cyan-500 to-emerald-400 h-full rounded-full transition-all duration-500"
-                style={{ width: `${Math.min(Math.max(winRateNum, totalClosed > 0 ? 5 : 0), 100)}%` }}
+                style={{ width: `${Math.min(Math.max(telemetry.winRateNum, telemetry.totalClosed > 0 ? 5 : 0), 100)}%` }}
               />
             </div>
           </div>
         </div>
       </div>
 
-      {/* 2️⃣ SECTION 2: LIVE CALL & PUT TRADING DESK */}
-      <OrderPadSection />
+      {/* 2️⃣ & 3️⃣ SECTION 2 & 3: ACTIVE COCKPIT (ORDER PAD & ACTIVE POSITIONS) */}
+      {(workspaceFocus === "all" || workspaceFocus === "cockpit") && (
+        <>
+          <OrderPadSection />
 
-      {/* 3️⃣ SECTION 3: MY CREATED ACTIVE TRADES LIST */}
-      <div id="active-practice-trades" className="p-6 sm:p-7 rounded-3xl bg-app-card/75 backdrop-blur-2xl border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.4)] space-y-6 relative overflow-hidden">
+          <div id="active-practice-trades" className="p-6 sm:p-7 rounded-3xl bg-app-card/75 backdrop-blur-2xl border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.4)] space-y-6 relative overflow-hidden">
         {/* Soft Ambient Studio Lighting */}
         <div className="absolute top-0 left-1/3 w-80 h-80 bg-cyan-500/[0.03] rounded-full blur-3xl pointer-events-none" />
 
@@ -373,7 +546,45 @@ export function LiveAlertsView() {
             </p>
           </div>
 
-          <div className="flex items-center gap-3 self-start sm:self-auto flex-shrink-0">
+          <div className="flex items-center gap-2.5 self-start sm:self-auto flex-shrink-0 flex-wrap">
+            {/* Apple Segmented View Switcher */}
+            <div className="p-1 rounded-2xl bg-white/[0.04] border border-white/10 flex items-center gap-1 shadow-inner">
+              <button
+                type="button"
+                onClick={() => {
+                  soundEngine.playTabSwitchTone();
+                  setActiveTradesViewMode("deck");
+                }}
+                className={clsx(
+                  "px-3 py-1.5 rounded-xl font-bold text-xs transition flex items-center gap-1.5 cursor-pointer",
+                  activeTradesViewMode === "deck"
+                    ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-sm"
+                    : "text-slate-400 hover:text-white"
+                )}
+                title="Full-Column Expansive Pro Deck (Recommended)"
+              >
+                <LayoutDashboard className="w-3.5 h-3.5" />
+                <span>Pro Deck</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  soundEngine.playTabSwitchTone();
+                  setActiveTradesViewMode("compact");
+                }}
+                className={clsx(
+                  "px-3 py-1.5 rounded-xl font-bold text-xs transition flex items-center gap-1.5 cursor-pointer",
+                  activeTradesViewMode === "compact"
+                    ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shadow-sm"
+                    : "text-slate-400 hover:text-white"
+                )}
+                title="High-Density Compact Terminal Row"
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>Compact</span>
+              </button>
+            </div>
+
             <button
               type="button"
               onClick={() => setShowSquareOffModal(true)}
@@ -389,9 +600,9 @@ export function LiveAlertsView() {
           </div>
         </div>
 
-        {/* Active Trade Cards */}
+        {/* Active Trade Cards (Full-Width Responsive Flow) */}
         {openAlerts.length === 0 ? (
-          <div className="py-12 px-6 rounded-2xl bg-white/[0.01] border border-dashed border-white/10 text-center space-y-4">
+          <div className="empty-trades-dock py-12 px-6 rounded-2xl bg-white/[0.01] border border-dashed border-white/10 text-center space-y-4">
             <div className="w-12 h-12 rounded-2xl bg-white/[0.03] border border-white/10 flex items-center justify-center text-2xl mx-auto shadow-inner">
               🏖️
             </div>
@@ -416,13 +627,15 @@ export function LiveAlertsView() {
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
+          <div className="flex flex-col gap-6 w-full">
             {openAlerts.map((trade) => (
-              <LiveAlertCard 
-                key={trade.id} 
-                alert={trade} 
-                onClose={(tradeId, exitPrice) => handleSquareOffWithToast(tradeId, exitPrice)} 
-              />
+              <ViewErrorBoundary key={trade.id} fallbackTitle="Active Practice Trade Card Unavailable">
+                <LiveAlertCard 
+                  alert={trade}
+                  viewMode={activeTradesViewMode}
+                  onClose={(tradeId, exitPrice) => handleSquareOffWithToast(tradeId, exitPrice)} 
+                />
+              </ViewErrorBoundary>
             ))}
           </div>
         )}
@@ -431,7 +644,7 @@ export function LiveAlertsView() {
       {/* Safety Confirmation Modal: Square Off All */}
       {showSquareOffModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xl animate-fadeIn">
-          <div className="relative w-full max-w-md p-6 sm:p-7 rounded-3xl bg-[#0b1220]/95 border border-rose-500/30 shadow-[0_25px_60px_rgba(244,63,94,0.25)] space-y-5 overflow-hidden">
+          <div className="relative w-full max-w-md p-6 sm:p-7 rounded-3xl bg-[#121424]/95 border border-rose-500/30 shadow-[0_25px_60px_rgba(244,63,94,0.25)] space-y-5 overflow-hidden">
             {/* Ambient Rose Light */}
             <div className="absolute top-0 right-0 w-64 h-64 bg-rose-500/10 rounded-full blur-3xl pointer-events-none -mr-16 -mt-16" />
 
@@ -483,7 +696,7 @@ export function LiveAlertsView() {
       {/* 🌟 Interactive Glassmorphic Settlement HUD Toast */}
       {settlementToast && (
         <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-5 duration-300">
-          <div className="p-4 sm:p-5 rounded-3xl bg-[#060e1d]/95 border border-cyan-500/30 shadow-[0_20px_50px_rgba(0,0,0,0.6)] backdrop-blur-2xl max-w-sm w-full space-y-3 relative overflow-hidden">
+          <div className="p-4 sm:p-5 rounded-3xl bg-[#121424]/95 border border-cyan-500/30 shadow-[0_20px_50px_rgba(0,0,0,0.6)] backdrop-blur-2xl max-w-sm w-full space-y-3 relative overflow-hidden">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
@@ -515,14 +728,30 @@ export function LiveAlertsView() {
                   <span className="text-amber-400/90 font-mono font-bold">Slippage Penalty: -₹{settlementToast.slippageCost?.toFixed(1)}</span>
                 )}
               </div>
-              <div className="flex items-center justify-end pt-1">
-                <a
-                  href="/journal"
-                  className="text-cyan-400 hover:text-cyan-300 font-bold flex items-center gap-1 underline"
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-[10px] text-slate-500 font-mono">
+                  {settlementToast.closeReason?.replace(/_/g, " ") || "SETTLED"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const id = settlementToast.id || settlementToast.serverId;
+                    setSettlementToast(null);
+                    const rowElem = document.getElementById(`trade-row-${id}`);
+                    if (rowElem) {
+                      rowElem.scrollIntoView({ behavior: "smooth", block: "center" });
+                      rowElem.classList.add("bg-cyan-500/30", "ring-2", "ring-cyan-400");
+                      setTimeout(() => rowElem.classList.remove("bg-cyan-500/30", "ring-2", "ring-cyan-400"), 3500);
+                    } else {
+                      const ledger = document.getElementById("trade-history-ledger");
+                      if (ledger) ledger.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }
+                  }}
+                  className="px-3 py-1 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 font-bold text-[11px] border border-cyan-500/30 flex items-center gap-1 transition active:scale-95 cursor-pointer shadow-sm"
                 >
-                  <span>View in Forensic Journal</span>
-                  <ArrowUpRight className="w-3 h-3" />
-                </a>
+                  <span>Highlight in Ledger</span>
+                  <ArrowUpRight className="w-3 h-3 text-cyan-400" />
+                </button>
               </div>
             </div>
 
@@ -537,7 +766,7 @@ export function LiveAlertsView() {
       {/* 🚀 Glassmorphic Position Deployment Toast HUD */}
       {deployToast && (
         <div className="fixed bottom-4 inset-x-4 sm:inset-x-auto sm:right-6 sm:bottom-6 z-50 animate-in slide-in-from-bottom-5 duration-300">
-          <div className="p-4 sm:p-5 rounded-3xl bg-[#060e1d]/95 border border-emerald-500/40 shadow-[0_20px_50px_rgba(16,185,129,0.25)] backdrop-blur-2xl max-w-sm sm:max-w-md w-full space-y-3 relative overflow-hidden">
+          <div className="p-4 sm:p-5 rounded-3xl bg-[#121424]/95 border border-emerald-500/40 shadow-[0_20px_50px_rgba(16,185,129,0.25)] backdrop-blur-2xl max-w-sm sm:max-w-md w-full space-y-3 relative overflow-hidden">
             {/* Soft Emerald Ambient Glow */}
             <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none -mr-8 -mt-8" />
 
@@ -560,15 +789,15 @@ export function LiveAlertsView() {
 
             <div className="grid grid-cols-3 gap-2 py-1.5 px-2.5 rounded-xl bg-white/[0.03] border border-white/5 text-center text-[10px] font-mono">
               <div>
-                <span className="text-slate-400 block text-[9px]">Entry (Fill)</span>
+                <span className="text-slate-400 block text-[10px]">Entry (Fill)</span>
                 <strong className="text-white font-bold">₹{Number(deployToast.entryPrice || 0).toFixed(2)}</strong>
               </div>
               <div className="border-x border-white/5">
-                <span className="text-rose-400 block text-[9px]">Stop Loss</span>
+                <span className="text-rose-400 block text-[10px]">Stop Loss</span>
                 <strong className="text-rose-300 font-bold">₹{Number(deployToast.stopLoss || 0).toFixed(2)}</strong>
               </div>
               <div>
-                <span className="text-emerald-400 block text-[9px]">Target</span>
+                <span className="text-emerald-400 block text-[10px]">Target</span>
                 <strong className="text-emerald-300 font-bold">₹{Number(deployToast.targetPrice || 0).toFixed(2)}</strong>
               </div>
             </div>
@@ -600,12 +829,85 @@ export function LiveAlertsView() {
           </div>
         </div>
       )}
+        </>
+      )}
 
       {/* 4️⃣ SECTION 4: PERFORMANCE & TRADE REVIEW STUDIO */}
-      <PerformanceStudioSection />
+      {(workspaceFocus === "all" || workspaceFocus === "studio") && (
+        <div id="performance-studio">
+          <PerformanceStudioSection />
+        </div>
+      )}
 
       {/* 5️⃣ SECTION 5: TRIGGERED PRACTICE HISTORY & AUDIT LEDGER */}
-      <TriggeredHistorySection />
+      {(workspaceFocus === "all" || workspaceFocus === "ledger") && (
+        <div id="practice-history-table">
+          <ViewErrorBoundary fallbackTitle="Settled Practice History Unavailable">
+            <TriggeredHistorySection />
+          </ViewErrorBoundary>
+        </div>
+      )}
+
+      {/* 🚀 Sticky Floating Emergency Exit Deck on Scroll */}
+      <div
+        className={clsx(
+          "fixed bottom-6 left-1/2 -translate-x-1/2 z-40 transition-all duration-300 pointer-events-auto",
+          isScrolledDown && openAlerts.length > 0
+            ? "opacity-100 translate-y-0 scale-100"
+            : "opacity-0 translate-y-8 scale-95 pointer-events-none"
+        )}
+      >
+        <div className="px-4 py-2.5 rounded-2xl bg-[var(--card)] backdrop-blur-2xl border border-[var(--line)] shadow-[0_20px_50px_rgba(0,0,0,0.6)] flex items-center gap-3.5 text-xs">
+          {/* Status Beacon & Metrics */}
+          <div className="flex items-center gap-2">
+            <span
+              className={clsx(
+                "w-2 h-2 rounded-full animate-ping",
+                (totalOpenPnl ?? 0) >= 0 ? "bg-emerald-400" : "bg-rose-500"
+              )}
+            />
+            <span className="text-slate-400 font-mono hidden sm:inline">Active Net:</span>
+            <span
+              className={clsx(
+                "font-mono font-black text-sm tabular-nums",
+                (totalOpenPnl ?? 0) >= 0 ? "text-emerald-400" : "text-rose-400"
+              )}
+            >
+              {(totalOpenPnl ?? 0) >= 0 ? "+" : ""}₹{Number(totalOpenPnl || 0).toFixed(2)}
+            </span>
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-slate-300 whitespace-nowrap">
+              {openAlerts.length} Live
+            </span>
+          </div>
+
+          <div className="h-4 w-px bg-white/10" />
+
+          {/* Jump to Cockpit Button */}
+          <button
+            type="button"
+            onClick={() => {
+              const activeSection = document.getElementById("active-practice-trades");
+              if (activeSection) {
+                activeSection.scrollIntoView({ behavior: "smooth", block: "start" });
+              }
+            }}
+            className="px-2.5 py-1 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10 text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+          >
+            <span>View Cards</span>
+            <ArrowUpRight className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Instant Emergency Square Off All Button */}
+          <button
+            type="button"
+            onClick={() => setShowSquareOffModal(true)}
+            className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white font-extrabold text-xs shadow-lg shadow-rose-600/30 transition active:scale-95 flex items-center gap-1.5 cursor-pointer"
+          >
+            <ShieldX className="w-3.5 h-3.5" />
+            <span>Square Off All</span>
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -4,28 +4,30 @@
 // ==========================================
 
 .apple-ceramic-card {
-  background: var(--bg-surface-card);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid var(--border-subtle);
+  background: var(--card);
+  backdrop-filter: blur(24px) saturate(190%);
+  -webkit-backdrop-filter: blur(24px) saturate(190%);
+  border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-spatial-lg), var(--shadow-inset-rim);
-  transition: border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1),
-              box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1),
-              transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: border-color 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              background-color 0.35s ease;
 
   &:hover {
     border-color: var(--border-highlight);
+    box-shadow: var(--shadow-spatial-lg), var(--shadow-glow), var(--shadow-inset-rim);
   }
 }
 
 .apple-glass-pill {
   background: var(--bg-surface-subtle);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--border-subtle);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid var(--line);
   border-radius: var(--radius-full);
-  transition: all 0.15s ease-out;
+  transition: all 0.2s ease-out;
 
   &:hover {
     background: var(--bg-surface-hover);
@@ -34,15 +36,15 @@
 }
 
 .apple-glass-input {
-  background: rgba(15, 23, 42, 0.8);
-  border: 1px solid var(--border-subtle);
+  background: var(--sidebar);
+  border: 1px solid var(--line);
   border-radius: var(--radius-md);
   color: #f8fafc;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 
   &:focus {
     outline: none;
-    border-color: var(--border-cyan-glow);
+    border-color: var(--cyan);
     box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
   }
 }
