@@ -104,7 +104,7 @@ export const TriggeredHistorySection = React.memo(function TriggeredHistorySecti
   const [showPrinciplesDrawer, setShowPrinciplesDrawer] = useState(false);
   const [highlightedTradeId, setHighlightedTradeId] = useState(null);
   const [activeTimelineTrade, setActiveTimelineTrade] = useState(null);
-  const [timelineFlightScope, setTimelineFlightScope] = useState("scalp"); // "scalp" | "expiry"
+  const [timelineFlightScope, setTimelineFlightScope] = useState("scalp"); // "scalp" | "day" | "week" | "month"
 
   // Direct SQLite database hydration on mount to ensure today's trades are instantly loaded
   useEffect(() => {
@@ -2467,7 +2467,8 @@ export const TriggeredHistorySection = React.memo(function TriggeredHistorySecti
                     trade={activeTimelineTrade}
                     onClose={() => setActiveTimelineTrade(null)}
                     isModalView={true}
-                    initialFlightScope="scalp"
+                    initialFlightScope={timelineFlightScope}
+                    onSwitchFlightScope={setTimelineFlightScope}
                     carouselNav={{
                       currentIndex: activeTradeIndex,
                       totalCount: activeTradeList.length,

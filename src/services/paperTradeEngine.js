@@ -14,6 +14,8 @@ export class PaperTradeEngine extends EventEmitter {
     this.client = options.client || createUpstoxClient(options.upstox || {});
     this.activeTrades = new Map();
     this.tokenToTradeIds = new Map();
+    this.watchedTokens = new Map(); // tokenKey -> { symbol, lastSeenAt }
+    this.watchedSymbols = new Map(); // symbol -> tokenKey
     this.resolving = new Set();
     this.triggering = new Set();
     this.pendingMarks = new Map();
@@ -22,12 +24,55 @@ export class PaperTradeEngine extends EventEmitter {
     this.refreshTimer = null;
     this.flushTimer = null;
     this.indicesTimer = null;
+    this.pruneTimer = null;
     this.started = false;
 
     this.client.on("tick", (tick) => this.handleTick(tick));
     this.client.on("status", (status) => this.publish("status", status));
     this.client.on("session_expired", (payload) => this.publish("session_expired", payload));
     this.client.on("error", (error) => this.publish("error", { message: error.message }));
+  }
+
+  registerWatchedToken(tokenKey, symbol) {
+    if (!tokenKey) return;
+    const now = Date.now();
+    this.watchedTokens.set(tokenKey, { symbol: symbol || tokenKey, lastSeenAt: now });
+    if (symbol) {
+      this.watchedSymbols.set(symbol, tokenKey);
+    }
+    if (this.client) {
+      this.client.subscribe(tokenKey);
+    }
+  }
+
+  touchWatchedToken(tokenKeyOrSymbol) {
+    if (!tokenKeyOrSymbol) return;
+    const tokenKey = this.watchedSymbols.get(tokenKeyOrSymbol) || tokenKeyOrSymbol;
+    const entry = this.watchedTokens.get(tokenKey);
+    if (entry) {
+      entry.lastSeenAt = Date.now();
+    }
+  }
+
+  pruneWatchedTokens() {
+    const now = Date.now();
+    const TTL_MS = 90_000; // 90 seconds inactivity lease
+    for (const [tokenKey, info] of Array.from(this.watchedTokens.entries())) {
+      if (now - info.lastSeenAt > TTL_MS) {
+        const activeTradeIds = this.tokenToTradeIds.get(tokenKey);
+        if (!activeTradeIds || activeTradeIds.size === 0) {
+          if (this.client && typeof this.client.unsubscribe === "function") {
+            this.client.unsubscribe(tokenKey);
+          }
+          this.watchedTokens.delete(tokenKey);
+          if (info.symbol) {
+            this.watchedSymbols.delete(info.symbol);
+          }
+        } else {
+          info.lastSeenAt = now;
+        }
+      }
+    }
   }
 
   start() {
@@ -38,6 +83,7 @@ export class PaperTradeEngine extends EventEmitter {
     this.refreshTimer = setInterval(() => this.refreshActiveTrades(), ACTIVE_REFRESH_MS);
     this.flushTimer = setInterval(() => this.flushPendingMarks(), 1000);
     this.indicesTimer = setInterval(() => this.pollIndices(), 3000);
+    this.pruneTimer = setInterval(() => this.pruneWatchedTokens(), 30_000);
     this.pollIndices();
   }
 
@@ -46,9 +92,11 @@ export class PaperTradeEngine extends EventEmitter {
     if (this.refreshTimer) clearInterval(this.refreshTimer);
     if (this.flushTimer) clearInterval(this.flushTimer);
     if (this.indicesTimer) clearInterval(this.indicesTimer);
+    if (this.pruneTimer) clearInterval(this.pruneTimer);
     this.refreshTimer = null;
     this.flushTimer = null;
     this.indicesTimer = null;
+    this.pruneTimer = null;
     this.flushPendingMarks();
     this.client.stop();
   }
@@ -252,12 +300,29 @@ export class PaperTradeEngine extends EventEmitter {
   }
 
   handleTick(tick) {
-    if (tick.key && tick.key.startsWith("NSE_INDEX")) {
+    if (tick.key && (tick.key.startsWith("NSE_INDEX") || tick.key.startsWith("BSE_INDEX"))) {
+      const sym = tick.key.includes("SENSEX") 
+        ? "SENSEX" 
+        : (tick.key.includes("Bank") ? "BANKNIFTY" : (tick.key.includes("Fin") ? "FINNIFTY" : "NIFTY"));
       this.publish("index_tick", {
-        symbol: tick.key.includes("Bank") ? "BANKNIFTY" : "NIFTY",
+        symbol: sym,
         tokenKey: tick.key,
         ltp: tick.ltp,
         receivedAt: tick.receivedAt,
+      });
+    }
+
+    // Broadcast live tick for any contract currently watched on the Order Pad
+    const tickKey = tick.key || tick.tokenKey || tick.token;
+    if (tickKey && this.watchedTokens?.has(tickKey)) {
+      const entry = this.watchedTokens.get(tickKey);
+      const sym = typeof entry === "object" ? entry?.symbol : (entry || tickKey);
+      this.publish("tick", {
+        symbol: sym,
+        tokenKey: tickKey,
+        ltp: tick.ltp,
+        change: tick.change || 0,
+        receivedAt: tick.receivedAt || new Date().toISOString(),
       });
     }
 

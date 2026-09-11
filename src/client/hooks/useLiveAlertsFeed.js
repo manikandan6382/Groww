@@ -1,18 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useLivePriceStore } from "../stores/useLivePriceStore";
 import { useTradingStore } from "../stores/useTradingStore";
-
-// ─── Indian Stock Market Calendar & Session Helper ────────────────────────────
-function isIndianMarketOpenHours() {
-  const now = new Date();
-  const istOffsetMs = 5.5 * 60 * 60 * 1000;
-  const istDate = new Date(now.getTime() + (now.getTimezoneOffset() * 60 * 1000) + istOffsetMs);
-  const day = istDate.getDay();
-  if (day === 0 || day === 6) return false; // Saturday / Sunday closed
-  const totalMins = istDate.getHours() * 60 + istDate.getMinutes();
-  // 9:00 AM IST (Pre-market) through 3:35 PM IST (Closing buffer)
-  return totalMins >= 9 * 60 && totalMins <= (15 * 60 + 35);
-}
+import { isIndianMarketOpenHours } from "../utils/dateUtils";
 
 export function useLiveAlertsFeed() {
   const reconnectTimeoutRef = useRef(null);
@@ -72,13 +61,17 @@ export function useLiveAlertsFeed() {
       } catch { /* ignore offline */ }
     }
 
-    // Fetch live option quotes from Upstox REST API for active practice positions
+    // Fetch live option quotes from Upstox REST API for active practice positions & live Order Pad contract
     async function fetchLiveOptionQuotes() {
       try {
         const openAlerts = useTradingStore.getState().openAlerts || [];
-        if (!openAlerts.length) return;
-
-        const symbols = Array.from(new Set(openAlerts.map((t) => t.symbol || t.tradingsymbol).filter(Boolean)));
+        const activePadSymbol = useTradingStore.getState().activePadSymbol;
+        const activeHedgeSymbol = useTradingStore.getState().activeHedgeSymbol;
+        const symbols = Array.from(new Set([
+          ...openAlerts.map((t) => t.symbol || t.tradingsymbol),
+          activePadSymbol,
+          activeHedgeSymbol
+        ].filter(Boolean)));
         if (!symbols.length) return;
 
         const res = await fetch("/api/market/option-quotes", {
@@ -228,6 +221,20 @@ export function useLiveAlertsFeed() {
       document.addEventListener("visibilitychange", handleVisibilityChange);
     }
 
+    // ⚡ Reactive Order Pad Contract Switcher: Immediately fetch quotes whenever activePadSymbol or activeHedgeSymbol changes
+    let prevActivePadSymbol = useTradingStore.getState().activePadSymbol;
+    let prevActiveHedgeSymbol = useTradingStore.getState().activeHedgeSymbol;
+    const unsubPadSymbol = useTradingStore.subscribe((state) => {
+      if (
+        (state.activePadSymbol && state.activePadSymbol !== prevActivePadSymbol) ||
+        (state.activeHedgeSymbol && state.activeHedgeSymbol !== prevActiveHedgeSymbol)
+      ) {
+        prevActivePadSymbol = state.activePadSymbol;
+        prevActiveHedgeSymbol = state.activeHedgeSymbol;
+        fetchLiveOptionQuotes();
+      }
+    });
+
     function connect() {
       if (!isMounted) return;
       try {
@@ -318,6 +325,7 @@ export function useLiveAlertsFeed() {
 
     return () => {
       isMounted = false;
+      unsubPadSymbol?.();
       clearInterval(loopInterval);
       if (typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", handleVisibilityChange);

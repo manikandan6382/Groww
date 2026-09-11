@@ -359,10 +359,14 @@ export function LiveAlertCard({ trade, alert, onMarkHit, onClose, onDelete, view
   const symbol = String(item.symbol || item.tradingsymbol || "NIFTY 24500 CE");
   const optionType = item.optionType || item.option_type || (symbol.includes("PE") ? "PUT" : "CALL");
   const isCE = optionType === "CALL" || optionType === "CE";
+  const isSensex = symbol.includes("SENSEX");
+  const isBankNifty = symbol.includes("BANK");
   const rawEntry = parseFiniteNumber(item.entryPrice ?? item.entry_price, 0);
   const entry = rawEntry > 0 ? rawEntry : 100;
-  const target = parseFiniteNumber(item.targetPrice ?? item.target_price ?? item.target, entry * 1.3);
-  const stopLoss = parseFiniteNumber(item.stopLoss ?? item.stop_loss ?? item.sl, entry * 0.85);
+  const defaultSlPts = isSensex ? 12.5 : (isBankNifty ? 8.5 : 4.0);
+  const defaultTpPts = isSensex ? 25.0 : (isBankNifty ? 17.0 : 8.0);
+  const target = parseFiniteNumber(item.targetPrice ?? item.target_price ?? item.target, entry + defaultTpPts);
+  const stopLoss = parseFiniteNumber(item.stopLoss ?? item.stop_loss ?? item.sl, Math.max(0.05, entry - defaultSlPts));
   const quantity = Math.max(1, parseFiniteNumber(item.quantity, 1));
   const lotSize = resolveIndexLotSize(symbol, item.lotSize);
   const totalQty = quantity * lotSize;
@@ -554,6 +558,9 @@ export function LiveAlertCard({ trade, alert, onMarkHit, onClose, onDelete, view
 
   // Auto-BE trigger marker position (+45% into reward zone)
   const beTriggerPos = Math.min(95, Math.max(entryPos + 5, entryPos + 0.45 * (100 - entryPos)));
+  const autoBePrice = isShort 
+    ? Number((entry - targetPointsDelta * 0.45).toFixed(2)) 
+    : Number((entry + targetPointsDelta * 0.45).toFixed(2));
 
   const targetDistance = Math.max(0, isShort ? (currentLtp - target) : (target - currentLtp));
   const stopDistance = Math.max(0, isShort ? (stopLoss - currentLtp) : (currentLtp - stopLoss));
@@ -1433,13 +1440,36 @@ export function LiveAlertCard({ trade, alert, onMarkHit, onClose, onDelete, view
           </span>
         </div>
 
-        {/* 3px Precision Laser Rail */}
-        <div className="relative w-full h-1.5 rounded-full bg-black/60 border border-white/5 p-0 overflow-hidden shadow-inner">
+        {/* Precision Laser Rail with Auto-BE Marker */}
+        <div className="relative w-full h-2 rounded-full bg-black/60 border border-white/5 p-0 overflow-hidden shadow-inner">
           <div className="absolute inset-0 flex rounded-full overflow-hidden pointer-events-none opacity-30">
             <div style={{ width: `${entryPos}%` }} className="h-full bg-rose-500 border-r border-rose-500/60" />
             <div style={{ width: `${100 - entryPos}%` }} className="h-full bg-emerald-500" />
           </div>
-          <div className="absolute top-0 bottom-0 w-0.5 bg-white z-10 shadow-[0_0_6px_white]" style={{ left: `${entryPos}%` }} />
+          
+          {/* Entry Line Indicator */}
+          <div className="absolute top-0 bottom-0 w-0.5 bg-white z-10 shadow-[0_0_6px_white]" style={{ left: `${entryPos}%` }} title={`Entry ₹${entry.toFixed(2)}`} />
+
+          {/* 🛡️ Auto-BE Trigger Threshold Marker Line (at 45% into reward zone) */}
+          <div 
+            className="absolute top-0 bottom-0 w-[2px] z-15 pointer-events-none" 
+            style={{ left: `${beTriggerPos}%` }}
+            title={`Auto-BE Gate: triggers at ₹${autoBePrice.toFixed(2)} (+${(targetPointsDelta * 0.45).toFixed(1)} pts) to lock Zero Risk`}
+          >
+            <div className={clsx(
+              "w-full h-full transition-all duration-300",
+              isProtected || hasAutoLockedBE
+                ? "bg-cyan-400 shadow-[0_0_8px_#22d3ee]"
+                : "bg-cyan-400/75 shadow-[0_0_4px_rgba(34,211,238,0.5)] border-r border-dashed border-cyan-200/50"
+            )} />
+            <div className={clsx(
+              "absolute -top-0.5 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full",
+              isProtected || hasAutoLockedBE
+                ? "bg-cyan-300 shadow-[0_0_6px_#22d3ee]"
+                : "bg-cyan-400/90 shadow-[0_0_3px_rgba(34,211,238,0.6)]"
+            )} />
+          </div>
+
           {pts >= 0 ? (
             <div
               className="absolute top-0 bottom-0 bg-gradient-to-r from-emerald-500 to-teal-300 rounded-full transition-all duration-150 shadow-[0_0_8px_rgba(16,185,129,0.8)]"
@@ -1453,7 +1483,7 @@ export function LiveAlertCard({ trade, alert, onMarkHit, onClose, onDelete, view
           )}
           <div
             className={clsx(
-              "absolute top-1/2 -translate-y-1/2 -ml-1.5 w-3 h-3 rounded-full bg-white border-2 z-20 pointer-events-none transition-all duration-100 shadow-md",
+              "absolute top-1/2 -translate-y-1/2 -ml-1.5 w-3.5 h-3.5 rounded-full bg-white border-2 z-20 pointer-events-none transition-all duration-100 shadow-md",
               isGain ? "border-emerald-400 shadow-[0_0_10px_#34d399]" : "border-rose-500 shadow-[0_0_10px_#f43f5e]"
             )}
             style={{ left: `${puckPos}%` }}
@@ -1463,7 +1493,21 @@ export function LiveAlertCard({ trade, alert, onMarkHit, onClose, onDelete, view
         {/* Waypoint Telemetry */}
         <div className="flex items-center justify-between text-[11px] text-white/40 font-mono">
           <span className="text-rose-400/90 font-medium">Risk: -₹{slRupees.toFixed(0)} ({slPct}%)</span>
-          <span>{targetPct}% Toward Goal</span>
+          
+          {/* 🛡️ Auto-BE Live Milestone Indicator */}
+          <div 
+            className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/[0.03] border border-white/5 cursor-help transition-all"
+            title={`Auto-BE automatically locks True Breakeven when price touches ₹${autoBePrice.toFixed(2)} (45% toward goal)`}
+          >
+            <ShieldCheck className={clsx("w-3 h-3 shrink-0", (isProtected || hasAutoLockedBE) ? "text-cyan-300 animate-pulse" : "text-cyan-400/70")} />
+            <span className={clsx(
+              "text-[10px] font-bold tracking-tight",
+              (isProtected || hasAutoLockedBE) ? "text-cyan-300 font-extrabold" : "text-cyan-400/90"
+            )}>
+              {isProtected || hasAutoLockedBE ? "Auto-BE Locked 🛡️" : `Auto-BE @ ₹${autoBePrice.toFixed(2)}`}
+            </span>
+          </div>
+
           <span className="text-emerald-400/90 font-medium">Goal: +₹{targetRupees.toFixed(0)} (+{targetGainPct}%)</span>
         </div>
       </div>

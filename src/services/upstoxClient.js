@@ -183,8 +183,12 @@ export class UpstoxClient extends EventEmitter {
     // 1. First attempt Upstox Live Option Contract API for 100% exact strike & token match
     try {
       const sym = String(trade.symbol || trade.tradingsymbol || "");
-      const underlying = String(trade.underlyingSymbol || trade.underlying_symbol || (sym.includes("BANK") ? "BANKNIFTY" : "NIFTY")).toUpperCase();
-      const parsedStrike = Number(trade.strikePrice || trade.strike_price || (sym.match(/\b\d{5}\b/) || [0])[0]);
+      const underlying = String(
+        trade.underlyingSymbol ||
+        trade.underlying_symbol ||
+        (sym.includes("SENSEX") ? "SENSEX" : sym.includes("BANK") ? "BANKNIFTY" : sym.includes("FIN") ? "FINNIFTY" : "NIFTY")
+      ).toUpperCase();
+      const parsedStrike = Number(trade.strikePrice || trade.strike_price || (sym.match(/\b\d{5,6}\b/) || sym.match(/\d+/) || [0])[0]);
       const strike = parsedStrike || Number((sym.match(/\d+/) || [0])[0]);
       const side = toUpstoxSide(trade.optionType || trade.option_type || (sym.includes("PE") ? "PUT" : "CALL"));
       const underlyingKey = underlying.includes("SENSEX") ? "BSE_INDEX|SENSEX" : (underlying.includes("BANK") ? "NSE_INDEX|Nifty Bank" : (underlying.includes("FIN") ? "NSE_INDEX|Nifty Fin Service" : "NSE_INDEX|Nifty 50"));

@@ -24,8 +24,9 @@ import {
   ChevronDown
 } from "lucide-react";
 import clsx from "clsx";
+import { isIndianMarketOpenHours } from "../../utils/dateUtils";
 
-export function isPowerHourWindow() {
+function isPowerHourWindow() {
   const now = new Date();
   const hours = now.getHours();
   const minutes = now.getMinutes();
@@ -36,9 +37,9 @@ export function isPowerHourWindow() {
 
 const INDEX_ASSETS = [
   { key: "NIFTY", name: "NIFTY 50", exchange: "NSE", spot: 23430.00, lot: 65, defaultOption: "PUT", defaultStrike: 23450, defaultEntry: 95.00, defaultSL: 91.00, defaultTP: 103.00, change: "-0.25%", positive: false },
-  { key: "BANKNIFTY", name: "BANK NIFTY", exchange: "NSE", spot: 57031.00, lot: 30, defaultOption: "PUT", defaultStrike: 57000, defaultEntry: 180.00, defaultSL: 172.50, defaultTP: 195.50, change: "-0.66%", positive: false },
-  { key: "FINNIFTY", name: "FIN NIFTY", exchange: "NSE", spot: 25721.20, lot: 65, defaultOption: "PUT", defaultStrike: 25700, defaultEntry: 65.0, defaultSL: 61.5, defaultTP: 72.0, change: "-1.10%", positive: false },
-  { key: "SENSEX", name: "BSE SENSEX", exchange: "BSE", spot: 76261.50, lot: 20, defaultOption: "PUT", defaultStrike: 76300, defaultEntry: 237.4, defaultSL: 228.0, defaultTP: 257.0, change: "-0.89%", positive: false },
+  { key: "BANKNIFTY", name: "BANK NIFTY", exchange: "NSE", spot: 57031.00, lot: 30, defaultOption: "PUT", defaultStrike: 57000, defaultEntry: 180.00, defaultSL: 171.50, defaultTP: 197.00, change: "-0.66%", positive: false },
+  { key: "FINNIFTY", name: "FIN NIFTY", exchange: "NSE", spot: 25721.20, lot: 65, defaultOption: "PUT", defaultStrike: 25700, defaultEntry: 65.0, defaultSL: 61.0, defaultTP: 73.0, change: "-1.10%", positive: false },
+  { key: "SENSEX", name: "BSE SENSEX", exchange: "BSE", spot: 74765.00, lot: 20, defaultOption: "PUT", defaultStrike: 74800, defaultEntry: 155.0, defaultSL: 142.5, defaultTP: 180.0, change: "+0.01%", positive: true },
 ];
 
 export const OrderPadSection = React.memo(function OrderPadSection() {
@@ -62,7 +63,11 @@ export const OrderPadSection = React.memo(function OrderPadSection() {
     claimCoolingVaultUnlock,
     getTodayTradesCount,
     openAlerts,
-    masterTrades
+    masterTrades,
+    activePadSymbol,
+    setActivePadSymbol,
+    activeHedgeSymbol,
+    setActiveHedgeSymbol
   } = useTradingStore();
 
   const todayTradesCount = useMemo(() => {
@@ -181,6 +186,95 @@ export const OrderPadSection = React.memo(function OrderPadSection() {
   const indexDropdownRef = useRef(null);
   // 🛡️ Synchronous Hardware-Style Mutex to prevent double-click race conditions
   const deployLockRef = useRef(false);
+
+  // ⚡ Live Real-Time Tick Streaming State
+  const [isLiveStreaming, setIsLiveStreaming] = useState(true);
+  const isMarketHours = isIndianMarketOpenHours();
+  const activeContractSymbol = `${underlying} ${strikePrice} ${optionType === "CALL" ? "CE" : "PE"}`;
+  const hedgeContractSymbol = strategyMode === "SPREAD" && hedgeStrike 
+    ? `${underlying} ${hedgeStrike} ${optionType === "CALL" ? "CE" : "PE"}` 
+    : null;
+  const liveContractTick = useLivePriceStore((state) => state.ticks?.[activeContractSymbol]);
+  const liveHedgeTick = useLivePriceStore((state) => (hedgeContractSymbol ? state.ticks?.[hedgeContractSymbol] : null));
+
+  // Synchronize active contracts with store and trigger immediate live quote fetch
+  useEffect(() => {
+    if (typeof setActivePadSymbol === "function") {
+      setActivePadSymbol(activeContractSymbol);
+    }
+    if (typeof setActiveHedgeSymbol === "function") {
+      setActiveHedgeSymbol(hedgeContractSymbol);
+    }
+    const symbolsToQuery = [activeContractSymbol, hedgeContractSymbol].filter(Boolean);
+    fetch("/api/market/option-quotes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbols: symbolsToQuery })
+    }).catch(() => {});
+  }, [activeContractSymbol, hedgeContractSymbol, setActivePadSymbol, setActiveHedgeSymbol]);
+
+  // Dynamic hedge price update for Spread mode
+  useEffect(() => {
+    if (!isLiveStreaming || !liveHedgeTick?.ltp || strategyMode !== "SPREAD") return;
+    const hLtp = Number(liveHedgeTick.ltp);
+    if (hLtp <= 0) return;
+    setHedgePrice((prev) => (Math.abs(prev - hLtp) < 0.01 ? prev : hLtp));
+  }, [liveHedgeTick?.ltp, isLiveStreaming, strategyMode]);
+
+  // ⚡ Throttled Tick Listener (150ms RAF window): Eliminates React state thrashing during 0DTE gamma spikes
+  const lastTickTimeRef = useRef(0);
+  const rafIdRef = useRef(null);
+
+  useEffect(() => {
+    if (!isLiveStreaming || !liveContractTick?.ltp) return;
+    const liveLtp = Number(liveContractTick.ltp);
+    if (liveLtp <= 0) return;
+
+    const applyLiveTick = () => {
+      lastTickTimeRef.current = Date.now();
+      setEntryPrice((prev) => {
+        if (Math.abs(prev - liveLtp) < 0.01) return prev;
+        return liveLtp;
+      });
+
+      const isSensex = underlying === "SENSEX";
+      const isBankNifty = underlying === "BANKNIFTY";
+      // 🏛️ Manikandan's ₹10k Budget Discipline: ₹200–₹300 SL / ₹400–₹600 TP
+      // NIFTY/FINNIFTY (lot=65): 4.0 pts SL = ₹260, 8.0 pts TP = ₹520 (R:R 1:2.0)
+      // BANKNIFTY (lot=30): 8.5 pts SL = ₹255, 17.0 pts TP = ₹510 (R:R 1:2.0)
+      // SENSEX (lot=20): 12.5 pts SL = ₹250, 25.0 pts TP = ₹500 (R:R 1:2.0)
+      const slDistance = isSensex ? 12.5 : (isBankNifty ? 8.5 : 4.0);
+      const tpDistance = isSensex ? 25.0 : (isBankNifty ? 17.0 : 8.0);
+
+      setStopLoss(Math.max(0.05, Number((liveLtp - slDistance).toFixed(2))));
+      setTargetPrice(Number((liveLtp + tpDistance).toFixed(2)));
+    };
+
+    const now = Date.now();
+    if (now - lastTickTimeRef.current >= 150) {
+      applyLiveTick();
+    } else {
+      if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = requestAnimationFrame(() => {
+        applyLiveTick();
+      });
+    }
+
+    return () => {
+      if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
+    };
+  }, [liveContractTick?.ltp, isLiveStreaming, underlying]);
+
+  // 🔒 Auto-Lock on Manual Input Interaction: Freezes live streaming to prevent overwriting custom input
+  const handleManualInputFocus = useCallback(() => {
+    setIsLiveStreaming((prev) => {
+      if (prev) {
+        soundEngine.playTabSwitchTone();
+        return false;
+      }
+      return prev;
+    });
+  }, []);
 
   // 🛡️ Mode-Switch Handler with Auto-Spread Activation in Caution Regime (Pivot 3)
   const handleSetCopilotRegime = (regime) => {
@@ -670,13 +764,22 @@ export const OrderPadSection = React.memo(function OrderPadSection() {
     const effectiveLots = copilotState.regime === "WARNING" ? Math.max(1, Math.floor(lots * 0.5)) : lots;
     const effectiveStrategyMode = copilotState.regime === "WARNING" ? "SPREAD" : strategyMode;
 
+    // Pull freshest real-time tick directly from Zustand store at millisecond of click
+    const freshTick = isLiveStreaming ? useLivePriceStore.getState().ticks?.[symbol] : null;
+    const effectiveEntryPrice = freshTick?.ltp && freshTick.ltp > 0 ? Number(freshTick.ltp) : entryPrice;
+    const freshHedgeTick = isLiveStreaming && effectiveStrategyMode === "SPREAD" && hedgeStrike 
+      ? useLivePriceStore.getState().ticks?.[`${underlying} ${hedgeStrike} ${optionType === "CALL" ? "CE" : "PE"}`] 
+      : null;
+    const effectiveHedgePrice = freshHedgeTick?.ltp && freshHedgeTick.ltp > 0 ? Number(freshHedgeTick.ltp) : hedgePrice;
+    const effectiveNetDebit = effectiveStrategyMode === "SPREAD" ? Math.max(0.1, effectiveEntryPrice - effectiveHedgePrice) : effectiveEntryPrice;
+
     deployPracticeTrade({
       idempotencyKey,
       symbol,
       underlyingSymbol: underlying,
       strikePrice,
       optionType,
-      entryPrice,
+      entryPrice: effectiveEntryPrice,
       stopLoss,
       targetPrice,
       quantity: effectiveLots,
@@ -684,8 +787,8 @@ export const OrderPadSection = React.memo(function OrderPadSection() {
       feedMode,
       strategyMode: effectiveStrategyMode,
       hedgeStrike: effectiveStrategyMode === "SPREAD" ? hedgeStrike : null,
-      hedgePrice: effectiveStrategyMode === "SPREAD" ? hedgePrice : 0,
-      netDebit: effectiveStrategyMode === "SPREAD" ? netEntryPrice : entryPrice,
+      hedgePrice: effectiveStrategyMode === "SPREAD" ? effectiveHedgePrice : 0,
+      netDebit: effectiveNetDebit,
       entryReason: `Copilot 1-Click (${copilotState.status}) · ${effectiveStrategyMode === "SPREAD" ? "Defined-Risk Spread" : "ATM Scalp"} · R:R 1:${rrRatio}`,
       personalNotes: `Instant Live ${underlying} Scalp execution`
     });
@@ -750,13 +853,22 @@ export const OrderPadSection = React.memo(function OrderPadSection() {
     const effectiveLots = copilotState.regime === "WARNING" ? Math.max(1, Math.floor(lots * 0.5)) : lots;
     const effectiveStrategyMode = copilotState.regime === "WARNING" ? "SPREAD" : strategyMode;
     
+    // Pull freshest real-time tick directly from Zustand store at millisecond of click
+    const freshTick = isLiveStreaming ? useLivePriceStore.getState().ticks?.[symbol] : null;
+    const effectiveEntryPrice = freshTick?.ltp && freshTick.ltp > 0 ? Number(freshTick.ltp) : entryPrice;
+    const freshHedgeTick = isLiveStreaming && effectiveStrategyMode === "SPREAD" && hedgeStrike 
+      ? useLivePriceStore.getState().ticks?.[`${underlying} ${hedgeStrike} ${optionType === "CALL" ? "CE" : "PE"}`] 
+      : null;
+    const effectiveHedgePrice = freshHedgeTick?.ltp && freshHedgeTick.ltp > 0 ? Number(freshHedgeTick.ltp) : hedgePrice;
+    const effectiveNetDebit = effectiveStrategyMode === "SPREAD" ? Math.max(0.1, effectiveEntryPrice - effectiveHedgePrice) : effectiveEntryPrice;
+
     deployPracticeTrade({
       idempotencyKey,
       symbol,
       underlyingSymbol: underlying,
       strikePrice,
       optionType,
-      entryPrice,
+      entryPrice: effectiveEntryPrice,
       stopLoss,
       targetPrice,
       quantity: effectiveLots,
@@ -764,8 +876,8 @@ export const OrderPadSection = React.memo(function OrderPadSection() {
       feedMode,
       strategyMode: effectiveStrategyMode,
       hedgeStrike: effectiveStrategyMode === "SPREAD" ? hedgeStrike : null,
-      hedgePrice: effectiveStrategyMode === "SPREAD" ? hedgePrice : 0,
-      netDebit: effectiveStrategyMode === "SPREAD" ? netEntryPrice : entryPrice,
+      hedgePrice: effectiveStrategyMode === "SPREAD" ? effectiveHedgePrice : 0,
+      netDebit: effectiveNetDebit,
       entryReason: `${effectiveStrategyMode === "SPREAD" ? "Defined-Risk Spread" : "ATM Scalp"} · R:R 1:${rrRatio}`
     });
 
@@ -875,6 +987,18 @@ export const OrderPadSection = React.memo(function OrderPadSection() {
                 {underlying} {strikePrice} {optionType === "CALL" ? "CE" : "PE"}
               </strong>
 
+              {isLiveStreaming && (
+                <span className={clsx(
+                  "text-[9px] font-mono font-extrabold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm",
+                  isMarketHours
+                    ? "text-emerald-300 bg-emerald-500/15 border border-emerald-500/35 shadow-[0_0_8px_rgba(16,185,129,0.2)]"
+                    : "text-amber-300 bg-amber-500/15 border border-amber-500/35 shadow-[0_0_8px_rgba(245,158,11,0.2)]"
+                )}>
+                  <span className={clsx("w-1.5 h-1.5 rounded-full", isMarketHours ? "bg-emerald-400 animate-ping" : "bg-amber-400")} />
+                  <span>{isMarketHours ? "LIVE CONNECTED" : "SESSION CLOSED"}</span>
+                </span>
+              )}
+
               <span className="text-slate-600 hidden sm:inline">·</span>
 
               <span className={clsx("text-[9px] font-extrabold uppercase px-2.5 py-0.5 rounded-full border shadow-sm whitespace-nowrap shrink-0", copilotState.badgeBg)}>
@@ -927,12 +1051,14 @@ export const OrderPadSection = React.memo(function OrderPadSection() {
                   "px-2.5 py-1 rounded-lg border transition flex items-center gap-1.5 text-[10px] font-bold font-mono cursor-pointer active:scale-95 shadow-sm",
                   isScanning 
                     ? "bg-cyan-500/30 text-cyan-200 border-cyan-400/50 cursor-wait" 
-                    : "bg-white/[0.06] hover:bg-white/15 text-cyan-300 hover:text-white border-white/15"
+                    : isLiveStreaming
+                      ? "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 hover:text-white border-emerald-500/30"
+                      : "bg-white/[0.06] hover:bg-white/15 text-cyan-300 hover:text-white border-white/15"
                 )}
-                title="Re-scan live Upstox v2 12-Filter Quantitative Gate"
+                title={isLiveStreaming ? "Live tick streaming active. Click to force full 12-Filter Quantitative Gate re-scan." : "Re-scan live Upstox v2 12-Filter Quantitative Gate"}
               >
-                <RefreshCw className={clsx("w-3 h-3 text-cyan-400", isScanning && "animate-spin text-cyan-300")} />
-                <span>{isScanning ? "Scanning Upstox..." : "Live Refresh"}</span>
+                <RefreshCw className={clsx("w-3 h-3", isScanning ? "animate-spin text-cyan-300" : isLiveStreaming ? "text-emerald-400" : "text-cyan-400")} />
+                <span>{isScanning ? "Scanning Upstox..." : isLiveStreaming ? "Live Connected" : "Live Refresh"}</span>
               </button>
 
               <button
@@ -1176,13 +1302,60 @@ export const OrderPadSection = React.memo(function OrderPadSection() {
                 <Zap className="w-3 h-3 text-cyan-400" />
                 <span>Entry / LTP</span>
               </span>
-              <span className="text-[9px] text-slate-500">LIMIT</span>
+              {isLiveStreaming ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playTabSwitchTone();
+                    setIsLiveStreaming(false);
+                  }}
+                  className="px-2 py-0.5 rounded-full text-[9px] font-extrabold font-mono flex items-center gap-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-[0_0_8px_rgba(16,185,129,0.3)] hover:bg-emerald-500/30 transition active:scale-95 cursor-pointer"
+                  title="Live real-time tick streaming active. Click to lock price for manual limit entry."
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                  <span>LIVE TICK</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playTabSwitchTone();
+                    setIsLiveStreaming(true);
+                  }}
+                  className="px-2 py-0.5 rounded-full text-[9px] font-extrabold font-mono flex items-center gap-1 bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25 transition active:scale-95 cursor-pointer"
+                  title="Price locked for manual entry. Click to resume live real-time tick streaming from Upstox."
+                >
+                  <Lock className="w-2.5 h-2.5 text-amber-400" />
+                  <span>LOCKED</span>
+                </button>
+              )}
             </div>
             <div className="flex items-baseline justify-between gap-1">
-              <strong className="text-base font-black text-white tracking-tight">
-                ₹{Number(entryPrice).toFixed(2)}
-              </strong>
-              <span className="text-[10px] text-slate-400">
+              <div className="flex items-center gap-1.5">
+                <strong className={clsx(
+                  "text-base font-black tracking-tight transition-colors duration-300",
+                  isLiveStreaming && liveContractTick?.direction === "up" && "text-emerald-300",
+                  isLiveStreaming && liveContractTick?.direction === "down" && "text-rose-300",
+                  (!isLiveStreaming || !liveContractTick) && "text-white"
+                )}>
+                  ₹{Number(entryPrice).toFixed(2)}
+                </strong>
+                {isLiveStreaming && liveContractTick?.direction === "up" && (
+                  <span className="text-[10px] text-emerald-400 font-bold animate-pulse">▲</span>
+                )}
+                {isLiveStreaming && liveContractTick?.direction === "down" && (
+                  <span className="text-[10px] text-rose-400 font-bold animate-pulse">▼</span>
+                )}
+                {liveContractTick?.change != null && (
+                  <span className={clsx(
+                    "text-[9px] font-bold px-1.5 py-0.2 rounded font-mono",
+                    liveContractTick.change >= 0 ? "text-emerald-400/90 bg-emerald-500/10" : "text-rose-400/90 bg-rose-500/10"
+                  )}>
+                    {liveContractTick.change >= 0 ? "+" : ""}{Number(liveContractTick.change).toFixed(1)}
+                  </span>
+                )}
+              </div>
+              <span className="text-[10px] text-slate-400 font-mono">
                 {lots} {lots === 1 ? "lot" : "lots"} ({totalQty} Qty)
               </span>
             </div>
@@ -2013,7 +2186,11 @@ export const OrderPadSection = React.memo(function OrderPadSection() {
                 <input
                   type="number"
                   value={entryPrice}
-                  onChange={(e) => setEntryPrice(Number(e.target.value))}
+                  onFocus={handleManualInputFocus}
+                  onChange={(e) => {
+                    handleManualInputFocus();
+                    setEntryPrice(Number(e.target.value));
+                  }}
                   step="0.05"
                   className="w-full bg-white/[0.03] border border-white/10 rounded-xl px-3 py-2 text-white font-mono font-bold focus:outline-none focus:border-cyan-500/50"
                 />
@@ -2101,7 +2278,11 @@ export const OrderPadSection = React.memo(function OrderPadSection() {
                   <input
                     type="number"
                     value={hedgeStrike}
-                    onChange={(e) => setHedgeStrike(Number(e.target.value))}
+                    onFocus={handleManualInputFocus}
+                    onChange={(e) => {
+                      handleManualInputFocus();
+                      setHedgeStrike(Number(e.target.value));
+                    }}
                     step="50"
                     className="w-full bg-white/[0.03] border border-white/10 rounded-xl px-3 py-2 text-white font-mono font-bold"
                   />
@@ -2111,7 +2292,11 @@ export const OrderPadSection = React.memo(function OrderPadSection() {
                   <input
                     type="number"
                     value={hedgePrice}
-                    onChange={(e) => setHedgePrice(Number(e.target.value))}
+                    onFocus={handleManualInputFocus}
+                    onChange={(e) => {
+                      handleManualInputFocus();
+                      setHedgePrice(Number(e.target.value));
+                    }}
                     step="0.05"
                     className="w-full bg-white/[0.03] border border-white/10 rounded-xl px-3 py-2 text-white font-mono font-bold"
                   />
@@ -2139,6 +2324,7 @@ export const OrderPadSection = React.memo(function OrderPadSection() {
                         key={item.pts}
                         type="button"
                         onClick={() => {
+                          handleManualInputFocus();
                           setStopLoss(Number((entryPrice - item.pts).toFixed(2)));
                           soundEngine.playTabSwitchTone();
                         }}
@@ -2158,7 +2344,11 @@ export const OrderPadSection = React.memo(function OrderPadSection() {
                 <input
                   type="number"
                   value={stopLoss}
-                  onChange={(e) => setStopLoss(Number(e.target.value))}
+                  onFocus={handleManualInputFocus}
+                  onChange={(e) => {
+                    handleManualInputFocus();
+                    setStopLoss(Number(e.target.value));
+                  }}
                   step="0.05"
                   className="w-full bg-rose-500/10 border border-rose-500/30 rounded-xl px-3 py-2 text-white font-mono font-bold focus:outline-none focus:border-rose-500"
                 />
@@ -2180,6 +2370,7 @@ export const OrderPadSection = React.memo(function OrderPadSection() {
                         key={tier.pts}
                         type="button"
                         onClick={() => {
+                          handleManualInputFocus();
                           setTargetPrice(Number((entryPrice + tier.pts).toFixed(2)));
                           soundEngine.playTabSwitchTone();
                         }}
@@ -2199,7 +2390,11 @@ export const OrderPadSection = React.memo(function OrderPadSection() {
                 <input
                   type="number"
                   value={targetPrice}
-                  onChange={(e) => setTargetPrice(Number(e.target.value))}
+                  onFocus={handleManualInputFocus}
+                  onChange={(e) => {
+                    handleManualInputFocus();
+                    setTargetPrice(Number(e.target.value));
+                  }}
                   step="0.05"
                   className="w-full bg-emerald-500/10 border border-emerald-500/30 rounded-xl px-3 py-2 text-white font-mono font-bold focus:outline-none focus:border-emerald-500"
                 />

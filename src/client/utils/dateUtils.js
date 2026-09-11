@@ -126,3 +126,16 @@ export function getRelativeTimeStr(input) {
   const diffDays = Math.floor(diffHours / 24);
   return `${diffDays}d ago`;
 }
+
+/**
+ * Checks if current time is within Indian Stock Market hours (9:15 AM - 3:30 PM IST, Mon-Fri).
+ */
+export function isIndianMarketOpenHours() {
+  const now = new Date();
+  const istOffsetMs = 5.5 * 60 * 60 * 1000;
+  const istDate = new Date(now.getTime() + (now.getTimezoneOffset() * 60 * 1000) + istOffsetMs);
+  const day = istDate.getDay();
+  if (day === 0 || day === 6) return false;
+  const totalMins = istDate.getHours() * 60 + istDate.getMinutes();
+  return totalMins >= 9 * 60 + 15 && totalMins <= 15 * 60 + 30;
+}

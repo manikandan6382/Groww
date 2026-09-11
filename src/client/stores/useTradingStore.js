@@ -628,6 +628,12 @@ export const useTradingStore = create((set, get) => ({
   simulatorActiveTradeId: null, // null (OrderPad Draft) | tradeId (Active Practice Trade)
   setSimulatorActiveTradeId: (id) => set({ simulatorActiveTradeId: id }),
 
+  // Active Order Pad Contract Watched Live (Streams real-time Upstox ticks before deployment)
+  activePadSymbol: "NIFTY 23450 PE",
+  setActivePadSymbol: (symbol) => set((state) => (state.activePadSymbol !== symbol ? { activePadSymbol: symbol } : state)),
+  activeHedgeSymbol: null,
+  setActiveHedgeSymbol: (symbol) => set((state) => (state.activeHedgeSymbol !== symbol ? { activeHedgeSymbol: symbol } : state)),
+
   // Dual Broker Hub Status
   brokerStatus: {
     kiteConnected: true,
@@ -837,7 +843,7 @@ export const useTradingStore = create((set, get) => ({
         body: JSON.stringify({
           idempotencyKey: newTrade.idempotencyKey,
           symbol: newTrade.symbol,
-          underlyingSymbol: newTrade.underlyingSymbol || (newTrade.symbol.includes("BANK") ? "BANKNIFTY" : "NIFTY"),
+          underlyingSymbol: newTrade.underlyingSymbol || (newTrade.symbol.includes("SENSEX") ? "SENSEX" : newTrade.symbol.includes("BANK") ? "BANKNIFTY" : newTrade.symbol.includes("FIN") ? "FINNIFTY" : "NIFTY"),
           strikePrice: newTrade.strikePrice || Number((newTrade.symbol.match(/\d+/) || [24000])[0]),
           entryPrice: newTrade.entryPrice,
           targetPrice: newTrade.targetPrice,
@@ -1903,9 +1909,16 @@ export const useTradingStore = create((set, get) => ({
     );
     const merged = [...normalizedOpen, ...pendingLocal];
 
-    // Quick identity check to avoid unnecessary state triggers
+    // Quick identity check to avoid unnecessary state triggers (must compare SL and TP so server calibrations propagate)
     if (currentAlerts.length === merged.length && currentAlerts.length > 0) {
-      const allMatch = currentAlerts.every((c, i) => (c.serverId || c.id) === (merged[i].serverId || merged[i].id) && c.lastMarkPrice === merged[i].lastMarkPrice);
+      const allMatch = currentAlerts.every(
+        (c, i) =>
+          (c.serverId || c.id) === (merged[i].serverId || merged[i].id) &&
+          c.lastMarkPrice === merged[i].lastMarkPrice &&
+          c.stopLoss === merged[i].stopLoss &&
+          c.targetPrice === merged[i].targetPrice &&
+          c.quantity === merged[i].quantity
+      );
       if (allMatch) return;
     }
 

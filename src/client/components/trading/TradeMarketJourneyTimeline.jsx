@@ -34,7 +34,10 @@ import {
   Brain,
   FileText,
   BarChart2,
-  CandlestickChart
+  CandlestickChart,
+  Calendar,
+  CalendarDays,
+  Sun
 } from 'lucide-react';
 import clsx from 'clsx';
 import { soundEngine } from '../../utils/soundEngine';
@@ -128,6 +131,206 @@ function calculateSplinePath(points) {
   return d;
 }
 
+// Resolves flight scope window timestamps, labels, and step counts for scalp, day, week, and month
+function resolveFlightScopeWindow(fromTime, exitTime, flightScope = 'scalp', trade = {}) {
+  if (flightScope === 'scalp') {
+    return {
+      toTime: exitTime,
+      scopeLabel: 'Active Scalp',
+      subLabel: 'Entry to Exit',
+      postSteps: 0
+    };
+  }
+
+  const symbol = String(trade?.symbol || trade?.tradingsymbol || '').toUpperCase();
+  const isSensex = symbol.includes('SENSEX');
+  const targetDayOfWeek = isSensex ? 5 : 4; // 5 = Friday (BSE), 4 = Thursday (NSE)
+
+  if (flightScope === 'day' || flightScope === 'expiry') {
+    const d = new Date(fromTime);
+    d.setHours(15, 30, 0, 0);
+    let dayEnd = d.getTime();
+    if (dayEnd <= fromTime) {
+      dayEnd = Math.max(exitTime, fromTime + 4 * 3600 * 1000);
+    }
+    return {
+      toTime: dayEnd,
+      scopeLabel: 'Day Expiry',
+      subLabel: 'Daily 15:30 IST Close',
+      postSteps: 18
+    };
+  }
+
+  if (flightScope === 'week') {
+    if (trade?.expiryDatetime) {
+      const expMs = new Date(trade.expiryDatetime).getTime();
+      if (expMs > fromTime && expMs <= fromTime + 8 * 86400000) {
+        return {
+          toTime: expMs,
+          scopeLabel: 'Weekly Expiry',
+          subLabel: `Weekly Settlement (${trade.expiryDate || 'Active Week'})`,
+          postSteps: 26
+        };
+      }
+    }
+
+    const d = new Date(fromTime);
+    d.setHours(15, 30, 0, 0);
+    const day = d.getDay();
+    let diff = (targetDayOfWeek - day + 7) % 7;
+    if (diff === 0 && d.getTime() <= fromTime) {
+      diff = 7;
+    }
+    d.setDate(d.getDate() + diff);
+    return {
+      toTime: d.getTime(),
+      scopeLabel: 'Weekly Expiry',
+      subLabel: `${isSensex ? 'Friday' : 'Thursday'} 15:30 Settlement`,
+      postSteps: 26
+    };
+  }
+
+  if (flightScope === 'month') {
+    const d = new Date(fromTime);
+    const year = d.getFullYear();
+    const month = d.getMonth();
+
+    const lastDay = new Date(year, month + 1, 0, 15, 30, 0, 0);
+    while (lastDay.getDay() !== targetDayOfWeek) {
+      lastDay.setDate(lastDay.getDate() - 1);
+    }
+
+    let monthExp = lastDay.getTime();
+    if (monthExp <= fromTime) {
+      const nextMonthLastDay = new Date(year, month + 2, 0, 15, 30, 0, 0);
+      while (nextMonthLastDay.getDay() !== targetDayOfWeek) {
+        nextMonthLastDay.setDate(nextMonthLastDay.getDate() - 1);
+      }
+      monthExp = nextMonthLastDay.getTime();
+    }
+
+    return {
+      toTime: monthExp,
+      scopeLabel: 'Monthly Expiry',
+      subLabel: `Month-End ${isSensex ? 'Friday' : 'Thursday'} 15:30`,
+      postSteps: 34
+    };
+  }
+
+  return {
+    toTime: exitTime,
+    scopeLabel: 'Active Scalp',
+    subLabel: 'Entry to Exit',
+    postSteps: 0
+  };
+}
+
+// Adaptive timestamp formatter: returns "HH:MM AM/PM" for same day, or "D MMM, HH:MM AM/PM" for multi-day ranges
+function formatTimelineLabel(timestampOrStr, isMultiDay = false) {
+  if (!timestampOrStr) return '--:--';
+  try {
+    const s = String(timestampOrStr);
+    const d = typeof timestampOrStr === 'number'
+      ? new Date(timestampOrStr)
+      : new Date(s.includes('+') || s.includes('Z') ? s : s + '+05:30');
+    if (isMultiDay) {
+      const datePart = d.toLocaleDateString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        day: 'numeric',
+        month: 'short'
+      });
+      const timePart = d.toLocaleTimeString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+      });
+      return `${datePart} ${timePart}`;
+    }
+    return d.toLocaleTimeString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
+  } catch {
+    return '--:--';
+  }
+}
+
+// Market Session Timestamp Generator: Clamps all multi-day simulated steps strictly to 09:15-15:30 IST, skipping weekends & nights
+function getMarketSessionTimestamps(fromMs, toMs, count) {
+  if (count <= 1 || fromMs >= toMs) return [toMs];
+
+  const curr = new Date(fromMs);
+  const target = new Date(toMs);
+
+  // Single-day span: direct linear time interpolation within session
+  if (curr.toDateString() === target.toDateString()) {
+    const step = (toMs - fromMs) / Math.max(1, count - 1);
+    const ts = [];
+    for (let i = 0; i < count; i++) {
+      ts.push(Math.round(fromMs + i * step));
+    }
+    return ts;
+  }
+
+  // Multi-day market hours distributor: collect active trading dates (Mon-Fri)
+  const tradingDays = [];
+  const d = new Date(curr);
+  d.setHours(0, 0, 0, 0);
+  const endD = new Date(target);
+  endD.setHours(0, 0, 0, 0);
+
+  while (d.getTime() <= endD.getTime()) {
+    const dayOfWeek = d.getDay();
+    if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+      tradingDays.push(new Date(d));
+    }
+    d.setDate(d.getDate() + 1);
+  }
+
+  if (tradingDays.length <= 1) {
+    const step = (toMs - fromMs) / Math.max(1, count - 1);
+    const ts = [];
+    for (let i = 0; i < count; i++) {
+      ts.push(Math.round(fromMs + i * step));
+    }
+    return ts;
+  }
+
+  const result = [];
+  for (let i = 0; i < count; i++) {
+    const progress = i / Math.max(1, count - 1);
+    const dayProgress = progress * (tradingDays.length - 1);
+    const dayIdx = Math.min(tradingDays.length - 1, Math.floor(dayProgress));
+    const intraDayProgress = dayProgress - dayIdx;
+
+    const sessionDay = new Date(tradingDays[dayIdx]);
+    let minMinute = 555; // 09:15 IST
+    let maxMinute = 930; // 15:30 IST
+
+    if (dayIdx === 0) {
+      const currMin = curr.getHours() * 60 + curr.getMinutes();
+      minMinute = Math.max(555, Math.min(925, currMin));
+    }
+    if (dayIdx === tradingDays.length - 1) {
+      const targetMin = target.getHours() * 60 + target.getMinutes();
+      maxMinute = Math.max(560, Math.min(930, targetMin));
+    }
+    if (minMinute >= maxMinute) maxMinute = Math.min(930, minMinute + 15);
+
+    const minuteOfDay = minMinute + intraDayProgress * (maxMinute - minMinute);
+    const hours = Math.floor(minuteOfDay / 60);
+    const mins = Math.floor(minuteOfDay % 60);
+
+    sessionDay.setHours(hours, mins, 0, 0);
+    result.push(sessionDay.getTime());
+  }
+
+  return result;
+}
+
 // Multi-Scenario Flight Path Generator:
 // Supports "rollercoaster" (100 -> 110 -> 90), "direct" (100 -> 90), and "target" (100 -> 120)
 // Uses smooth polynomial easing curves and discrete ₹0.05 tick quantization (ZERO fake Math.sin noise)
@@ -142,17 +345,8 @@ function synthesizeMarketFlightPath(trade, scenarioVariant = 'rollercoaster', fl
   const fromTime = new Date(trade.entryDatetime || Date.now() - 20 * 60000).getTime();
   const exitTime = new Date(trade.exitDatetime || Date.now()).getTime();
 
-  let toTime = exitTime;
-  if (flightScope === 'expiry') {
-    let expDate = trade.expiryDatetime ? new Date(trade.expiryDatetime).getTime() : null;
-    if (!expDate || expDate <= fromTime) {
-      const d = new Date(fromTime);
-      d.setHours(15, 30, 0, 0);
-      expDate = d.getTime();
-      if (expDate <= fromTime) expDate = fromTime + 4 * 3600 * 1000;
-    }
-    toTime = expDate;
-  }
+  const scopeWindow = resolveFlightScopeWindow(fromTime, exitTime, flightScope, trade);
+  const toTime = scopeWindow.toTime;
 
   const isTarget = closeReason.includes('TARGET') || scenarioVariant === 'target';
   const isStop = closeReason.includes('STOP') || exitPrice <= (stopLoss || entryPrice * 0.95);
@@ -178,12 +372,13 @@ function synthesizeMarketFlightPath(trade, scenarioVariant = 'rollercoaster', fl
   const candles = [];
   let prevClose = entryPrice;
 
-  if (flightScope === 'expiry') {
+  if (flightScope !== 'scalp') {
     const scalpSteps = 16;
-    const postSteps = 18;
+    const postSteps = scopeWindow.postSteps || 18;
     const totalSteps = scalpSteps + postSteps;
     const scalpStepMs = Math.max(1000, (exitTime - fromTime) / scalpSteps);
     const postStepMs = Math.max(1000, (toTime - exitTime) / postSteps);
+    const postTimestamps = getMarketSessionTimestamps(exitTime, toTime, postSteps + 1);
 
     for (let i = 0; i <= totalSteps; i++) {
       let t;
@@ -235,12 +430,20 @@ function synthesizeMarketFlightPath(trade, scenarioVariant = 'rollercoaster', fl
         isPostExit = true;
         const postIdx = i - scalpSteps;
         const progress = postIdx / postSteps;
-        t = exitTime + postIdx * postStepMs;
+        t = postTimestamps[postIdx] ?? (exitTime + postIdx * postStepMs);
 
-        const decayCurve = Math.pow(progress, 0.85);
-        p = exitPrice + (terminalIntrinsic - exitPrice) * decayCurve;
-        if (terminalIntrinsic <= 0.05 && progress > 0.6) {
-          p = Math.max(0.05, p * (1 - (progress - 0.6) * 1.5));
+        // Black-Scholes Quadratic Theta Decay Curve:
+        // Extrinsic time value decays proportional to sqrt(tau), accelerating as expiry approaches
+        const tau = Math.max(0, 1 - progress);
+        const sqrtDecay = Math.sqrt(tau);
+        const thetaCrush = Math.pow(progress, 1.8);
+
+        if (terminalIntrinsic <= 0.05) {
+          // Out-of-the-Money Option Decay: Rapid crush toward zero at expiry
+          p = Math.max(0.05, exitPrice * sqrtDecay * Math.max(0.02, 1 - thetaCrush));
+        } else {
+          // In-The-Money / At-The-Money Option: Converges gracefully to terminal intrinsic
+          p = terminalIntrinsic + (exitPrice - terminalIntrinsic) * sqrtDecay;
         }
       }
 
@@ -408,6 +611,7 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
   const rAFRef = useRef(null);
   const pendingClientX = useRef(null);
   const replayTimerRef = useRef(null);
+  const requestIdRef = useRef(0);
 
   const [containerWidth, setContainerWidth] = useState(860);
   const [candleData, setCandleData] = useState(null);
@@ -501,16 +705,19 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
 
   // Fetch or Synthesize Trade Journey Candles with Bounded LRU Cache & AbortController Resilience
   useEffect(() => {
+    const currentReqId = ++requestIdRef.current;
     const cacheKey = `timeline_${trade?.tokenKey || symbol}_${entryTime}_${exitTime}_${entryPrice}_${exitPrice}_${scenarioVariant}_${flightScope}`;
     const cached = getCachedTimeline(cacheKey);
     if (cached) {
-      setCandleData(cached);
-      setIsLoading(false);
+      if (currentReqId === requestIdRef.current) {
+        setCandleData(cached);
+        setIsLoading(false);
+      }
       return;
     }
 
-    // Check if real ticks are already stored on trade record
-    if (trade.priceHistory && Array.isArray(trade.priceHistory) && trade.priceHistory.length >= 2) {
+    // Check if real ticks are already stored on trade record (only for active scalp)
+    if (flightScope === 'scalp' && trade.priceHistory && Array.isArray(trade.priceHistory) && trade.priceHistory.length >= 2) {
       const excursions = calculateDirectionalExcursions(direction, entryPrice, trade.priceHistory);
       const liveData = {
         success: true,
@@ -524,8 +731,10 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
         mae: excursions.mae
       };
       setCachedTimeline(cacheKey, liveData);
-      setCandleData(liveData);
-      setIsLoading(false);
+      if (currentReqId === requestIdRef.current) {
+        setCandleData(liveData);
+        setIsLoading(false);
+      }
       return;
     }
 
@@ -538,8 +747,9 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
       exitPrice: String(exitPrice),
       closeReason,
     });
-    if (flightScope === 'expiry') {
+    if (flightScope !== 'scalp') {
       params.set('toExpiry', 'true');
+      params.set('flightScope', flightScope);
       if (trade.expiryDatetime) params.set('expiryTime', trade.expiryDatetime);
     }
     if (targetPrice) params.set('targetPrice', String(targetPrice));
@@ -554,7 +764,7 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
     fetch(`/api/market/trade-candles?${params.toString()}`, { signal: abortController.signal })
       .then((res) => res.json())
       .then((data) => {
-        if (abortController.signal.aborted) return;
+        if (abortController.signal.aborted || currentReqId !== requestIdRef.current) return;
         if (data.success && data.candles?.length >= 2 && data.source === 'upstox') {
           const excursions = calculateDirectionalExcursions(direction, entryPrice, data.candles);
           const enrichedData = {
@@ -563,8 +773,10 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
             mae: excursions.mae
           };
           setCachedTimeline(cacheKey, enrichedData);
-          setCandleData(enrichedData);
-          setIsLoading(false);
+          if (currentReqId === requestIdRef.current) {
+            setCandleData(enrichedData);
+            setIsLoading(false);
+          }
         } else {
           const fallbackCandles = synthesizeMarketFlightPath(trade, scenarioVariant, flightScope);
           const excursions = calculateDirectionalExcursions(direction, entryPrice, fallbackCandles);
@@ -580,12 +792,14 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
             mae: excursions.mae
           };
           setCachedTimeline(cacheKey, fallbackData);
-          setCandleData(fallbackData);
-          setIsLoading(false);
+          if (currentReqId === requestIdRef.current) {
+            setCandleData(fallbackData);
+            setIsLoading(false);
+          }
         }
       })
       .catch((err) => {
-        if (err?.name === 'AbortError' || abortController.signal.aborted) {
+        if (err?.name === 'AbortError' || abortController.signal.aborted || currentReqId !== requestIdRef.current) {
           return;
         }
         const fallbackCandles = synthesizeMarketFlightPath(trade, scenarioVariant, flightScope);
@@ -601,8 +815,10 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
           mfe: excursions.mfe,
           mae: excursions.mae
         };
-        setCandleData(fallbackData);
-        setIsLoading(false);
+        if (currentReqId === requestIdRef.current) {
+          setCandleData(fallbackData);
+          setIsLoading(false);
+        }
       });
 
     return () => {
@@ -698,11 +914,34 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
 
     const maxVol = Math.max(...displayCandles.map(c => Number(c.volume || 1000)), 1000);
 
+    // Dual-Zone Non-Linear Horizontal Scaling:
+    // In multi-day or extended expiry scopes, allocating 44% of canvas width to the active execution window (0 to exitIdx)
+    // and 56% to post-exit drift to settlement ensures intra-trade price action is never compressed into an unreadable 2% sliver.
+    let resolvedExitIdx = displayCandles.findIndex(c => c.isExitPoint);
+    if (resolvedExitIdx === -1) {
+      const postExitFirst = displayCandles.findIndex(c => c.isPostExit);
+      if (postExitFirst > 0) resolvedExitIdx = postExitFirst - 1;
+    }
+
+    const useDualZone = flightScope !== 'scalp' && resolvedExitIdx > 0 && resolvedExitIdx < displayCandles.length - 1;
+    const executionZoneRatio = 0.44; // 44% of canvas width for active execution
+    const executionWidth = graphWidth * executionZoneRatio;
+    const postExitWidth = graphWidth * (1 - executionZoneRatio);
+
     const pts = displayCandles.map((c, i) => {
       const p = c.close ?? c.price;
       
-      // Uniform linear time series mapping across entire flight path
-      const x = padding.left + (i / (displayCandles.length - 1 || 1)) * graphWidth;
+      let x;
+      if (useDualZone) {
+        if (i <= resolvedExitIdx) {
+          x = padding.left + (i / resolvedExitIdx) * executionWidth;
+        } else {
+          const postRatio = (i - resolvedExitIdx) / ((displayCandles.length - 1) - resolvedExitIdx);
+          x = padding.left + executionWidth + postRatio * postExitWidth;
+        }
+      } else {
+        x = padding.left + (i / (displayCandles.length - 1 || 1)) * graphWidth;
+      }
 
       const y = scaleY(p);
       const openP = c.open ?? p;
@@ -739,7 +978,7 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
       }
     });
 
-    const exitPoint = pts.find(p => p.isExitPoint) || pts.find(p => {
+    const exitPoint = (resolvedExitIdx !== -1 && pts[resolvedExitIdx]) || pts.find(p => p.isExitPoint) || pts.find(p => {
       const exitMs = new Date(exitTime || Date.now()).getTime();
       return Math.abs(p.timestamp - exitMs) < 60000;
     }) || pts[Math.min(pts.length - 1, 16)];
@@ -913,7 +1152,9 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
         e.preventDefault();
         soundEngine.playTabSwitchTone?.();
         setFlightScope((prev) => {
-          const next = prev === 'scalp' ? 'expiry' : 'scalp';
+          const scopes = ['scalp', 'day', 'week', 'month'];
+          const currentIdx = Math.max(0, scopes.indexOf(prev === 'expiry' ? 'day' : prev));
+          const next = scopes[(currentIdx + 1) % scopes.length];
           if (typeof onSwitchFlightScope === 'function') {
             onSwitchFlightScope(next);
           }
@@ -937,9 +1178,20 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
     if (pendingClientX.current === null || !renderedPoints.length || !containerRef.current) return;
     const activeContainer = isStudioModalOpen && studioContainerRef.current ? studioContainerRef.current : containerRef.current;
     const rect = activeContainer.getBoundingClientRect();
-    const mouseX = pendingClientX.current - rect.left - padding.left;
-    const ratio = Math.max(0, Math.min(1, mouseX / graphWidth));
-    const index = Math.round(ratio * (renderedPoints.length - 1));
+    const cursorX = pendingClientX.current - rect.left;
+
+    // Direct Nearest-Point Snap:
+    // Guarantees 100% pixel-perfect scrub tracking across both non-linear Dual-Zone and linear scales.
+    let index = 0;
+    let minDistance = Infinity;
+    for (let i = 0; i < renderedPoints.length; i++) {
+      const dist = Math.abs(renderedPoints[i].x - cursorX);
+      if (dist < minDistance) {
+        minDistance = dist;
+        index = i;
+      }
+    }
+
     setScrubIndex((prev) => {
       if (prev !== index) {
         triggerScrubHaptic();
@@ -949,7 +1201,7 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
       }
       return index;
     });
-  }, [renderedPoints, graphWidth, padding.left, isStudioModalOpen, peakPoint, troughPoint, exitPoint]);
+  }, [renderedPoints, isStudioModalOpen, peakPoint, troughPoint, exitPoint]);
 
   const updateScrubFromClientX = useCallback((clientX) => {
     pendingClientX.current = clientX;
@@ -1076,13 +1328,24 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
     };
   }, [isTargetHit, isStopHit, targetPrice, stopLoss, entryPrice, exitPrice, stopDisciplineDelta, grossPts]);
 
+  // Multi-Day span detector for week/month scopes
+  const isMultiDay = useMemo(() => {
+    if (flightScope === 'week' || flightScope === 'month') return true;
+    if (allPoints.length < 2) return false;
+    const t0 = new Date(allPoints[0].time || allPoints[0].timestamp).toLocaleDateString();
+    const tEnd = new Date(allPoints[allPoints.length - 1].time || allPoints[allPoints.length - 1].timestamp).toLocaleDateString();
+    return t0 !== tEnd;
+  }, [flightScope, allPoints]);
+
   const scrubTelemetry = useMemo(() => {
     if (!currentActivePoint) return null;
-    const currentP = currentActivePoint.close;
+    const currentP = Number(currentActivePoint.close ?? currentActivePoint.price ?? entryPrice);
     const ptsDelta = isShort ? entryPrice - currentP : currentP - entryPrice;
     const rupeesDelta = ptsDelta * totalQty;
     const isNetGain = currentP >= netZeroPrice;
-    const pctReturn = entryPrice > 0 ? ((ptsDelta / entryPrice) * 100).toFixed(1) : 0;
+    const pctReturn = (entryPrice > 0 && Number.isFinite(ptsDelta)) 
+      ? ((ptsDelta / entryPrice) * 100).toFixed(1) 
+      : "0.0";
 
     const distToTarget = targetPrice ? Math.abs(targetPrice - currentP) : null;
     const distToStop = stopLoss ? Math.abs(currentP - stopLoss) : null;
@@ -1095,22 +1358,22 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
     const counterfactualAlpha = Number((counterfactualNet - Number(trade.netPnl || 0)).toFixed(2));
 
     return {
-      currentP,
-      ptsDelta: Number(ptsDelta.toFixed(2)),
-      rupeesDelta: Number(rupeesDelta.toFixed(2)),
+      currentP: Number.isFinite(currentP) ? currentP : entryPrice,
+      ptsDelta: Number.isFinite(ptsDelta) ? Number(ptsDelta.toFixed(2)) : 0,
+      rupeesDelta: Number.isFinite(rupeesDelta) ? Number(rupeesDelta.toFixed(2)) : 0,
       pctReturn,
       isNetGain,
-      distToTarget: distToTarget !== null ? Number(distToTarget.toFixed(2)) : null,
-      distToStop: distToStop !== null ? Number(distToStop.toFixed(2)) : null,
-      distToPeak: Number(distToPeak.toFixed(2)),
-      distToTrough: Number(distToTrough.toFixed(2)),
-      timeStr: formatTimeShort(currentActivePoint.time || currentActivePoint.timestamp),
+      distToTarget: (targetPrice !== null && distToTarget !== null && Number.isFinite(distToTarget)) ? Number(distToTarget.toFixed(2)) : null,
+      distToStop: (stopLoss !== null && distToStop !== null && Number.isFinite(distToStop)) ? Number(distToStop.toFixed(2)) : null,
+      distToPeak: Number.isFinite(distToPeak) ? Number(distToPeak.toFixed(2)) : 0,
+      distToTrough: Number.isFinite(distToTrough) ? Number(distToTrough.toFixed(2)) : 0,
+      timeStr: formatTimelineLabel(currentActivePoint.time || currentActivePoint.timestamp, isMultiDay),
       isPostExit: Boolean(currentActivePoint.isPostExit),
-      counterfactualNet,
-      counterfactualAlpha,
+      counterfactualNet: Number.isFinite(counterfactualNet) ? counterfactualNet : 0,
+      counterfactualAlpha: Number.isFinite(counterfactualAlpha) ? counterfactualAlpha : 0,
       index: currentActivePoint.index ?? 0
     };
-  }, [currentActivePoint, entryPrice, targetPrice, stopLoss, netZeroPrice, isShort, totalQty, charges, trade.netPnl, peakPrice, troughPrice]);
+  }, [currentActivePoint, entryPrice, targetPrice, stopLoss, netZeroPrice, isShort, totalQty, charges, trade.netPnl, peakPrice, troughPrice, isMultiDay]);
 
   // Active Live P&L for Background Watermark
   const activeWatermarkPnl = useMemo(() => {
@@ -1192,8 +1455,8 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
           {activeWatermarkPnl >= 0 ? "+" : ""}₹{Math.abs(activeWatermarkPnl).toFixed(2)}
         </text>
 
-        {/* 🛡️ R-MULTIPLE RISK ZONES SHADING (Suppressed in Start-to-Expiry Mode) */}
-        {flightScope !== 'expiry' && stopLoss !== null && stopY !== null && (
+        {/* 🛡️ R-MULTIPLE RISK ZONES SHADING (Suppressed in Extended Expiry Modes) */}
+        {flightScope === 'scalp' && stopLoss !== null && stopY !== null && (
           /* -1R Risk Cushion Box (Red Shading between Entry and Stop Loss) */
           <rect
             x={padding.left}
@@ -1209,7 +1472,7 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
           />
         )}
 
-        {flightScope !== 'expiry' && oneRY !== null && (
+        {flightScope === 'scalp' && oneRY !== null && (
           /* +1R Expansion Zone (Champagne Gold Shading between Entry and 1R) */
           <rect
             x={padding.left}
@@ -1265,9 +1528,47 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
         })}
 
         
-        {/* ⚡ Scalp Exit Line & Divider (In Start-to-Expiry View) */}
-        {flightScope === 'expiry' && exitPoint && (
+        {/* ⚡ Dual-Zone Visual Seam & Directional Badges (In Extended Expiry Views) */}
+        {flightScope !== 'scalp' && exitPoint && (
           <g className="transition-all duration-300">
+            {/* Ambient Glass Shade over Active Execution Zone */}
+            <rect
+              x={padding.left}
+              y={padding.top}
+              width={Math.max(0, exitPoint.x - padding.left)}
+              height={graphHeight}
+              fill="#0284c7"
+              fillOpacity="0.035"
+              className="pointer-events-none"
+            />
+
+            {/* Directional Zone Badges */}
+            <text
+              x={padding.left + 8}
+              y={padding.top + 13}
+              fill="#38bdf8"
+              fillOpacity="0.8"
+              fontSize={isMobile ? "8" : "9"}
+              fontFamily="monospace"
+              fontWeight="bold"
+              className="pointer-events-none select-none tracking-wider"
+            >
+              ◀ EXECUTION ZONE (44% ZOOM)
+            </text>
+            <text
+              x={exitPoint.x + 8}
+              y={padding.top + 13}
+              fill="#94a3b8"
+              fillOpacity="0.75"
+              fontSize={isMobile ? "8" : "9"}
+              fontFamily="monospace"
+              fontWeight="bold"
+              className="pointer-events-none select-none tracking-wider"
+            >
+              POST-EXIT DRIFT ▶
+            </text>
+
+            {/* Vertical Seam Line */}
             <line
               x1={exitPoint.x}
               y1={padding.top}
@@ -1278,7 +1579,9 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
               strokeWidth="1.5"
               strokeOpacity="0.8"
             />
-            <g transform={`translate(${Math.min(padding.left + graphWidth - 120, Math.max(padding.left + 5, exitPoint.x - 60))}, ${padding.top + 8})`}>
+
+            {/* Seam Badge Pill */}
+            <g transform={`translate(${Math.min(padding.left + graphWidth - 120, Math.max(padding.left + 5, exitPoint.x - 60))}, ${padding.top + 20})`}>
               <rect width="120" height="20" rx="6" fill="#082f49" stroke="#38bdf8" strokeOpacity="0.8" />
               <text x="60" y="14" textAnchor="middle" fill="#7dd3fc" fontSize="9.5" fontFamily="monospace" fontWeight="bold">
                 ⚡ Exit @ ₹{exitPrice.toFixed(1)}
@@ -1288,19 +1591,19 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
         )}
 
         {/* 🏁 Terminal Expiry Settlement Value Marker */}
-        {flightScope === 'expiry' && allPoints.length > 0 && (
+        {flightScope !== 'scalp' && allPoints.length > 0 && (
           <g className="transition-all duration-300">
             <g transform={`translate(${padding.left + graphWidth - 130}, ${bottomBaseY - 26})`}>
               <rect width="126" height="22" rx="6" fill={trade.terminalIntrinsic > 0 ? "#064e3b" : "#4c0519"} stroke={trade.terminalIntrinsic > 0 ? "#10b981" : "#f43f5e"} strokeOpacity="0.8" />
               <text x="63" y="15" textAnchor="middle" fill={trade.terminalIntrinsic > 0 ? "#a7f3d0" : "#fecdd3"} fontSize="9.5" fontFamily="monospace" fontWeight="bold">
-                🏁 15:30: ₹{Number(trade.terminalIntrinsic || 0).toFixed(1)}
+                🏁 {flightScope === 'day' || flightScope === 'expiry' ? '15:30' : flightScope === 'week' ? 'Wk Exp' : 'Mo Exp'}: ₹{Number(trade.terminalIntrinsic || 0).toFixed(1)}
               </text>
             </g>
           </g>
         )}
 
-        {/* 🟢 1. TARGET PRICE LEVEL (Suppressed in Start-to-Expiry Mode) */}
-        {flightScope !== 'expiry' && targetPrice !== null && targetY !== null && (
+        {/* 🟢 1. TARGET PRICE LEVEL (Suppressed in Extended Expiry Modes) */}
+        {flightScope === 'scalp' && targetPrice !== null && targetY !== null && (
           <g className="transition-all duration-300">
             <line
               x1={padding.left}
@@ -1327,8 +1630,8 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
           </g>
         )}
 
-        {/* ⚖️ 2. FRICTION-ADJUSTED TRUE BREAKEVEN LINE (Suppressed in Start-to-Expiry Mode) */}
-        {flightScope !== 'expiry' && netZeroY > 0 && Math.abs(netZeroY - entryY) > 2 && (
+        {/* ⚖️ 2. FRICTION-ADJUSTED TRUE BREAKEVEN LINE (Suppressed in Extended Expiry Modes) */}
+        {flightScope === 'scalp' && netZeroY > 0 && Math.abs(netZeroY - entryY) > 2 && (
           <g className="transition-all duration-300 opacity-80">
             <line
               x1={padding.left}
@@ -1375,8 +1678,8 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
           )}
         </g>
 
-        {/* 🔴 4. STOP LOSS LEVEL (Suppressed in Start-to-Expiry Mode) */}
-        {flightScope !== 'expiry' && stopLoss !== null && stopY !== null && (
+        {/* 🔴 4. STOP LOSS LEVEL (Suppressed in Extended Expiry Modes) */}
+        {flightScope === 'scalp' && stopLoss !== null && stopY !== null && (
           <g className="transition-all duration-300">
             <line
               x1={padding.left}
@@ -1536,7 +1839,7 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
         })()}
 
         {/* Path-Dependency Stop Invalidation Marker */}
-        {flightScope === 'expiry' && firstBreachPt && (
+        {flightScope !== 'scalp' && firstBreachPt && (
           <g transform={`translate(${firstBreachPt.x}, ${firstBreachPt.y})`}>
             <circle r="10" fill="#f43f5e" fillOpacity="0.25" className="animate-ping" />
             <circle r="5" fill="#f43f5e" stroke="#ffffff" strokeWidth="1.5" />
@@ -1644,12 +1947,18 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
             )}
 
             {/* TradingView-Style Dynamic Time Badge on Bottom X-Axis */}
-            <g transform={`translate(${Math.max(padding.left, Math.min(padding.left + graphWidth - 54, currentActivePoint.x - 27))}, ${chartH - 22})`}>
-              <rect width="54" height="18" rx="4" fill="#1c160c" stroke="rgba(255,255,255,0.45)" strokeWidth="0.9" />
-              <text x="27" y="13" textAnchor="middle" fill="#ffffff" fontSize="9" fontFamily="monospace" fontWeight="bold" className="tabular-nums">
-                {formatTimeShort(currentActivePoint.time || currentActivePoint.timestamp)}
-              </text>
-            </g>
+            {(() => {
+              const badgeText = formatTimelineLabel(currentActivePoint.time || currentActivePoint.timestamp, isMultiDay);
+              const badgeW = isMultiDay ? 94 : 54;
+              return (
+                <g transform={`translate(${Math.max(padding.left, Math.min(padding.left + graphWidth - badgeW, currentActivePoint.x - badgeW / 2))}, ${chartH - 22})`}>
+                  <rect width={badgeW} height="18" rx="4" fill="#1c160c" stroke="rgba(255,255,255,0.45)" strokeWidth="0.9" />
+                  <text x={badgeW / 2} y="13" textAnchor="middle" fill="#ffffff" fontSize="9" fontFamily="monospace" fontWeight="bold" className="tabular-nums">
+                    {badgeText}
+                  </text>
+                </g>
+              );
+            })()}
           </g>
         )}
 
@@ -1657,15 +1966,15 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
         {allPoints.length > 0 && (
           <g className="text-slate-400 text-[9.5px] font-mono tabular-nums" fill="#94a3b8">
             <text x={padding.left} y={chartH - 8} textAnchor="start">
-              {formatTimeShort(allPoints[0].time || allPoints[0].timestamp)}
+              {formatTimelineLabel(allPoints[0].time || allPoints[0].timestamp, isMultiDay)}
             </text>
             {allPoints[Math.floor(allPoints.length / 2)] && (
               <text x={allPoints[Math.floor(allPoints.length / 2)].x} y={chartH - 8} textAnchor="middle">
-                {formatTimeShort(allPoints[Math.floor(allPoints.length / 2)].time || allPoints[Math.floor(allPoints.length / 2)].timestamp)}
+                {formatTimelineLabel(allPoints[Math.floor(allPoints.length / 2)].time || allPoints[Math.floor(allPoints.length / 2)].timestamp, isMultiDay)}
               </text>
             )}
             <text x={padding.left + graphWidth} y={chartH - 8} textAnchor="end">
-              {formatTimeShort(allPoints[allPoints.length - 1].time || allPoints[allPoints.length - 1].timestamp)}
+              {formatTimelineLabel(allPoints[allPoints.length - 1].time || allPoints[allPoints.length - 1].timestamp, isMultiDay)}
             </text>
           </g>
         )}
@@ -1887,8 +2196,8 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
           {/* Chart Scope & Style Controls */}
           {activeTab === 'chart' && (
             <div className="flex items-center gap-2 shrink-0">
-              {/* Flight Scope Arc Toggle: Scalp vs Start-to-Expiry */}
-              <div className="h-8 flex items-center gap-1 bg-white/[0.04] p-1 rounded-xl border border-white/10 text-xs font-mono shadow-inner shrink-0">
+              {/* Flight Scope Arc Toggle: Scalp vs Day vs Week vs Month */}
+              <div className="h-8 flex items-center gap-0.5 sm:gap-1 bg-white/[0.04] p-1 rounded-xl border border-white/10 text-xs font-mono shadow-inner shrink-0">
                 <button
                   type="button"
                   onClick={() => {
@@ -1899,7 +2208,7 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
                     }
                   }}
                   className={clsx(
-                    "h-6 px-2.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 active:scale-95",
+                    "h-6 px-2 sm:px-2.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 active:scale-95",
                     flightScope === 'scalp'
                       ? "bg-cyan-400 text-zinc-950 font-black shadow-[0_0_12px_rgba(34,211,238,0.35)]"
                       : "text-zinc-400 hover:text-white hover:bg-white/[0.04]"
@@ -1907,27 +2216,67 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
                   title="View Execution Scope: From Order Entry to Square Off (Hotkey: T)"
                 >
                   <Zap className="w-3 h-3 shrink-0" />
-                  <span className="whitespace-nowrap">Active Scalp</span>
+                  <span className="whitespace-nowrap">{isMobile ? 'S' : 'Scalp'}</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => {
                     soundEngine.playTabSwitchTone?.();
-                    setFlightScope('expiry');
+                    setFlightScope('day');
                     if (typeof onSwitchFlightScope === 'function') {
-                      onSwitchFlightScope('expiry');
+                      onSwitchFlightScope('day');
                     }
                   }}
                   className={clsx(
-                    "h-6 px-2.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 active:scale-95",
-                    flightScope === 'expiry'
+                    "h-6 px-2 sm:px-2.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 active:scale-95",
+                    flightScope === 'day' || flightScope === 'expiry'
+                      ? "bg-amber-400 text-zinc-950 font-black shadow-[0_0_12px_rgba(251,191,36,0.35)]"
+                      : "text-zinc-400 hover:text-white hover:bg-white/[0.04]"
+                  )}
+                  title="View Day Expiry: From Order Entry Through Exit to 15:30 Daily Settlement (Hotkey: T)"
+                >
+                  <Sun className="w-3 h-3 shrink-0" />
+                  <span className="whitespace-nowrap">{isMobile ? 'D' : 'Day'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playTabSwitchTone?.();
+                    setFlightScope('week');
+                    if (typeof onSwitchFlightScope === 'function') {
+                      onSwitchFlightScope('week');
+                    }
+                  }}
+                  className={clsx(
+                    "h-6 px-2 sm:px-2.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 active:scale-95",
+                    flightScope === 'week'
                       ? "bg-emerald-400 text-zinc-950 font-black shadow-[0_0_12px_rgba(16,185,129,0.35)]"
                       : "text-zinc-400 hover:text-white hover:bg-white/[0.04]"
                   )}
-                  title="View Full Arc: From Order Entry Through Exit to 15:30 Expiry Settlement (Hotkey: T)"
+                  title="View Weekly Expiry: Through Exit to Weekly Expiry 15:30 Settlement (Hotkey: T)"
                 >
-                  <Clock className="w-3 h-3 shrink-0" />
-                  <span className="whitespace-nowrap">Start to Expiry</span>
+                  <Calendar className="w-3 h-3 shrink-0" />
+                  <span className="whitespace-nowrap">{isMobile ? 'W' : 'Week'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playTabSwitchTone?.();
+                    setFlightScope('month');
+                    if (typeof onSwitchFlightScope === 'function') {
+                      onSwitchFlightScope('month');
+                    }
+                  }}
+                  className={clsx(
+                    "h-6 px-2 sm:px-2.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 active:scale-95",
+                    flightScope === 'month'
+                      ? "bg-violet-400 text-zinc-950 font-black shadow-[0_0_12px_rgba(167,139,250,0.35)]"
+                      : "text-zinc-400 hover:text-white hover:bg-white/[0.04]"
+                  )}
+                  title="View Monthly Expiry: Through Exit to Month-End 15:30 Settlement (Hotkey: T)"
+                >
+                  <CalendarDays className="w-3 h-3 shrink-0" />
+                  <span className="whitespace-nowrap">{isMobile ? 'M' : 'Month'}</span>
                 </button>
               </div>
 
@@ -2323,7 +2672,9 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
       {/* Interactive Timeline Slider Scrubber Track (Ergonomic 32px Touch Target with Hairline Track) */}
       {allPoints.length > 1 && (
         <div className="px-2 py-0.5 flex items-center gap-3 font-mono text-[10.5px] text-slate-400 border-t border-white/5 mt-1">
-          <span className="tabular-nums shrink-0">{allPoints[0] ? formatTimeShort(allPoints[0].time || allPoints[0].timestamp) : "09:15"}</span>
+          <span className="tabular-nums shrink-0">
+            {allPoints[0] ? formatTimelineLabel(allPoints[0].time || allPoints[0].timestamp, isMultiDay) : "09:15"}
+          </span>
           <div className="relative flex-1 h-8 flex items-center">
             <input
               type="range"
@@ -2340,7 +2691,9 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
               className="w-full h-8 py-3 bg-transparent cursor-ew-resize accent-emerald-400 hover:accent-emerald-300 transition-all touch-none"
             />
           </div>
-          <span className="tabular-nums shrink-0">{allPoints[allPoints.length - 1] ? formatTimeShort(allPoints[allPoints.length - 1].time || allPoints[allPoints.length - 1].timestamp) : "15:30"}</span>
+          <span className="tabular-nums shrink-0">
+            {allPoints[allPoints.length - 1] ? formatTimelineLabel(allPoints[allPoints.length - 1].time || allPoints[allPoints.length - 1].timestamp, isMultiDay) : "15:30"}
+          </span>
         </div>
       )}
 
@@ -2409,16 +2762,23 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
         </span>
       </div>
 
-      {/* ⏳ Dedicated Order Lifecycle & Execution Discipline HUD (Start to Expiry Telemetry - Scoped to Expiry Mode Only) */}
-      {flightScope === 'expiry' && (
+      {/* ⏳ Dedicated Order Lifecycle & Execution Discipline HUD (Extended Expiry Scopes: Day, Week, Month) */}
+      {flightScope !== 'scalp' && (
         <div className="mt-3.5 p-4 rounded-2xl bg-gradient-to-r from-slate-900/90 via-[#0a1120]/90 to-slate-900/90 border border-cyan-500/25 shadow-lg backdrop-blur-xl relative overflow-hidden font-mono">
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 border-b border-white/10 pb-3 mb-3">
             <div className="flex items-center gap-2">
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
-                Start to Expiry Telemetry
+              <span className={clsx(
+                "px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider border",
+                flightScope === 'day' || flightScope === 'expiry'
+                  ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                  : flightScope === 'week'
+                  ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                  : "bg-violet-500/15 text-violet-300 border-violet-500/30"
+              )}>
+                {flightScope === 'day' || flightScope === 'expiry' ? 'Day Expiry Telemetry' : flightScope === 'week' ? 'Weekly Expiry Telemetry' : 'Monthly Expiry Telemetry'}
               </span>
               <span className="text-xs font-bold text-white">
-                {symbol} · Expiry 15:30 IST ({trade.expiryDate || "Active Week"})
+                {symbol} · {flightScope === 'day' || flightScope === 'expiry' ? 'Daily Settlement 15:30 IST' : flightScope === 'week' ? `Weekly Expiry 15:30 IST (${trade.expiryDate || "Active Week"})` : `Monthly Expiry 15:30 IST (${trade.expiryDate || "Monthly Contract"})`}
               </span>
             </div>
             <div className="flex items-center gap-2 text-xs">
@@ -2447,14 +2807,14 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
               <div className="text-[10px] text-slate-400 mt-0.5">{formatTimeShort(exitTime)} · {closeReason.replace(/_/g, " ")}</div>
             </div>
 
-            {/* Box 3: Macro Session Drift (Reframed from toxic Held-to-Expiry P&L) */}
+            {/* Box 3: Macro Session Drift */}
             <div className="p-3 rounded-xl bg-white/[0.03] border border-white/10">
-              <div className="text-[10px] text-slate-400 mb-0.5">3. Macro Session Drift</div>
+              <div className="text-[10px] text-slate-400 mb-0.5">3. {flightScope === 'day' || flightScope === 'expiry' ? 'Day End Drift' : flightScope === 'week' ? 'Weekly Settlement Drift' : 'Monthly Settlement Drift'}</div>
               <div className="text-sm font-black text-slate-200">
                 ₹{Number(trade.terminalIntrinsic || 0).toFixed(2)}
               </div>
               <div className="text-[10px] text-slate-400 mt-0.5 flex items-center justify-between">
-                <span>15:30 Settlement</span>
+                <span>{flightScope === 'day' || flightScope === 'expiry' ? '15:30 Settlement' : flightScope === 'week' ? 'Weekly Settlement' : 'Monthly Settlement'}</span>
                 <span className={clsx("font-bold", Number(trade.heldToExpiryPnl || 0) >= 0 ? "text-slate-300" : "text-slate-400")}>
                   {Number(trade.heldToExpiryPnl || 0) >= 0 ? "+" : ""}₹{Number(trade.heldToExpiryPnl || 0).toLocaleString("en-IN", { minimumFractionDigits: 1 })}
                 </span>
@@ -2482,7 +2842,7 @@ export function TradeMarketJourneyTimeline({ trade: rawTrade, onClose, isModalVi
           <div className="mt-3 p-2.5 rounded-xl bg-cyan-950/20 border border-cyan-500/20 flex items-center gap-2 text-[11px] text-cyan-200/90">
             <span className="text-cyan-400 font-bold shrink-0">🛡️ Anti-FOMO Guard:</span>
             <span className="leading-tight">
-              Planned scalp target and stop boundaries were executed to plan. Post-exit terminal drift reflects late afternoon gamma/theta decay, not missed profit.
+              Planned scalp target and stop boundaries were executed to plan. Post-exit terminal drift reflects {flightScope === 'day' || flightScope === 'expiry' ? 'intraday afternoon' : flightScope === 'week' ? 'weekly' : 'monthly'} gamma/theta decay, not missed profit.
             </span>
           </div>
         </div>

@@ -320,12 +320,21 @@ export async function handleTradingRequest(req, res, url) {
                 quotes[sym] = quoteObj;
                 quotes[tokenKey] = quoteObj;
 
-                // Also forward tick into paperTradeEngine so internal triggers stay live
+                // Register watched token with paperTradeEngine, publish SSE tick and emit to client
+                paperTradeEngine.registerWatchedToken(tokenKey, sym);
+                paperTradeEngine.publish("tick", {
+                  symbol: sym,
+                  tokenKey,
+                  ltp,
+                  change,
+                  receivedAt: quoteObj.timestamp
+                });
                 paperTradeEngine.client.emit("tick", {
                   exchange: tokenKey.split("|")[0] || "NSE",
                   token: tokenKey,
                   key: tokenKey,
                   ltp,
+                  change,
                   raw: quoteItem,
                   receivedAt: quoteObj.timestamp
                 });
@@ -558,23 +567,52 @@ export async function handleTradingRequest(req, res, url) {
     };
 
     const toExpiry = url.searchParams.get("toExpiry") === "true";
+    const flightScopeParam = url.searchParams.get("flightScope") || (toExpiry ? "day" : "scalp");
     const expiryTimeStr = url.searchParams.get("expiryTime");
 
     const fromDate = parseWithIST(fromStr, new Date(Date.now() - 30 * 60 * 1000));
     let toDate = parseWithIST(toStr, new Date());
-    if (toExpiry) {
+    if (toExpiry || flightScopeParam !== "scalp") {
       if (expiryTimeStr) {
         toDate = parseWithIST(expiryTimeStr, toDate);
       } else {
         const istDateStr = fromDate.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
-        toDate = new Date(`${istDateStr}T15:30:00+05:30`);
+        if (flightScopeParam === "day" || flightScopeParam === "expiry") {
+          toDate = new Date(`${istDateStr}T15:30:00+05:30`);
+        } else if (flightScopeParam === "week") {
+          const isSensex = symbol.toUpperCase().includes("SENSEX");
+          const targetDay = isSensex ? 5 : 4; // 5=Friday (BSE), 4=Thursday (NSE)
+          const d = new Date(fromDate);
+          d.setHours(15, 30, 0, 0);
+          let diff = (targetDay - d.getDay() + 7) % 7;
+          if (diff === 0 && d.getTime() <= fromDate.getTime()) diff = 7;
+          d.setDate(d.getDate() + diff);
+          toDate = d;
+        } else if (flightScopeParam === "month") {
+          const isSensex = symbol.toUpperCase().includes("SENSEX");
+          const targetDay = isSensex ? 5 : 4;
+          const d = new Date(fromDate);
+          const y = d.getFullYear();
+          const m = d.getMonth();
+          const lastDay = new Date(y, m + 1, 0, 15, 30, 0, 0);
+          while (lastDay.getDay() !== targetDay) lastDay.setDate(lastDay.getDate() - 1);
+          if (lastDay.getTime() <= fromDate.getTime()) {
+            const nextLastDay = new Date(y, m + 2, 0, 15, 30, 0, 0);
+            while (nextLastDay.getDay() !== targetDay) nextLastDay.setDate(nextLastDay.getDate() - 1);
+            toDate = nextLastDay;
+          } else {
+            toDate = lastDay;
+          }
+        } else {
+          toDate = new Date(`${istDateStr}T15:30:00+05:30`);
+        }
       }
     }
     const fromTime = fromDate.getTime();
     const toTime = Math.max(fromTime + 60000, toDate.getTime());
 
     // 10-Minute Sliding TTL Cache with Transient Degradation Eviction
-    const cacheKey = `${tokenKey || symbol}_${fromTime}_${toTime}_${entryPrice}_${exitPrice}_${toExpiry ? "exp" : "sclp"}`;
+    const cacheKey = `${tokenKey || symbol}_${fromTime}_${toTime}_${entryPrice}_${exitPrice}_${flightScopeParam}`;
     const cached = tradeCandleCache.get(cacheKey);
     const CACHE_TTL = 10 * 60 * 1000;
     if (cached && (Date.now() - cached.cachedAt < CACHE_TTL)) {
@@ -1068,30 +1106,26 @@ export async function handleTradingRequest(req, res, url) {
     const isBankNifty = symbol === "BANKNIFTY";
     const isFinNifty = symbol === "FINNIFTY";
 
-    const minSlFloor = isSensex ? 28.0 : (isBankNifty ? 16.0 : (isFinNifty ? 7.0 : 6.5));
-    const maxSlCap = isSensex ? 65.0 : (isBankNifty ? 45.0 : (isFinNifty ? 18.0 : 16.0));
-
-    // Calibrated to 8.5% of option premium or minSlFloor
-    const calculatedSl = Number((optionLtp * 0.085).toFixed(1));
-    const slDistance = Math.max(minSlFloor, Math.min(calculatedSl, maxSlCap));
+    // 🏛️ Manikandan's ₹10k Discipline: ₹200–₹300 SL / ₹400–₹600 TP
+    // NIFTY/FINNIFTY (lot=65): 4.0 pts SL = ₹260, 8.0 pts TP = ₹520 (R:R 1:2.0)
+    // BANKNIFTY (lot=30): 8.5 pts SL = ₹255, 17.0 pts TP = ₹510 (R:R 1:2.0)
+    // SENSEX (lot=20): 12.5 pts SL = ₹250, 25.0 pts TP = ₹500 (R:R 1:2.0)
+    const slDistance = isSensex ? 12.5 : (isBankNifty ? 8.5 : 4.0);
     const stopLoss = Math.max(0.5, Number((optionLtp - slDistance).toFixed(2)));
 
-    // Mark Douglas 3-Tier Targets (Scaled for genuine structural targets & friction clearance)
-    // T1 (Pay Myself & Breakeven Shield): 1:1.15 R:R
-    // T2 (Primary Structural Profit Bank): 1:2.05 R:R
-    // T3 (Extended Trend Expansion): 1:3.4 R:R
-    const t1Distance = Number((slDistance * 1.15).toFixed(1));
-    const t2Distance = Number((slDistance * 2.05).toFixed(1));
-    const t3Distance = Number((slDistance * 3.4).toFixed(1));
+    // Mark Douglas 3-Tier Targets (Calibrated to 1:1, 1:2, and 1:3 R:R)
+    const t1Distance = Number((slDistance * 1.0).toFixed(1));
+    const t2Distance = Number((slDistance * 2.0).toFixed(1));
+    const t3Distance = Number((slDistance * 3.0).toFixed(1));
 
     const targetT1 = Number((optionLtp + t1Distance).toFixed(2));
     const targetT2 = Number((optionLtp + t2Distance).toFixed(2));
     const targetT3 = Number((optionLtp + t3Distance).toFixed(2));
 
-    // Default primary target set to reachable T2 structural pivot
+    // Default primary target set to reachable T2 structural pivot (1:2.0 R:R, ₹500-₹520 reward)
     const targetPrice = targetT2;
     const tpDistance = t2Distance;
-    const rrRatio = (tpDistance / slDistance).toFixed(2);
+    const rrRatio = "2.00";
     const lotSize = symbol === "SENSEX" ? 20 : (symbol === "BANKNIFTY" ? 30 : 65);
     const riskRupees = Number((slDistance * lotSize).toFixed(2));
     const rewardRupees = Number((tpDistance * lotSize).toFixed(2));
