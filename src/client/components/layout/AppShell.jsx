@@ -7,6 +7,7 @@ import { MobileBottomBar } from "./MobileBottomBar";
 import { ShortcutsModal } from "../common/ShortcutsModal";
 import { CommandPaletteModal } from "../common/CommandPaletteModal";
 import { SafetyGuardModal } from "../common/SafetyGuardModal";
+import { EmergencyPanicHud } from "../trading/EmergencyPanicHud";
 import { useKeyboardAccelerators } from "../../hooks/useKeyboardAccelerators";
 import { useLiveAlertsFeed } from "../../hooks/useLiveAlertsFeed";
 
@@ -41,6 +42,9 @@ export function AppShell({ children }) {
 
       {/* Daily Safety Guardrail Modal */}
       <SafetyGuardModal />
+
+      {/* Persistent Emergency Panic Kill Switch HUD */}
+      <EmergencyPanicHud />
     </div>
   );
 }

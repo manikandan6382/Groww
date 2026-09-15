@@ -11,7 +11,9 @@ export function safeDate(input) {
   if (!input) return new Date();
   if (input instanceof Date) return isNaN(input.getTime()) ? new Date() : input;
   
+  // If string doesn't end with Z and has no timezone offset, treat as ISO or local
   if (typeof input === "string") {
+    // If format is like "2026-08-31 14:30" or "2026-08-31T14:30"
     const cleaned = input.trim();
     const d = new Date(cleaned);
     if (!isNaN(d.getTime())) return d;
@@ -51,7 +53,7 @@ export function formatLocalTime12h(input) {
   const minutes = String(d.getMinutes()).padStart(2, "0");
   const ampm = hours >= 12 ? "PM" : "AM";
   hours = hours % 12;
-  hours = hours ? hours : 12;
+  hours = hours ? hours : 12; // '0' becomes '12'
   return `${hours}:${minutes} ${ampm}`;
 }
 
@@ -105,7 +107,7 @@ export function calculateTradeDuration(entryInput, exitInput, fallbackStr) {
 }
 
 /**
- * Returns a relative time string like "Just now", "5m ago", "2h ago".
+ * Returns a relative time string like "Just now", "5 mins ago", "2 hours ago".
  */
 export function getRelativeTimeStr(input) {
   if (!input) return "";

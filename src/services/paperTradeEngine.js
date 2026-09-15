@@ -1,11 +1,17 @@
 import { EventEmitter } from "node:events";
-import { getDb } from "../db/connection.js";
-import { getPaperLab, markPaperTrade } from "../repositories/paper-lab.repository.js";
-import { getTradeById } from "../repositories/trades.repository.js";
 import { createUpstoxClient } from "./upstoxClient.js";
-import { telegramNotifier } from "./notifications/telegramNotifier.js";
+import { isMarketOpenNow } from "./engine/marketTiming.js";
+import { pollUpstoxIndices } from "./engine/indicesPoller.js";
+import { evaluateTradeTrigger } from "./engine/triggerEvaluator.js";
+import { handleEngineTick, flushMarks, pruneTokens } from "./engine/tickHandler.js";
+import {
+  ensureSubscription,
+  syncEngineTrade,
+  removeEngineTrade,
+  refreshAllActiveTrades,
+} from "./engine/subscriptionManager.js";
+import { PracticeMarketSimulator } from "./engine/practiceSimulator.js";
 
-const MARKET_CLOSED_REFRESH_MS = 60_000;
 const ACTIVE_REFRESH_MS = 15_000;
 
 export class PaperTradeEngine extends EventEmitter {
@@ -14,8 +20,8 @@ export class PaperTradeEngine extends EventEmitter {
     this.client = options.client || createUpstoxClient(options.upstox || {});
     this.activeTrades = new Map();
     this.tokenToTradeIds = new Map();
-    this.watchedTokens = new Map(); // tokenKey -> { symbol, lastSeenAt }
-    this.watchedSymbols = new Map(); // symbol -> tokenKey
+    this.watchedTokens = new Map();
+    this.watchedSymbols = new Map();
     this.resolving = new Set();
     this.triggering = new Set();
     this.pendingMarks = new Map();
@@ -26,8 +32,12 @@ export class PaperTradeEngine extends EventEmitter {
     this.indicesTimer = null;
     this.pruneTimer = null;
     this.started = false;
+    this.simulator = new PracticeMarketSimulator(this);
 
-    this.client.on("tick", (tick) => this.handleTick(tick));
+    this.client.on("tick", (tick) => {
+      this.simulator.recordLiveTick();
+      this.handleTick(tick);
+    });
     this.client.on("status", (status) => this.publish("status", status));
     this.client.on("session_expired", (payload) => this.publish("session_expired", payload));
     this.client.on("error", (error) => this.publish("error", { message: error.message }));
@@ -35,50 +45,27 @@ export class PaperTradeEngine extends EventEmitter {
 
   registerWatchedToken(tokenKey, symbol) {
     if (!tokenKey) return;
-    const now = Date.now();
-    this.watchedTokens.set(tokenKey, { symbol: symbol || tokenKey, lastSeenAt: now });
-    if (symbol) {
-      this.watchedSymbols.set(symbol, tokenKey);
-    }
-    if (this.client) {
-      this.client.subscribe(tokenKey);
-    }
+    this.watchedTokens.set(tokenKey, { symbol: symbol || tokenKey, lastSeenAt: Date.now() });
+    if (symbol) this.watchedSymbols.set(symbol, tokenKey);
+    if (this.client) this.client.subscribe(tokenKey);
   }
 
   touchWatchedToken(tokenKeyOrSymbol) {
     if (!tokenKeyOrSymbol) return;
     const tokenKey = this.watchedSymbols.get(tokenKeyOrSymbol) || tokenKeyOrSymbol;
     const entry = this.watchedTokens.get(tokenKey);
-    if (entry) {
-      entry.lastSeenAt = Date.now();
-    }
+    if (entry) entry.lastSeenAt = Date.now();
   }
 
   pruneWatchedTokens() {
-    const now = Date.now();
-    const TTL_MS = 90_000; // 90 seconds inactivity lease
-    for (const [tokenKey, info] of Array.from(this.watchedTokens.entries())) {
-      if (now - info.lastSeenAt > TTL_MS) {
-        const activeTradeIds = this.tokenToTradeIds.get(tokenKey);
-        if (!activeTradeIds || activeTradeIds.size === 0) {
-          if (this.client && typeof this.client.unsubscribe === "function") {
-            this.client.unsubscribe(tokenKey);
-          }
-          this.watchedTokens.delete(tokenKey);
-          if (info.symbol) {
-            this.watchedSymbols.delete(info.symbol);
-          }
-        } else {
-          info.lastSeenAt = now;
-        }
-      }
-    }
+    pruneTokens(this);
   }
 
   start() {
     if (this.started) return;
     this.started = true;
     this.client.start();
+    this.simulator.start();
     this.refreshActiveTrades();
     this.refreshTimer = setInterval(() => this.refreshActiveTrades(), ACTIVE_REFRESH_MS);
     this.flushTimer = setInterval(() => this.flushPendingMarks(), 1000);
@@ -89,14 +76,12 @@ export class PaperTradeEngine extends EventEmitter {
 
   stop() {
     this.started = false;
-    if (this.refreshTimer) clearInterval(this.refreshTimer);
-    if (this.flushTimer) clearInterval(this.flushTimer);
-    if (this.indicesTimer) clearInterval(this.indicesTimer);
-    if (this.pruneTimer) clearInterval(this.pruneTimer);
-    this.refreshTimer = null;
-    this.flushTimer = null;
-    this.indicesTimer = null;
-    this.pruneTimer = null;
+    this.simulator.stop();
+    clearInterval(this.refreshTimer);
+    clearInterval(this.flushTimer);
+    clearInterval(this.indicesTimer);
+    clearInterval(this.pruneTimer);
+    this.refreshTimer = this.flushTimer = this.indicesTimer = this.pruneTimer = null;
     this.flushPendingMarks();
     this.client.stop();
   }
@@ -123,382 +108,40 @@ export class PaperTradeEngine extends EventEmitter {
   }
 
   async refreshActiveTrades() {
-    if (!this.started) return;
-    let lab;
-    try {
-      lab = getPaperLab({ range: "week" });
-    } catch (error) {
-      this.publish("error", { message: error.message });
-      return;
-    }
-
-    const openTrades = lab.openTrades || [];
-    const openIds = new Set(openTrades.map((trade) => Number(trade.id)));
-
-    for (const id of Array.from(this.activeTrades.keys())) {
-      if (!openIds.has(id)) this.removeTrade(id);
-    }
-
-    if (!openTrades.length) {
-      this.publish("empty", { message: "No active paper trades to monitor." });
-      return;
-    }
-
-    if (!isMarketOpenNow()) {
-      this.publish("market_closed", {
-        message: "Market is closed. Live trigger monitoring will resume when ticks arrive.",
-        nextRefreshMs: MARKET_CLOSED_REFRESH_MS,
-      });
-    }
-
-    for (const trade of openTrades) {
-      await this.ensureTradeSubscription(trade);
-    }
+    await refreshAllActiveTrades(this);
   }
 
   async pollIndices() {
     if (!this.started) return;
-    this.client.refreshAccessToken();
-    const token = this.client.accessToken;
-    if (!token) return;
-
-    try {
-      const keys = "NSE_INDEX|Nifty 50,NSE_INDEX|Nifty Bank,NSE_INDEX|India VIX,NSE_INDEX|Nifty Fin Service,BSE_INDEX|SENSEX";
-      const res = await fetch(`https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(keys)}`, {
-        headers: {
-          "Accept": "application/json",
-          "Authorization": `Bearer ${token}`
-        }
-      });
-      if (res.ok) {
-        const body = await res.json();
-        const raw = body?.data || {};
-
-        const items = [
-          { key: "NSE_INDEX|Nifty 50", lookup: "NSE_INDEX:Nifty 50", name: "NIFTY 50" },
-          { key: "NSE_INDEX|Nifty Bank", lookup: "NSE_INDEX:Nifty Bank", name: "BANKNIFTY" },
-          { key: "NSE_INDEX|India VIX", lookup: "NSE_INDEX:India VIX", name: "INDIA VIX" },
-          { key: "NSE_INDEX|Nifty Fin Service", lookup: "NSE_INDEX:Nifty Fin Service", name: "FINNIFTY" },
-          { key: "BSE_INDEX|SENSEX", lookup: "BSE_INDEX:SENSEX", name: "BSE SENSEX" }
-        ];
-
-        for (const item of items) {
-          const q = raw[item.lookup] || raw[item.key];
-          if (q && q.last_price != null) {
-            const ltp = Number(q.last_price);
-            const change = Number(q.net_change || 0);
-            const prevClose = q.ohlc?.close != null ? Number(q.ohlc.close) : (ltp - change);
-            const changePct = prevClose > 0 ? Number(((change / prevClose) * 100).toFixed(2)) : 0;
-
-            this.publish("index_tick", {
-              symbol: item.key,
-              tokenKey: item.key,
-              name: item.name,
-              ltp,
-              change,
-              changePct,
-              open: q.ohlc?.open != null ? Number(q.ohlc.open) : ltp,
-              high: q.ohlc?.high != null ? Number(q.ohlc.high) : ltp,
-              low: q.ohlc?.low != null ? Number(q.ohlc.low) : ltp,
-              close: prevClose,
-              receivedAt: q.timestamp || new Date().toISOString()
-            });
-          }
-        }
-      }
-    } catch { /* non-fatal poll error */ }
+    await pollUpstoxIndices(this.client, (type, payload) => this.publish(type, payload));
   }
 
   async syncTrade(tradeId) {
-    const id = Number(tradeId);
-    let trade = (getPaperLab({ range: "week" }).openTrades || []).find((item) => Number(item.id) === id);
-    if (!trade) {
-      trade = getTradeById(id);
-    }
-    if (!trade || trade.status !== "OPEN") {
-      this.removeTrade(id);
-      return;
-    }
-    await this.ensureTradeSubscription(trade, { force: true });
+    await syncEngineTrade(this, tradeId);
   }
 
   removeTrade(tradeId) {
-    const id = Number(tradeId);
-    const item = this.activeTrades.get(id);
-    if (!item) return;
-    this.activeTrades.delete(id);
-    if (item.tokenKey) {
-      const ids = this.tokenToTradeIds.get(item.tokenKey) || new Set();
-      ids.delete(id);
-      if (ids.size) {
-        this.tokenToTradeIds.set(item.tokenKey, ids);
-      } else {
-        this.tokenToTradeIds.delete(item.tokenKey);
-        this.client.unsubscribe(item.tokenKey);
-      }
-    }
-    this.publish("unsubscribed", { tradeId: id, symbol: item.trade.symbol, tokenKey: item.tokenKey });
+    removeEngineTrade(this, tradeId);
   }
 
-  async ensureTradeSubscription(trade, { force = false } = {}) {
-    const id = Number(trade.id);
-    if (!id || this.resolving.has(id)) return;
-
-    // Isolate only explicit MANUAL_ONLY trades from Upstox live ticker subscription
-    const isExplicitManual = trade.feedMode === "MANUAL" || trade.personalNotes?.includes("[MANUAL_ONLY]");
-    if (isExplicitManual) {
-      if (this.activeTrades.has(id)) this.removeTrade(id);
-      return;
-    }
-
-    const existing = this.activeTrades.get(id);
-    if (existing?.status === "subscribed" && !force) return;
-    
-    this.resolving.add(id);
-
-    try {
-      const tokenKey = await this.client.resolveOptionToken(trade);
-      if (!tokenKey) {
-        this.activeTrades.set(id, {
-          trade,
-          tokenKey: null,
-          status: "token_missing",
-        });
-        this.publish("token_missing", {
-          tradeId: id,
-          symbol: trade.symbol,
-          message: "Could not resolve Upstox option token. Add UPSTOX_TOKEN:<token> in notes or check expiry/strike.",
-        });
-        return;
-      }
-
-      if (existing?.tokenKey && existing.tokenKey !== tokenKey) this.removeTrade(id);
-      this.activeTrades.set(id, {
-        ...(existing || {}),
-        trade,
-        tokenKey,
-        status: "subscribed",
-      });
-      if (!this.tokenToTradeIds.has(tokenKey)) this.tokenToTradeIds.set(tokenKey, new Set());
-      this.tokenToTradeIds.get(tokenKey).add(id);
-      this.client.subscribe(tokenKey);
-      this.publish("subscribed", { tradeId: id, symbol: trade.symbol, tokenKey });
-    } catch (error) {
-      this.activeTrades.set(id, {
-        trade,
-        tokenKey: null,
-        status: "token_error",
-        error: error.message,
-      });
-      this.publish("token_error", { tradeId: id, symbol: trade.symbol, message: error.message });
-      if (isSessionExpiredError(error)) {
-        this.publish("session_expired", { message: error.message });
-      }
-    } finally {
-      this.resolving.delete(id);
-    }
+  async ensureTradeSubscription(trade, options) {
+    await ensureSubscription(this, trade, options);
   }
 
   handleTick(tick) {
-    if (tick.key && (tick.key.startsWith("NSE_INDEX") || tick.key.startsWith("BSE_INDEX"))) {
-      const sym = tick.key.includes("SENSEX") 
-        ? "SENSEX" 
-        : (tick.key.includes("Bank") ? "BANKNIFTY" : (tick.key.includes("Fin") ? "FINNIFTY" : "NIFTY"));
-      this.publish("index_tick", {
-        symbol: sym,
-        tokenKey: tick.key,
-        ltp: tick.ltp,
-        receivedAt: tick.receivedAt,
-      });
-    }
-
-    // Broadcast live tick for any contract currently watched on the Order Pad
-    const tickKey = tick.key || tick.tokenKey || tick.token;
-    if (tickKey && this.watchedTokens?.has(tickKey)) {
-      const entry = this.watchedTokens.get(tickKey);
-      const sym = typeof entry === "object" ? entry?.symbol : (entry || tickKey);
-      this.publish("tick", {
-        symbol: sym,
-        tokenKey: tickKey,
-        ltp: tick.ltp,
-        change: tick.change || 0,
-        receivedAt: tick.receivedAt || new Date().toISOString(),
-      });
-    }
-
-    const tradeIds = this.tokenToTradeIds.get(tick.key);
-    if (!tradeIds?.size) return;
-
-    for (const id of Array.from(tradeIds)) {
-      const item = this.activeTrades.get(id);
-      if (!item || item.tokenKey !== tick.key) continue;
-      item.lastLtp = tick.ltp;
-      item.lastTickAt = tick.receivedAt;
-      this.pendingMarks.set(id, { price: tick.ltp, time: tick.receivedAt });
-      this.publish("tick", {
-        tradeId: id,
-        symbol: item.trade.symbol,
-        tokenKey: tick.key,
-        ltp: tick.ltp,
-        receivedAt: tick.receivedAt,
-      });
-      this.evaluateTrigger(item.trade, tick);
-    }
+    handleEngineTick(this, tick);
   }
 
   flushPendingMarks() {
-    if (!this.pendingMarks.size) return;
-    const entries = Array.from(this.pendingMarks.entries());
-    this.pendingMarks.clear();
-
-    try {
-      const db = getDb();
-      db.exec("BEGIN;");
-      try {
-        const stmt = db.prepare("UPDATE trades SET last_mark_price = ?, last_marked_at = ? WHERE id = ? AND status = 'OPEN'");
-        for (const [id, data] of entries) {
-          stmt.run(data.price, data.time || new Date().toISOString(), id);
-        }
-        db.exec("COMMIT;");
-      } catch (err) {
-        db.exec("ROLLBACK;");
-        console.warn("[paperTradeEngine] flushPendingMarks rollback:", err.message);
-      }
-    } catch (err) {
-      console.warn("[paperTradeEngine] flushPendingMarks error:", err.message);
-    }
+    flushMarks(this);
   }
 
   evaluateTrigger(trade, tick) {
-    const id = Number(trade.id);
-    if (this.triggering.has(id)) return;
-    const target = Number(trade.targetPrice || 0);
-    const stopLoss = Number(trade.stopLoss || 0);
-    const entry = Number(trade.entryPrice || 0);
-    const ltp = Number(tick.ltp || 0);
-    if (!ltp || ltp <= 0) return;
-
-    // Noise jitter guard: protect against sub-second tick bounce on initial order fill
-    const entryTime = new Date(trade.entryDatetime || trade.created_at || 0).getTime();
-    const tradeAgeMs = entryTime > 0 ? (Date.now() - entryTime) : 999999;
-    if (tradeAgeMs < 2000 && Math.abs(ltp - entry) < 0.50) {
-      return;
-    }
-
-    // 🛡️ Contract / Price Anomaly Guard:
-    // If trade was created recently (< 5s) and LTP diverges from entry by > 35%, or if target is already hit
-    // at entry time, suppress execution as a contract mismatch anomaly rather than triggering a false target hit!
-    if (entry > 0 && tradeAgeMs < 5000 && (Math.abs(ltp - entry) / entry > 0.35)) {
-      console.warn(`[paperTradeEngine] Anomaly suppressed on trade ${id} (${trade.symbol}): entry ₹${entry} vs tick LTP ₹${ltp}. False trigger blocked.`);
-      return;
-    }
-
-    let reason = null;
-
-    const isShortTrade = trade.direction === "SHORT" || (target < entry && stopLoss > entry);
-
-    // --- 1. Automated Institutional True Breakeven Lock ---
-    if (entry > 0) {
-      // Calculate true friction drag per unit to guarantee net zero loss upon exit
-      const units = Number(trade.quantity || 1) * Math.max(1, Number(trade.lotSize || 65));
-      const estimatedCharges = 55.20 + (entry * units * 0.001); // Brokerage + STT + GST
-      const frictionPoints = Math.max(1.50, Number((estimatedCharges / units + 0.30).toFixed(2)));
-
-      if (isShortTrade) {
-        // Short Option Selling setup: locks below entry
-        const bePrice = Number((entry - frictionPoints).toFixed(2));
-        if (ltp <= entry - 8.0 && (stopLoss === 0 || stopLoss > bePrice)) {
-          this.lockBreakeven(trade, bePrice, ltp);
-        }
-      } else {
-        // Long Option Buying setup: locks above entry
-        const bePrice = Number((entry + frictionPoints).toFixed(2));
-        if (ltp >= entry + 8.0 && (stopLoss === 0 || stopLoss < bePrice)) {
-          this.lockBreakeven(trade, bePrice, ltp);
-        }
-      }
-    }
-
-    // --- 2. Target & Stop Loss Execution ---
-    if (isShortTrade) {
-      // Short option / Seller setup
-      if (target > 0 && ltp <= target) reason = "TARGET_HIT";
-      if (!reason && stopLoss > 0 && ltp >= stopLoss) {
-        reason = stopLoss <= entry ? "TRAILING_SL_HIT" : "STOP_LOSS_HIT";
-      }
-    } else {
-      // Long option / Standard buyer setup
-      if (target > 0 && ltp >= target) reason = "TARGET_HIT";
-      if (!reason && stopLoss > 0 && ltp <= stopLoss) {
-        reason = stopLoss >= entry ? "TRAILING_SL_HIT" : "STOP_LOSS_HIT";
-      }
-    }
-
-    if (!reason) return;
-    this.triggerTrade(trade, tick, reason);
-  }
-
-  lockBreakeven(trade, newStopLoss, currentLtp) {
-    const id = Number(trade.id);
-    try {
-      const db = getDb();
-      db.prepare("UPDATE trades SET stop_loss = ?, updated_at = datetime('now') WHERE id = ?").run(newStopLoss, id);
-      trade.stopLoss = newStopLoss;
-      const item = this.activeTrades.get(id);
-      if (item) item.trade.stopLoss = newStopLoss;
-      this.publish("breakeven_locked", {
-        tradeId: id,
-        symbol: trade.symbol,
-        newStopLoss,
-        entryPrice: trade.entryPrice,
-        currentLtp,
-        message: `Breakeven Locked at ₹${newStopLoss.toFixed(2)} (+0.50 pt buffer)`,
-      });
-      telegramNotifier.notifyBreakevenLocked(trade, newStopLoss, currentLtp).catch(() => {});
-    } catch (err) {
-      console.warn(`[paperTradeEngine] lockBreakeven error on trade ${id}:`, err.message);
-    }
-  }
-
-  triggerTrade(trade, tick, reason) {
-    const id = Number(trade.id);
-    if (this.triggering.has(id)) return;
-    this.triggering.add(id);
-
-    try {
-      const result = markPaperTrade(id, { price: tick.ltp, reason });
-      this.removeTrade(id);
-      const eventType = reason === "TARGET_HIT" ? "target_hit" : "stop_loss_hit";
-      this.publish(eventType, {
-        tradeId: id,
-        symbol: trade.symbol,
-        ltp: tick.ltp,
-        reason,
-        exitTime: result.trade.exitDatetime,
-        pnl: result.trade.netPnl,
-        message: reason === "TARGET_HIT" ? "Target Hit" : "Stop Loss Hit",
-      });
-
-      // Instant Dispatch to Mobile Webhook / Telegram Bot
-      if (reason === "TARGET_HIT") {
-        telegramNotifier.notifyTargetHit(trade, tick, result).catch(() => {});
-      } else {
-        telegramNotifier.notifyStopLossHit(trade, tick, result).catch(() => {});
-      }
-    } catch (error) {
-      this.publish("error", { tradeId: id, symbol: trade.symbol, message: error.message });
-    } finally {
-      this.triggering.delete(id);
-    }
+    evaluateTradeTrigger(this, trade, tick);
   }
 
   publish(type, payload = {}) {
-    const event = {
-      id: ++this.lastEventId,
-      type,
-      payload,
-      createdAt: new Date().toISOString(),
-    };
+    const event = { id: ++this.lastEventId, type, payload, createdAt: new Date().toISOString() };
     this.events.push(event);
     if (this.events.length > 100) this.events = this.events.slice(-100);
     this.emit("event", event);
@@ -507,15 +150,3 @@ export class PaperTradeEngine extends EventEmitter {
 }
 
 export const paperTradeEngine = new PaperTradeEngine();
-
-function isMarketOpenNow(date = new Date()) {
-  const ist = new Date(date.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-  const day = ist.getDay();
-  if (day === 0 || day === 6) return false;
-  const minutes = ist.getHours() * 60 + ist.getMinutes();
-  return minutes >= 9 * 60 + 15 && minutes <= 15 * 60 + 30;
-}
-
-function isSessionExpiredError(error) {
-  return /session|token|jkey|invalid|expired/i.test(String(error?.message || ""));
-}

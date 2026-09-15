@@ -15,6 +15,7 @@ export const useLivePriceStore = create(
       "NSE_INDEX|Nifty Bank": [57400, 57350, 57450, 57320, 57280, 57317.75],
       "INDIA_VIX": [14.1, 13.9, 13.5, 13.4, 13.20]
     },
+    lastTickReceivedAt: Date.now(),
     
     updateTick: (id, ltp, change = 0) => {
       const numLtp = Number(ltp);
@@ -25,6 +26,7 @@ export const useLivePriceStore = create(
       const nextSparkline = [...prevSparkline.slice(-14), numLtp];
       
       set((state) => ({
+        lastTickReceivedAt: Date.now(),
         ticks: {
           ...state.ticks,
           [id]: {
@@ -59,7 +61,7 @@ export const useLivePriceStore = create(
         const prevSparkline = currentSparklines?.[id] ?? [numLtp];
         newSparklines[id] = [...prevSparkline.slice(-14), numLtp];
       }
-      set({ ticks: newTicks, sparklines: newSparklines });
+      set({ lastTickReceivedAt: Date.now(), ticks: newTicks, sparklines: newSparklines });
     },
 
     updateIndexTick: (symbol, ltp, change = 0, changePct = 0, extra = {}) => {
@@ -68,6 +70,7 @@ export const useLivePriceStore = create(
       const prevSparkline = get().sparklines?.[symbol] ?? [numLtp];
       const nextSparkline = [...prevSparkline.slice(-14), numLtp];
       set((state) => ({
+        lastTickReceivedAt: Date.now(),
         indices: {
           ...state.indices,
           [symbol]: {

@@ -13,27 +13,34 @@ function scopeAuditorPlugin() {
     name: "vite-plugin-ast-scope-auditor",
     async buildStart() {
       if (!auditCodeFn) {
-        const mod = await import("../../scripts/audit-bindings.mjs");
-        auditCodeFn = mod.auditCode;
+        try {
+          const mod = await import("../../scripts/audit-scope.mjs");
+          auditCodeFn = mod.auditCode;
+        } catch {}
       }
     },
     async handleHotUpdate({ file, read }) {
       if (file.endsWith(".jsx") || file.endsWith(".js")) {
         if (!auditCodeFn) {
-          const mod = await import("../../scripts/audit-bindings.mjs");
-          auditCodeFn = mod.auditCode;
+          try {
+            const mod = await import("../../scripts/audit-scope.mjs");
+            auditCodeFn = mod.auditCode;
+          } catch {}
         }
-        const code = await read();
-        const rel = path.relative(path.resolve(__dirname, "../../"), file);
-        const errs = auditCodeFn(code, rel);
-        if (errs.length > 0) {
-          console.error(`\n🚨 [AST Scope Auditor Alert] Undeclared variable detected in ${path.basename(file)}:`);
-          for (const err of errs) {
-            console.error(`   ❌ Line ${err.line}:${err.col} -> ${err.message}`);
-            if (err.snippet) console.error(`      ${err.snippet}`);
+        if (typeof auditCodeFn !== "function") return;
+        try {
+          const code = await read();
+          const rel = path.relative(path.resolve(__dirname, "../../"), file);
+          const errs = auditCodeFn(code, rel);
+          if (errs && errs.length > 0) {
+            console.error(`\n🚨 [AST Scope Auditor Alert] Undeclared variable detected in ${path.basename(file)}:`);
+            for (const err of errs) {
+              console.error(`   ❌ Line ${err.line}:${err.col} -> ${err.message}`);
+              if (err.snippet) console.error(`      ${err.snippet}`);
+            }
+            console.error("");
           }
-          console.error("");
-        }
+        } catch {}
       }
     }
   };
@@ -48,7 +55,7 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       "/api": {
-        target: `http://127.0.0.1:${backendPort}`,
+        target: "http://127.0.0.1:5001",
         changeOrigin: true,
         ws: true,
         // Disable response buffering for Server-Sent Events (SSE)
@@ -62,11 +69,11 @@ export default defineConfig({
         },
       },
       "/upstox": {
-        target: `http://127.0.0.1:${backendPort}`,
+        target: "http://127.0.0.1:5001",
         changeOrigin: true,
       },
       "/kite": {
-        target: `http://127.0.0.1:${backendPort}`,
+        target: "http://127.0.0.1:5001",
         changeOrigin: true,
       },
     },
