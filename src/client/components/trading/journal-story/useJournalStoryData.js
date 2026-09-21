@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useTradingStore } from "../../../stores/useTradingStore";
 import { soundEngine } from "../../../utils/soundEngine";
 import { exportTaxCsv } from "./exportTaxCsv";
@@ -20,13 +20,89 @@ export function useJournalStoryData() {
     setJournalFilter, 
     deleteJournalTradeWithUndo, 
     selectedStrategyFilter, 
-    clearSelectedStrategyFilter 
+    clearSelectedStrategyFilter,
+    selectedTradeId,
+    setSelectedTradeId
   } = useTradingStore();
 
   const [expandedTradeIds, setExpandedTradeIds] = useState(new Set([101]));
   const [searchQuery, setSearchQuery] = useState("");
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [copiedTradeId, setCopiedTradeId] = useState(null);
+  const [visibleCount, setVisibleCount] = useState(25);
+
+  const dateFilteredTrades = getDateFilteredTrades(
+    journalTrades, 
+    journalRange, 
+    journalCustomStart, 
+    journalCustomEnd
+  );
+
+  const filteredTrades = getFilteredTrades(
+    dateFilteredTrades, 
+    selectedStrategyFilter, 
+    journalFilter, 
+    searchQuery
+  );
+
+  // Auto-unmask filter, expand batch, and focus card when selected from Section 3
+  useEffect(() => {
+    if (!selectedTradeId) return;
+
+    // Check if the target trade is hidden by active filters or search query
+    const targetInFiltered = filteredTrades.find((t) => t.id === selectedTradeId);
+    if (!targetInFiltered) {
+      // Check if it exists in the date range
+      const targetInDate = dateFilteredTrades.find((t) => t.id === selectedTradeId);
+      if (!targetInDate && journalTrades.some((t) => t.id === selectedTradeId)) {
+        setJournalRange("all");
+      }
+      if (journalFilter !== "ALL") setJournalFilter("ALL");
+      if (searchQuery) setSearchQuery("");
+      if (selectedStrategyFilter) clearSelectedStrategyFilter();
+    }
+
+    // Auto-expand the target card
+    setExpandedTradeIds((prev) => {
+      const next = new Set(prev);
+      next.add(selectedTradeId);
+      return next;
+    });
+
+    // Expand visible window if selected trade is beyond current batch
+    const tradeIndex = filteredTrades.findIndex((t) => t.id === selectedTradeId);
+    if (tradeIndex >= visibleCount) {
+      setVisibleCount(tradeIndex + 10);
+    }
+
+    // Smooth scroll into view after DOM paint
+    const timer = setTimeout(() => {
+      const el = document.getElementById(`trade-story-card-${selectedTradeId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }, 150);
+
+    return () => clearTimeout(timer);
+  }, [selectedTradeId, dateFilteredTrades.length, filteredTrades.length]);
+
+  // Reset pagination window when filters change
+  useEffect(() => {
+    setVisibleCount(25);
+  }, [journalFilter, searchQuery, selectedStrategyFilter, journalRange]);
+
+  const loadMore = () => setVisibleCount((prev) => prev + 25);
+  const hasMore = filteredTrades.length > visibleCount;
+  const displayTrades = filteredTrades.slice(0, visibleCount);
+
+  const inspectInEquityCurve = (tradeId) => {
+    soundEngine?.playTick?.();
+    setSelectedTradeId(tradeId);
+    const equityDeck = document.getElementById("equity-curve-deck") || document.querySelector("[data-deck='equity-curve']");
+    if (equityDeck) {
+      equityDeck.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  };
 
   const toggleExpand = (id) => {
     setExpandedTradeIds((prev) => {
@@ -72,20 +148,6 @@ export function useJournalStoryData() {
     deleteJournalTradeWithUndo(trade);
   };
 
-  const dateFilteredTrades = getDateFilteredTrades(
-    journalTrades, 
-    journalRange, 
-    journalCustomStart, 
-    journalCustomEnd
-  );
-
-  const filteredTrades = getFilteredTrades(
-    dateFilteredTrades, 
-    selectedStrategyFilter, 
-    journalFilter, 
-    searchQuery
-  );
-
   const rangeLabel = getRangeLabel(journalRange, journalCustomStart, journalCustomEnd);
   const totalNet = dateFilteredTrades.reduce((acc, t) => acc + (t.netPnl || 0), 0);
   const winCount = dateFilteredTrades.filter((t) => (t.netPnl || 0) > 0).length;
@@ -100,7 +162,9 @@ export function useJournalStoryData() {
     calendarOpen, setCalendarOpen, copiedTradeId,
     toggleExpand, toggleExpandAll, copyTradeMarkdown,
     handleDeleteWithUndo, exportTaxCsv: () => exportTaxCsv(filteredTrades, journalRange),
-    dateFilteredTrades, filteredTrades, rangeLabel,
-    totalNet, winCount, lossCount
+    dateFilteredTrades, filteredTrades, displayTrades,
+    loadMore, hasMore, rangeLabel,
+    totalNet, winCount, lossCount,
+    selectedTradeId, setSelectedTradeId, inspectInEquityCurve
   };
 }

@@ -1,5 +1,5 @@
 import { getDb } from "../../db/connection.js";
-import { closePaperTrade, createPaperTrade, getPaperLab } from "../../repositories/paper-lab.repository.js";
+import { closePaperTrade, createPaperTrade, getPaperLab, calculateEntrySlippage } from "../../repositories/paper-lab.repository.js";
 import { paperTradeEngine } from "../../services/paperTradeEngine.js";
 import { ensurePaperEngineStarted, streamPaperEvents } from "./paper-sse.js";
 import { getRange, readJsonBody, sendJson } from "./route-helpers.js";
@@ -69,6 +69,47 @@ export async function handlePaperOrdersRoutes(req, res, url) {
       }
     }
 
+    const lotSize = Math.max(1, Number(body.lotSize || 1));
+    const totalUnits = quantity * lotSize;
+    const isShort = direction === "SHORT";
+    const isTesting = Boolean(body.testingMode || body.bypassRiskCap);
+
+    // Strict Capital Risk Invariant Gate: Max risk per trade ₹200 to ₹300 (target ₹250, hard ceiling ₹300)
+    if (Number.isFinite(stopLoss) && stopLoss > 0 && !isTesting) {
+      const rupeeRisk = isShort
+        ? (stopLoss - entryPrice) * totalUnits
+        : (entryPrice - stopLoss) * totalUnits;
+      if (rupeeRisk > 300.50) {
+        sendJson(res, {
+          error: `Strict Capital Risk Violation: Trade risk ₹${rupeeRisk.toFixed(2)} exceeds ₹300 max cap. Manikandan rule requires ₹200–₹300 risk (target ₹250). Adjust stop loss or lot size.`,
+          rupeeRisk: Number(rupeeRisk.toFixed(2)),
+          maxAllowedRisk: 300
+        }, 422);
+        return true;
+      }
+    }
+
+    // Daily Realized Loss Circuit Breaker: Max daily loss ₹300
+    const db = getDb();
+    const todayDate = new Date(Date.now() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 10);
+    const dailyRow = db.prepare(`
+      SELECT COALESCE(SUM(net_pnl), 0) AS dailyPnl
+      FROM trades
+      WHERE trade_mode = 'PAPER'
+        AND status = 'CLOSED'
+        AND substr(exit_datetime, 1, 10) = ?
+    `).get(todayDate);
+    const dailyPnl = Number(dailyRow?.dailyPnl || 0);
+    if (dailyPnl <= -300 && !body.bypassDailyLoss && !isTesting) {
+      sendJson(res, {
+        error: `🛡️ Capital Discipline Vault Locked: Daily loss limit (-₹300) reached (Today's Realized PnL: ₹${dailyPnl.toFixed(2)}). 15-minute cooling vault activated to prevent revenge trading.`,
+        dailyLossExceeded: true,
+        realizedDailyPnl: dailyPnl,
+        coolingRequiredMs: 15 * 60 * 1000
+      }, 423);
+      return true;
+    }
+
     const feedMode = String(body.feedMode || (body.isManual ? "MANUAL" : "LIVE")).toUpperCase();
     const isManual = feedMode === "MANUAL";
     const modeTag = isManual ? "[MANUAL_ONLY]" : "[LIVE_FEED]";
@@ -76,6 +117,7 @@ export async function handlePaperOrdersRoutes(req, res, url) {
 
     let dotnetMeta = "";
     let effectiveEntryPrice = entryPrice;
+    let entrySlippage = Number(body.entrySlippage || 0);
 
     if (!isManual) {
       try {
@@ -92,6 +134,7 @@ export async function handlePaperOrdersRoutes(req, res, url) {
         if (dotnetRes.ok && dotnetRes.data?.success) {
           const d = dotnetRes.data;
           effectiveEntryPrice = Number(d.filledPrice || entryPrice);
+          entrySlippage = Math.abs(Number((effectiveEntryPrice - entryPrice).toFixed(2)));
           dotnetMeta = `[DOTNET_HFT:${d.orderId}:${d.positionId}]`;
         }
       } catch (err) {
@@ -99,9 +142,18 @@ export async function handlePaperOrdersRoutes(req, res, url) {
       }
     }
 
+    // Apply realistic adverse entry slippage if not already simulated
+    if (effectiveEntryPrice === entryPrice && body.simulateSlippage !== false && !isManual && entrySlippage === 0) {
+      const slip = calculateEntrySlippage(entryPrice, direction, true);
+      effectiveEntryPrice = slip.filledEntry;
+      entrySlippage = Math.abs(Number((effectiveEntryPrice - entryPrice).toFixed(2)));
+    }
+
     const payload = {
       ...body,
       entryPrice: effectiveEntryPrice,
+      plannedEntryPrice: entryPrice,
+      entrySlippage,
       feedMode,
       personalNotes: `${modeTag} ${dotnetMeta} ${cleanNotes || (isManual ? "Manual Simulator Trade" : "Live Upstox Practice Trade")}`.trim()
     };

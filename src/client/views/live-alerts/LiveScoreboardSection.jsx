@@ -1,6 +1,7 @@
 import React from 'react';
-import { Activity } from 'lucide-react';
+import { Activity, Calendar } from 'lucide-react';
 import clsx from 'clsx';
+import { soundEngine } from '../../utils/soundEngine';
 import { ScoreboardFinancialCards } from './ScoreboardFinancialCards';
 import { ScoreboardExecutionMatrix } from './ScoreboardExecutionMatrix';
 
@@ -37,11 +38,47 @@ export function LiveScoreboardSection({
           </p>
         </div>
 
-        <div className="flex items-center gap-2 text-xs">
-          <span className="px-3 py-1 rounded-xl bg-white/[0.03] border border-white/10 text-slate-400 font-mono text-[11px] flex items-center gap-1.5 shadow-sm">
+        <div className="flex items-center gap-2 text-xs flex-wrap">
+          <span className="px-3 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 text-slate-400 font-mono text-[11px] flex items-center gap-1.5 shadow-sm">
             <Activity className="w-3.5 h-3.5 text-cyan-400" />
-            <span>{openAlertsCount} Active Positions</span>
+            <span>{openAlertsCount || 0} Active Positions</span>
           </span>
+
+          <div className="p-1 rounded-xl bg-white/[0.04] border border-white/10 flex items-center gap-1 shadow-inner">
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playTabSwitchTone?.();
+                setScorecardTimeframe("today");
+              }}
+              className={clsx(
+                "px-2.5 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer font-mono",
+                scorecardTimeframe === "today"
+                  ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/35 shadow-sm"
+                  : "text-slate-400 hover:text-white"
+              )}
+              title="Filter to today's active session trades only"
+            >
+              <Calendar className="w-3 h-3 text-cyan-400" />
+              <span>Today IST</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playTabSwitchTone?.();
+                setScorecardTimeframe("all");
+              }}
+              className={clsx(
+                "px-2.5 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer font-mono",
+                scorecardTimeframe === "all"
+                  ? "bg-purple-500/20 text-purple-300 border border-purple-500/35 shadow-sm"
+                  : "text-slate-400 hover:text-white"
+              )}
+              title="Show all-time historical practice trades"
+            >
+              <span>All-Time</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -50,6 +87,7 @@ export function LiveScoreboardSection({
         currentAccountValue={currentAccountValue}
         netPnl={netPnl}
         pnlPct={pnlPct}
+        telemetry={telemetry}
       />
 
       <ScoreboardExecutionMatrix

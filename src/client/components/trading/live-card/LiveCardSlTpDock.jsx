@@ -5,6 +5,7 @@ import { soundEngine } from "../../../utils/soundEngine";
 
 export const LiveCardSlTpDock = ({
   id,
+  symbol = "",
   entry = 100,
   target = 110,
   stopLoss = 95,
@@ -63,11 +64,24 @@ export const LiveCardSlTpDock = ({
 
   const stopDistance = Math.max(0, isShort ? (stopLoss - currentLtp) : (currentLtp - stopLoss));
 
-  const rawTrail2 = isShort ? Number((currentLtp + 2.0).toFixed(2)) : Number((currentLtp - 2.0).toFixed(2));
-  const isTrail2Tightening = isShort ? rawTrail2 < stopLoss : rawTrail2 > stopLoss;
+  // Asset-Calibrated Trailing Stop Distance based on Index Volatility & Micro-Noise
+  const sym = String(symbol || "").toUpperCase();
+  const isSensex = sym.includes("SENSEX");
+  const isBank = sym.includes("BANK");
+  const tightTrailPts = isSensex ? 6.0 : (isBank ? 4.0 : 2.5);
+  const wideTrailPts = isSensex ? 12.0 : (isBank ? 7.0 : 4.5);
 
-  const rawTrail4 = isShort ? Number((currentLtp + 4.0).toFixed(2)) : Number((currentLtp - 4.0).toFixed(2));
-  const isTrail4Tightening = isShort ? rawTrail4 < stopLoss : rawTrail4 > stopLoss;
+  const rawTrailTight = isShort ? Number((currentLtp + tightTrailPts).toFixed(2)) : Number((currentLtp - tightTrailPts).toFixed(2));
+  const isTrailTightTightening = isShort ? rawTrailTight < stopLoss : rawTrailTight > stopLoss;
+
+  const rawTrailWide = isShort ? Number((currentLtp + wideTrailPts).toFixed(2)) : Number((currentLtp - wideTrailPts).toFixed(2));
+  const isTrailWideTightening = isShort ? rawTrailWide < stopLoss : rawTrailWide > stopLoss;
+
+  // Invariant Profit Snaps: Lock +1R (₹250 Net after ~₹55.20 friction)
+  const frictionPerUnit = totalQty > 0 ? 55.20 / totalQty : 0.85;
+  const net250Pts = (250 / totalQty) + frictionPerUnit;
+  const rawLock1R = isShort ? Number((entry - net250Pts).toFixed(2)) : Number((entry + net250Pts).toFixed(2));
+  const isLock1RTightening = isShort ? rawLock1R < stopLoss : rawLock1R > stopLoss;
 
   const rawLock50 = pts > 1.0
     ? (isShort ? Number((entry - pts * 0.5).toFixed(2)) : Number((entry + pts * 0.5).toFixed(2)))
@@ -75,18 +89,57 @@ export const LiveCardSlTpDock = ({
   const isLock50Tightening = isShort ? rawLock50 < stopLoss : rawLock50 > stopLoss;
 
   const trailingModes = [
-    { label: "Trail 2 pts", price: isTrail2Tightening ? rawTrail2 : stopLoss, isTightening: isTrail2Tightening },
-    { label: "Trail 4 pts", price: isTrail4Tightening ? rawTrail4 : stopLoss, isTightening: isTrail4Tightening },
-    { label: pts > 1.0 ? "Lock 50%" : "Breakeven", price: isLock50Tightening ? rawLock50 : stopLoss, isTightening: isLock50Tightening }
+    {
+      label: `Trail ${tightTrailPts} pts`,
+      price: isTrailTightTightening ? rawTrailTight : stopLoss,
+      isTightening: isTrailTightTightening,
+      tooltip: isTrailTightTightening
+        ? `Trail Stop Loss ${tightTrailPts} pts behind current LTP to ₹${rawTrailTight.toFixed(2)} (locks in tight scalp)`
+        : `Trail ${tightTrailPts} pts (₹${rawTrailTight.toFixed(2)}): Inactive until price moves far enough to tighten risk above current SL`
+    },
+    {
+      label: `Trail ${wideTrailPts} pts`,
+      price: isTrailWideTightening ? rawTrailWide : stopLoss,
+      isTightening: isTrailWideTightening,
+      tooltip: isTrailWideTightening
+        ? `Trail Stop Loss ${wideTrailPts} pts behind current LTP to ₹${rawTrailWide.toFixed(2)} (gives trade breathing room beyond spread noise)`
+        : `Trail ${wideTrailPts} pts (₹${rawTrailWide.toFixed(2)}): Inactive until price moves far enough to tighten risk above current SL`
+    },
+    {
+      label: pts >= net250Pts ? "Lock +1R (₹250)" : (pts > 1.0 ? "Lock 50%" : "Breakeven"),
+      price: pts >= net250Pts ? (isLock1RTightening ? rawLock1R : stopLoss) : (isLock50Tightening ? rawLock50 : stopLoss),
+      isTightening: pts >= net250Pts ? isLock1RTightening : isLock50Tightening,
+      tooltip: pts >= net250Pts
+        ? `Lock +1R (₹250 Net): Moves Stop Loss to ₹${rawLock1R.toFixed(2)} to guarantee Manikandan's ₹250 1R target net of fees`
+        : pts > 1.0
+        ? `Lock 50% Profit: Moves Stop Loss to ₹${rawLock50.toFixed(2)} to protect half of current gains`
+        : `Move Stop Loss to Entry + friction charges (₹${rawLock50.toFixed(2)}) for a 100% risk-free trade`
+    }
   ];
 
   const t1Pts = Math.max(3.0, Number((riskDistance * 1.2).toFixed(1)));
   const t2Pts = Math.max(t1Pts + 2.0, Number((riskDistance * 2.2).toFixed(1)));
   const targetPresets = [
-    { label: "1:1.5", price: isShort ? Number((entry - riskDistance * 1.5).toFixed(2)) : Number((entry + riskDistance * 1.5).toFixed(2)) },
-    { label: "1:2.0", price: isShort ? Number((entry - riskDistance * 2.0).toFixed(2)) : Number((entry + riskDistance * 2.0).toFixed(2)) },
-    { label: "T1 Scalp", price: isShort ? Number((entry - t1Pts).toFixed(2)) : Number((entry + t1Pts).toFixed(2)) },
-    { label: "T2 Goal", price: isShort ? Number((entry - t2Pts).toFixed(2)) : Number((entry + t2Pts).toFixed(2)) }
+    {
+      label: "1:1.5",
+      price: isShort ? Number((entry - riskDistance * 1.5).toFixed(2)) : Number((entry + riskDistance * 1.5).toFixed(2)),
+      tooltip: `Snap Target to 1:1.50 Risk-Reward (₹${(isShort ? entry - riskDistance * 1.5 : entry + riskDistance * 1.5).toFixed(2)}) · Expected gain: +₹${((riskDistance * 1.5) * totalQty).toFixed(0)}`
+    },
+    {
+      label: "1:2.0",
+      price: isShort ? Number((entry - riskDistance * 2.0).toFixed(2)) : Number((entry + riskDistance * 2.0).toFixed(2)),
+      tooltip: `Snap Target to 1:2.00 Risk-Reward — Manikandan Invariant (₹${(isShort ? entry - riskDistance * 2.0 : entry + riskDistance * 2.0).toFixed(2)}) · Expected gain: +₹${((riskDistance * 2.0) * totalQty).toFixed(0)}`
+    },
+    {
+      label: "T1 Scalp",
+      price: isShort ? Number((entry - t1Pts).toFixed(2)) : Number((entry + t1Pts).toFixed(2)),
+      tooltip: `Snap Target to Quick Scalp T1 at ₹${(isShort ? entry - t1Pts : entry + t1Pts).toFixed(2)} (+${t1Pts.toFixed(1)} pts) · Fast momentum exit`
+    },
+    {
+      label: "T2 Goal",
+      price: isShort ? Number((entry - t2Pts).toFixed(2)) : Number((entry + t2Pts).toFixed(2)),
+      tooltip: `Snap Target to Extended Goal T2 at ₹${(isShort ? entry - t2Pts : entry + t2Pts).toFixed(2)} (+${t2Pts.toFixed(1)} pts) · High-conviction runner`
+    }
   ];
 
   return (
@@ -136,7 +189,7 @@ export const LiveCardSlTpDock = ({
           <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/[0.03] border border-white/5 transition-all">
             <ShieldCheck className={clsx("w-3 h-3 shrink-0", isProtected || hasAutoLockedBE ? "text-cyan-300 animate-pulse" : "text-cyan-400/70")} />
             <span className={clsx("text-[10px] font-bold tracking-tight", isProtected || hasAutoLockedBE ? "text-cyan-300 font-extrabold" : "text-cyan-400/90")}>
-              {isProtected || hasAutoLockedBE ? "Auto-BE Locked 🛡️" : `Auto-BE @ ₹${autoBePrice.toFixed(2)}`}
+              {isProtected || hasAutoLockedBE ? "True BE Locked (Taxes Covered) 🛡️" : `Auto-BE Trigger @ ₹${autoBePrice.toFixed(2)}`}
             </span>
           </div>
           <span className="text-emerald-400/90 font-medium">Goal: +₹{targetRupees.toFixed(0)} (+{targetGainPct}%)</span>
@@ -147,34 +200,88 @@ export const LiveCardSlTpDock = ({
         {/* Left Capsule: Stop Loss & Trailing Ratchets */}
         <div className="p-3.5 sm:p-4 rounded-2xl bg-white/[0.02] border border-white/[0.06] space-y-2.5">
           <div className="flex items-center justify-between text-xs font-mono font-bold">
-            <span className="text-rose-400 flex items-center gap-1.5">
+            <span className="text-rose-400 flex items-center gap-1.5" title="Protective Stop Loss: If the market drops to this price, the position exits automatically to preserve your capital.">
               <ShieldAlert className="w-3.5 h-3.5" />
               <span>Safety Net (Stop Loss)</span>
             </span>
-            <span className="text-white/40 text-[11px]">
+            <span className="text-white/40 text-[11px]" title="Maximum rupee loss and percentage drawdown if this Stop Loss is hit">
               Max Risk: -₹{slRupees.toFixed(0)} ({slPct}%)
             </span>
           </div>
 
           <div className="p-1 rounded-xl bg-black/40 border border-white/[0.06] flex items-center gap-1">
-            <button type="button" onClick={() => onAdjustSl(-5)} className="h-8 px-2.5 rounded-lg bg-white/[0.04] hover:bg-rose-500/20 text-rose-300 font-mono font-bold text-xs transition cursor-pointer active:scale-95">−5</button>
-            <button type="button" onClick={() => onAdjustSl(-1)} className="h-8 px-2.5 rounded-lg bg-white/[0.04] hover:bg-rose-500/20 text-rose-300 font-mono font-bold text-xs transition cursor-pointer active:scale-95">−1</button>
+            <button
+              type="button"
+              onClick={() => onAdjustSl(-5)}
+              title="Lower Stop Loss by 5 points (Widens allowable loss by ₹5/qty)"
+              className="h-8 px-2.5 rounded-lg bg-white/[0.04] hover:bg-rose-500/20 text-rose-300 font-mono font-bold text-xs transition cursor-pointer active:scale-95"
+            >
+              −5
+            </button>
+            <button
+              type="button"
+              onClick={() => onAdjustSl(-1)}
+              title="Lower Stop Loss by 1 point (Widens allowable loss by ₹1/qty)"
+              className="h-8 px-2.5 rounded-lg bg-white/[0.04] hover:bg-rose-500/20 text-rose-300 font-mono font-bold text-xs transition cursor-pointer active:scale-95"
+            >
+              −1
+            </button>
             {editingSl ? (
-              <input type="number" step="0.05" autoFocus value={customSlVal} onChange={(e) => setCustomSlVal(e.target.value)} onBlur={onSaveSl} className="flex-1 h-8 rounded-lg bg-black/80 border border-rose-500/60 font-mono font-bold text-rose-300 text-xs px-2 text-center outline-none" />
+              <input
+                type="number"
+                step="0.05"
+                autoFocus
+                value={customSlVal}
+                onChange={(e) => setCustomSlVal(e.target.value)}
+                onBlur={onSaveSl}
+                title="Enter custom Stop Loss price and click away or press Enter"
+                className="flex-1 h-8 rounded-lg bg-black/80 border border-rose-500/60 font-mono font-bold text-rose-300 text-xs px-2 text-center outline-none"
+              />
             ) : (
-              <button type="button" onClick={() => { setCustomSlVal(stopLoss.toFixed(2)); setEditingSl(true); }} className="flex-1 h-8 rounded-lg bg-black/30 hover:bg-black/60 font-mono font-black text-rose-400 text-xs sm:text-sm flex items-center justify-center gap-1.5 cursor-text">
+              <button
+                type="button"
+                onClick={() => { setCustomSlVal(stopLoss.toFixed(2)); setEditingSl(true); }}
+                title="Click to directly type and edit your Stop Loss price"
+                className="flex-1 h-8 rounded-lg bg-black/30 hover:bg-black/60 font-mono font-black text-rose-400 text-xs sm:text-sm flex items-center justify-center gap-1.5 cursor-text"
+              >
                 <span>₹{stopLoss.toFixed(2)}</span>
                 <Edit3 className="w-2.5 h-2.5 text-white/30" />
               </button>
             )}
-            <button type="button" onClick={() => onAdjustSl(1)} className="h-8 px-2.5 rounded-lg bg-white/[0.04] hover:bg-emerald-500/20 text-emerald-300 font-mono font-bold text-xs transition cursor-pointer active:scale-95">+1</button>
-            <button type="button" onClick={() => onAdjustSl(5)} className="h-8 px-2.5 rounded-lg bg-white/[0.04] hover:bg-emerald-500/20 text-emerald-300 font-mono font-bold text-xs transition cursor-pointer active:scale-95">+5</button>
+            <button
+              type="button"
+              onClick={() => onAdjustSl(1)}
+              title="Raise Stop Loss by 1 point (Tightens risk by ₹1/qty to protect capital)"
+              className="h-8 px-2.5 rounded-lg bg-white/[0.04] hover:bg-emerald-500/20 text-emerald-300 font-mono font-bold text-xs transition cursor-pointer active:scale-95"
+            >
+              +1
+            </button>
+            <button
+              type="button"
+              onClick={() => onAdjustSl(5)}
+              title="Raise Stop Loss by 5 points (Tightens risk by ₹5/qty to lock in gains)"
+              className="h-8 px-2.5 rounded-lg bg-white/[0.04] hover:bg-emerald-500/20 text-emerald-300 font-mono font-bold text-xs transition cursor-pointer active:scale-95"
+            >
+              +5
+            </button>
           </div>
 
           <div className="space-y-1 pt-1">
             <div className="flex items-center justify-between text-[10px] font-mono text-white/40">
-              <span>Trailing Ratchets:</span>
-              <button type="button" onClick={() => setAutoTrailBE && setAutoTrailBE(!autoTrailBE)} className={clsx("px-2 py-0.5 rounded text-[10px] font-mono font-bold transition", autoTrailBE ? "bg-white/10 text-white border border-white/20" : "bg-white/[0.02] text-white/30")}>
+              <span title="Trailing Ratchets: 1-click buttons to ratchet your Stop Loss upward and protect profits as price rises">
+                Trailing Ratchets:
+              </span>
+              <button
+                type="button"
+                onClick={() => setAutoTrailBE && setAutoTrailBE(!autoTrailBE)}
+                title={autoTrailBE
+                  ? "Auto-BE @ 1R is ON: Once the trade moves 1R into profit (45% toward target), the system automatically ratchets Stop Loss to Breakeven (+ friction charges) to guarantee a risk-free trade. Click to turn OFF."
+                  : "Auto-BE @ 1R is OFF: Click to turn ON. Automatically locks Breakeven (+ friction charges) once price gains 1R."}
+                className={clsx(
+                  "px-2 py-0.5 rounded text-[10px] font-mono font-bold transition cursor-pointer",
+                  autoTrailBE ? "bg-white/10 text-white border border-white/20" : "bg-white/[0.02] text-white/30"
+                )}
+              >
                 Auto-BE @ 1R: {autoTrailBE ? "ON" : "OFF"}
               </button>
             </div>
@@ -187,6 +294,7 @@ export const LiveCardSlTpDock = ({
                     key={`trail-${mode.label}`}
                     type="button"
                     disabled={!canRatchet && !isSelected}
+                    title={mode.tooltip}
                     onClick={() => {
                       if (!canRatchet) return;
                       soundEngine.playTabSwitchTone();
@@ -208,34 +316,80 @@ export const LiveCardSlTpDock = ({
         {/* Right Capsule: Profit Goal & Target Snaps */}
         <div className="p-3.5 sm:p-4 rounded-2xl bg-white/[0.02] border border-white/[0.06] space-y-2.5">
           <div className="flex items-center justify-between text-xs font-mono font-bold">
-            <span className="text-emerald-400 flex items-center gap-1.5">
+            <span className="text-emerald-400 flex items-center gap-1.5" title="Profit Goal (Target Price): If the market rises to this price, the position automatically closes in full profit.">
               <Target className="w-3.5 h-3.5" />
               <span>Profit Goal (Target)</span>
             </span>
-            <span className="text-white/40 text-[11px]">
+            <span className="text-white/40 text-[11px]" title="Expected rupee profit and percentage gain if this Target is hit">
               Gain: +₹{targetRupees.toFixed(0)} (+{targetGainPct}%)
             </span>
           </div>
 
           <div className="p-1 rounded-xl bg-black/40 border border-white/[0.06] flex items-center gap-1">
-            <button type="button" onClick={() => onAdjustTp(-5)} className="h-8 px-2.5 rounded-lg bg-white/[0.04] hover:bg-amber-500/20 text-amber-300 font-mono font-bold text-xs transition cursor-pointer active:scale-95">−5</button>
-            <button type="button" onClick={() => onAdjustTp(-1)} className="h-8 px-2.5 rounded-lg bg-white/[0.04] hover:bg-amber-500/20 text-amber-300 font-mono font-bold text-xs transition cursor-pointer active:scale-95">−1</button>
+            <button
+              type="button"
+              onClick={() => onAdjustTp(-5)}
+              title="Lower Profit Target by 5 points (Brings target closer to entry for an easier/quicker exit)"
+              className="h-8 px-2.5 rounded-lg bg-white/[0.04] hover:bg-amber-500/20 text-amber-300 font-mono font-bold text-xs transition cursor-pointer active:scale-95"
+            >
+              −5
+            </button>
+            <button
+              type="button"
+              onClick={() => onAdjustTp(-1)}
+              title="Lower Profit Target by 1 point (Brings target closer to entry for an easier/quicker exit)"
+              className="h-8 px-2.5 rounded-lg bg-white/[0.04] hover:bg-amber-500/20 text-amber-300 font-mono font-bold text-xs transition cursor-pointer active:scale-95"
+            >
+              −1
+            </button>
             {editingTarget ? (
-              <input type="number" step="0.05" autoFocus value={customTargetVal} onChange={(e) => setCustomTargetVal(e.target.value)} onBlur={onSaveTarget} className="flex-1 h-8 rounded-lg bg-black/80 border border-emerald-500/60 font-mono font-bold text-emerald-300 text-xs px-2 text-center outline-none" />
+              <input
+                type="number"
+                step="0.05"
+                autoFocus
+                value={customTargetVal}
+                onChange={(e) => setCustomTargetVal(e.target.value)}
+                onBlur={onSaveTarget}
+                title="Enter custom Profit Target price and click away or press Enter"
+                className="flex-1 h-8 rounded-lg bg-black/80 border border-emerald-500/60 font-mono font-bold text-emerald-300 text-xs px-2 text-center outline-none"
+              />
             ) : (
-              <button type="button" onClick={() => { setCustomTargetVal(target.toFixed(2)); setEditingTarget(true); }} className="flex-1 h-8 rounded-lg bg-black/30 hover:bg-black/60 font-mono font-black text-emerald-400 text-xs sm:text-sm flex items-center justify-center gap-1.5 cursor-text">
+              <button
+                type="button"
+                onClick={() => { setCustomTargetVal(target.toFixed(2)); setEditingTarget(true); }}
+                title="Click to directly type and edit your Profit Target price"
+                className="flex-1 h-8 rounded-lg bg-black/30 hover:bg-black/60 font-mono font-black text-emerald-400 text-xs sm:text-sm flex items-center justify-center gap-1.5 cursor-text"
+              >
                 <span>₹{target.toFixed(2)}</span>
                 <Edit3 className="w-2.5 h-2.5 text-white/30" />
               </button>
             )}
-            <button type="button" onClick={() => onAdjustTp(1)} className="h-8 px-2.5 rounded-lg bg-white/[0.04] hover:bg-emerald-500/20 text-emerald-300 font-mono font-bold text-xs transition cursor-pointer active:scale-95">+1</button>
-            <button type="button" onClick={() => onAdjustTp(5)} className="h-8 px-2.5 rounded-lg bg-white/[0.04] hover:bg-emerald-500/20 text-emerald-300 font-mono font-bold text-xs transition cursor-pointer active:scale-95">+5</button>
+            <button
+              type="button"
+              onClick={() => onAdjustTp(1)}
+              title="Raise Profit Target by 1 point (Demands ₹1/qty more profit from the trade)"
+              className="h-8 px-2.5 rounded-lg bg-white/[0.04] hover:bg-emerald-500/20 text-emerald-300 font-mono font-bold text-xs transition cursor-pointer active:scale-95"
+            >
+              +1
+            </button>
+            <button
+              type="button"
+              onClick={() => onAdjustTp(5)}
+              title="Raise Profit Target by 5 points (Demands ₹5/qty more profit from the trade)"
+              className="h-8 px-2.5 rounded-lg bg-white/[0.04] hover:bg-emerald-500/20 text-emerald-300 font-mono font-bold text-xs transition cursor-pointer active:scale-95"
+            >
+              +5
+            </button>
           </div>
 
           <div className="space-y-1 pt-1">
             <div className="flex items-center justify-between text-[10px] font-mono text-white/40">
-              <span>Target Presets:</span>
-              <span>1:{rrRatio} Edge</span>
+              <span title="Target Presets: 1-click buttons to instantly snap your Profit Target to standard Risk-to-Reward multiples">
+                Target Presets:
+              </span>
+              <span title={`Current Risk-to-Reward Ratio: 1:${rrRatio}. For every ₹1 risked (₹${slRupees.toFixed(0)}), you aim to make ₹${rrRatio} (₹${targetRupees.toFixed(0)}).`}>
+                1:{rrRatio} Edge
+              </span>
             </div>
             <div className="p-1 rounded-xl bg-black/30 border border-white/[0.04] grid grid-cols-4 gap-1">
               {targetPresets.map((tier) => {
@@ -244,6 +398,7 @@ export const LiveCardSlTpDock = ({
                   <button
                     key={`target-snap-${tier.label}`}
                     type="button"
+                    title={tier.tooltip}
                     onClick={() => {
                       soundEngine.playTabSwitchTone();
                       if (onUpdateTp) onUpdateTp(tier.price);

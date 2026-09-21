@@ -1,5 +1,5 @@
-import React, { useRef } from "react";
-import { RotateCcw, Download, Upload, FileJson, Calendar as CalendarIcon } from "lucide-react";
+import React, { useRef, useEffect } from "react";
+import { RotateCcw, Download, Upload, FileJson, Calendar as CalendarIcon, Search, X, AlertTriangle, Target, Shield, Bookmark, Clock } from "lucide-react";
 import clsx from "clsx";
 import { soundEngine } from "../../../utils/soundEngine";
 
@@ -14,6 +14,15 @@ export const HistoryFilterToolbar = ({
   setDateRangeFilter,
   paperLedgerFilter = "all",
   setPaperLedgerFilter,
+  diagnosticFilter = "all",
+  setDiagnosticFilter,
+  searchQuery = "",
+  setSearchQuery,
+  breachedCount = 0,
+  runnerCount = 0,
+  beCount = 0,
+  journalCount = 0,
+  middayCount = 0,
   onOpenCalendar,
   onResetFilters,
   onExportCsv,
@@ -21,10 +30,23 @@ export const HistoryFilterToolbar = ({
   onImportJson
 }) => {
   const fileInputRef = useRef(null);
+  const searchInputRef = useRef(null);
+
+  // Keyboard shortcut: Press '/' to focus search input
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === "/" && document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "TEXTAREA") {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   return (
     <div className="flex flex-col space-y-3 p-4 rounded-2xl bg-white/[0.02] border border-white/10 backdrop-blur-xl">
-      {/* Row 1: Asset Tabs + Export Actions */}
+      {/* Row 1: Asset Tabs + Search Bar + Export Tools */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         {/* Asset Segments */}
         <div className="flex items-center gap-1.5 p-1 rounded-xl bg-black/40 border border-white/10 text-xs font-mono">
@@ -54,13 +76,35 @@ export const HistoryFilterToolbar = ({
           ))}
         </div>
 
+        {/* Real-time Search Input Bar */}
+        <div className="relative flex-1 min-w-[200px] max-w-sm">
+          <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search strike, order #, tag... (/)"
+            className="w-full pl-8 pr-7 py-1.5 rounded-xl bg-black/40 border border-white/10 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400/60 transition"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-0.5 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+
         {/* Export & Restore Tools */}
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={onExportCsv}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 text-xs font-bold text-slate-300 hover:text-white transition shadow-sm cursor-pointer"
-            title="Export CSV audit ledger"
+            title="Export hardened CSV audit ledger (24 columns)"
           >
             <Download className="w-3.5 h-3.5 text-cyan-400" />
             <span>CSV</span>
@@ -97,7 +141,7 @@ export const HistoryFilterToolbar = ({
             <button
               onClick={onResetFilters}
               className="p-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white text-xs transition cursor-pointer"
-              title="Reset all filters"
+              title="Reset all filters and search"
               type="button"
             >
               <RotateCcw className="w-3.5 h-3.5" />
@@ -106,8 +150,45 @@ export const HistoryFilterToolbar = ({
         </div>
       </div>
 
-      {/* Row 2: Timeframe Pills + Outcome Filter Pills */}
+      {/* Row 2: Diagnostic Quick Chips + Timeframe + Outcome Filter */}
       <div className="flex flex-wrap items-center justify-between gap-3 pt-1 text-xs font-mono">
+        {/* Diagnostic Execution Filter Chips */}
+        <div className="flex items-center gap-1 p-1 rounded-xl bg-black/40 border border-white/10 overflow-x-auto">
+          {[
+            { id: "all", label: "All Executions", count: null },
+            { id: "breach", label: "Breached >₹300", count: breachedCount, icon: AlertTriangle, activeClass: "bg-rose-500/20 text-rose-300 border-rose-500/40" },
+            { id: "runner", label: "1:2+ Runners", count: runnerCount, icon: Target, activeClass: "bg-emerald-500/20 text-emerald-300 border-emerald-500/40" },
+            { id: "be", label: "BE Scratched", count: beCount, icon: Shield, activeClass: "bg-amber-500/20 text-amber-300 border-amber-500/40" },
+            { id: "midday", label: "Midday Chop", count: middayCount, icon: Clock, activeClass: "bg-orange-500/20 text-orange-300 border-orange-500/40" },
+            { id: "journaled", label: "In Journal", count: journalCount, icon: Bookmark, activeClass: "bg-purple-500/20 text-purple-300 border-purple-500/40" }
+          ].map((chip) => {
+            const Icon = chip.icon;
+            const isActive = diagnosticFilter === chip.id;
+            return (
+              <button
+                key={`diag-${chip.id}`}
+                type="button"
+                onClick={() => {
+                  soundEngine.playTabSwitchTone();
+                  setDiagnosticFilter?.(chip.id);
+                }}
+                className={clsx(
+                  "px-2.5 py-1 rounded-lg font-bold transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap",
+                  isActive
+                    ? chip.activeClass || "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm"
+                    : "text-slate-400 hover:text-slate-200"
+                )}
+              >
+                {Icon && <Icon className="w-3 h-3" />}
+                <span>{chip.label}</span>
+                {chip.count != null && chip.count > 0 && (
+                  <span className="text-[10px] opacity-75">({chip.count})</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
         {/* Timeframe Tabs */}
         <div className="flex items-center gap-1 p-1 rounded-xl bg-black/30 border border-white/5 overflow-x-auto">
           {[
@@ -130,7 +211,7 @@ export const HistoryFilterToolbar = ({
                   if (tab.id === "custom") onOpenCalendar?.();
                 }}
                 className={clsx(
-                  "px-2.5 py-1 rounded-lg font-bold transition-all flex items-center gap-1 cursor-pointer",
+                  "px-2.5 py-1 rounded-lg font-bold transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap",
                   isActive
                     ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm"
                     : "text-slate-400 hover:text-slate-200"
@@ -146,10 +227,10 @@ export const HistoryFilterToolbar = ({
         {/* Outcome Classification Tabs */}
         <div className="flex items-center gap-1 p-1 rounded-xl bg-black/30 border border-white/5">
           {[
-            { id: "all", label: "All Outcomes" },
+            { id: "all", label: "All" },
             { id: "win", label: "Wins" },
             { id: "loss", label: "Losses" },
-            { id: "friction", label: "BE / Drag" }
+            { id: "friction", label: "BE Drag" }
           ].map((tab) => (
             <button
               key={`outcome-${tab.id}`}

@@ -34,11 +34,14 @@ export const createPreferencesSlice = (set, get) => ({
   // Dual Broker Hub Status
   brokerStatus: {
     kiteConnected: false,
+    kiteExpired: false,
     upstoxConnected: false,
     upstoxExpired: false,
     feedLatencyMs: 18,
     upstoxExpiry: null
   },
+  authenticatingBroker: null, // 'kite' | 'upstox' | null
+  setAuthenticatingBroker: (broker) => set((state) => (state.authenticatingBroker !== broker ? { authenticatingBroker: broker } : state)),
   setBrokerStatus: (status) => set((state) => {
     let changed = false;
     for (const k in status) {
@@ -72,6 +75,19 @@ export const createPreferencesSlice = (set, get) => ({
   setWealthViewMode: (mode) => {
     set({ wealthViewMode: mode });
     try { localStorage.setItem("portfolio-wealth-viewmode", mode); } catch {}
+  },
+
+  // Global Multi-Currency Preference (INR, USD, EUR)
+  portfolioCurrency: (() => {
+    try {
+      return localStorage.getItem("portfolio-currency") || "INR";
+    } catch {
+      return "INR";
+    }
+  })(),
+  setPortfolioCurrency: (curr) => {
+    set({ portfolioCurrency: curr });
+    try { localStorage.setItem("portfolio-currency", curr); } catch {}
   },
 
   // Streamer P&L Privacy Mode

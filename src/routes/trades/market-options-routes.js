@@ -2,6 +2,7 @@ import { paperTradeEngine } from "../../services/paperTradeEngine.js";
 import { computeGexProfile } from "../../services/greeksEngine.js";
 import { ensurePaperEngineStarted } from "./paper-sse.js";
 import { readJsonBody, sendJson } from "./route-helpers.js";
+import { getUpstoxOptionContracts, getUpstoxOptionChain } from "./option-contract-cache.js";
 
 export async function handleMarketOptionsRoutes(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/market/gex-profile") {
@@ -129,6 +130,220 @@ export async function handleMarketOptionsRoutes(req, res, url) {
     }
 
     sendJson(res, { success: true, quotes });
+    return true;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/market/option-chain") {
+    ensurePaperEngineStarted();
+    const symbol = (url.searchParams.get("symbol") || "NIFTY").toUpperCase();
+    const requestedExpiry = url.searchParams.get("expiry") || "";
+
+    const keyMap = {
+      NIFTY: "NSE_INDEX|Nifty 50",
+      BANKNIFTY: "NSE_INDEX|Nifty Bank",
+      FINNIFTY: "NSE_INDEX|Nifty Fin Service",
+      SENSEX: "BSE_INDEX|SENSEX"
+    };
+
+    const intervalMap = {
+      NIFTY: 50,
+      BANKNIFTY: 100,
+      FINNIFTY: 50,
+      SENSEX: 100
+    };
+
+    const spotFallbacks = {
+      NIFTY: 25150.25,
+      BANKNIFTY: 53820.75,
+      FINNIFTY: 24680.50,
+      SENSEX: 82450.10
+    };
+
+    const instrumentKey = keyMap[symbol] || "NSE_INDEX|Nifty 50";
+    const strikeInterval = intervalMap[symbol] || 50;
+
+    let spot = spotFallbacks[symbol] || 25000;
+    if (paperTradeEngine?.simulator) {
+      const liveSpot = paperTradeEngine.simulator.getCurrentSpot(instrumentKey);
+      if (liveSpot && liveSpot > 0) spot = Number(liveSpot);
+    }
+
+    const client = paperTradeEngine.client;
+    client.refreshAccessToken();
+    const token = client.accessToken || "";
+
+    // 1. Live Upstox Option Chain Fetch
+    if (token) {
+      try {
+        const contracts = await getUpstoxOptionContracts(token, instrumentKey);
+        const expiryDates = Array.isArray(contracts)
+          ? Array.from(new Set(contracts.map((c) => c.expiry))).filter(Boolean).sort()
+          : [];
+
+        const activeExpiry = requestedExpiry || expiryDates[0] || "";
+
+        if (activeExpiry) {
+          const rawChain = await getUpstoxOptionChain(token, instrumentKey, activeExpiry);
+          if (Array.isArray(rawChain) && rawChain.length > 0) {
+            let totalCallOi = 0;
+            let totalPutOi = 0;
+
+            const strikes = rawChain.map((item) => {
+              const strike = Number(item.strike_price);
+              const callData = item.call_options?.market_data || {};
+              const callGreeks = item.call_options?.option_greeks || {};
+              const putData = item.put_options?.market_data || {};
+              const putGreeks = item.put_options?.option_greeks || {};
+
+              const callOi = Number(callData.oi || 0);
+              const putOi = Number(putData.oi || 0);
+              totalCallOi += callOi;
+              totalPutOi += putOi;
+
+              return {
+                strike,
+                call: {
+                  ltp: Number(callData.ltp || 0),
+                  change: Number(callData.net_change || 0),
+                  oi: callOi,
+                  changeOi: Number(callData.close_price ? callOi - Number(callData.close_price) : 0),
+                  iv: Number(callGreeks.iv || 13.5),
+                  delta: Number(callGreeks.delta || 0.5),
+                  instrumentKey: item.call_options?.instrument_key || ""
+                },
+                put: {
+                  ltp: Number(putData.ltp || 0),
+                  change: Number(putData.net_change || 0),
+                  oi: putOi,
+                  changeOi: Number(putData.close_price ? putOi - Number(putData.close_price) : 0),
+                  iv: Number(putGreeks.iv || 13.5),
+                  delta: Number(putGreeks.delta || -0.5),
+                  instrumentKey: item.put_options?.instrument_key || ""
+                }
+              };
+            });
+
+            // Calculate Max Pain
+            let maxPainStrike = spot;
+            let minPayout = Infinity;
+            strikes.forEach((candidate) => {
+              let totalLoss = 0;
+              strikes.forEach((s) => {
+                if (s.strike < candidate.strike) {
+                  totalLoss += (candidate.strike - s.strike) * s.call.oi;
+                } else if (s.strike > candidate.strike) {
+                  totalLoss += (s.strike - candidate.strike) * s.put.oi;
+                }
+              });
+              if (totalLoss < minPayout) {
+                minPayout = totalLoss;
+                maxPainStrike = candidate.strike;
+              }
+            });
+
+            const pcr = totalCallOi > 0 ? Number((totalPutOi / totalCallOi).toFixed(2)) : 1.0;
+
+            sendJson(res, {
+              success: true,
+              symbol,
+              instrumentKey,
+              spot,
+              expiry: activeExpiry,
+              expiryDates,
+              pcr,
+              maxPain: maxPainStrike,
+              totalCallOi,
+              totalPutOi,
+              strikes,
+              isSimulated: false
+            });
+            return true;
+          }
+        }
+      } catch (err) {
+        console.warn("[handleMarketOptionsRoutes] Live chain fetch error, falling back to simulated:", err.message);
+      }
+    }
+
+    // 2. High-Fidelity Synthetic Simulation Fallback (24/7 Resilience)
+    const atmStrike = Math.round(spot / strikeInterval) * strikeInterval;
+    const strikes = [];
+    let totalCallOi = 0;
+    let totalPutOi = 0;
+
+    // Generate ATM -6 to ATM +6 strikes (13 strikes total)
+    for (let offset = -6; offset <= 6; offset++) {
+      const strike = atmStrike + offset * strikeInterval;
+      const distFromSpot = spot - strike;
+
+      // Realistic Intrinsic & Extrinsic Options Pricing
+      const isCallItm = distFromSpot > 0;
+      const isPutItm = distFromSpot < 0;
+
+      const callIntrinsic = isCallItm ? distFromSpot : 0;
+      const putIntrinsic = isPutItm ? Math.abs(distFromSpot) : 0;
+
+      const extrinsicAtm = spot * 0.019;
+      const decayFactor = Math.max(0.15, 1 - Math.abs(offset) * 0.14);
+      const extrinsic = extrinsicAtm * decayFactor;
+
+      const callLtp = Number(Math.max(1.5, callIntrinsic + extrinsic).toFixed(2));
+      const putLtp = Number(Math.max(1.5, putIntrinsic + extrinsic).toFixed(2));
+
+      // Realistic Institutional OI Clustering (Calls peak higher, Puts peak lower)
+      const callBaseOi = Math.round(Math.max(80000, 1500000 * Math.exp(-Math.pow(offset - 2, 2) / 6)));
+      const putBaseOi = Math.round(Math.max(90000, 1750000 * Math.exp(-Math.pow(offset + 2, 2) / 6)));
+
+      const callChgOi = Math.round((offset >= 0 ? 1 : -0.5) * (callBaseOi * 0.08));
+      const putChgOi = Math.round((offset <= 0 ? 1.2 : -0.4) * (putBaseOi * 0.09));
+
+      totalCallOi += callBaseOi;
+      totalPutOi += putBaseOi;
+
+      const callDelta = Number(Math.min(0.95, Math.max(0.05, 0.5 + (distFromSpot / (strikeInterval * 6)) * 0.4)).toFixed(2));
+      const putDelta = Number(Math.min(-0.05, Math.max(-0.95, -0.5 + (distFromSpot / (strikeInterval * 6)) * 0.4)).toFixed(2));
+      const iv = Number((13.2 + Math.abs(offset) * 0.4).toFixed(2));
+
+      strikes.push({
+        strike,
+        call: {
+          ltp: callLtp,
+          change: Number((distFromSpot >= 0 ? 8.5 : -5.2).toFixed(2)),
+          oi: callBaseOi,
+          changeOi: callChgOi,
+          iv,
+          delta: callDelta,
+          instrumentKey: `PRACTICE:${symbol}_${strike}_CE`
+        },
+        put: {
+          ltp: putLtp,
+          change: Number((distFromSpot <= 0 ? 6.8 : -7.1).toFixed(2)),
+          oi: putBaseOi,
+          changeOi: putChgOi,
+          iv,
+          delta: putDelta,
+          instrumentKey: `PRACTICE:${symbol}_${strike}_PE`
+        }
+      });
+    }
+
+    const pcr = totalCallOi > 0 ? Number((totalPutOi / totalCallOi).toFixed(2)) : 1.15;
+    const maxPain = atmStrike;
+
+    sendJson(res, {
+      success: true,
+      symbol,
+      instrumentKey,
+      spot,
+      expiry: requestedExpiry || "WEEKLY_CURRENT",
+      expiryDates: ["CURRENT_EXPIRY", "NEXT_WEEK", "MONTHLY_EXPIRY"],
+      pcr,
+      maxPain,
+      totalCallOi,
+      totalPutOi,
+      strikes,
+      isSimulated: true
+    });
     return true;
   }
 

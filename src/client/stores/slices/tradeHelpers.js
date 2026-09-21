@@ -1,12 +1,20 @@
 export function resolveIndexLotSize(symbol = "", explicitLot = null) {
-  if (explicitLot && Number(explicitLot) > 0) return Number(explicitLot);
   const sym = (symbol || "").toUpperCase();
-  if (sym.includes("BANKNIFTY")) return 30;
-  if (sym.includes("FINNIFTY")) return 65;
-  if (sym.includes("MIDCPNIFTY")) return 75;
-  if (sym.includes("SENSEX")) return 20;
-  if (sym.includes("NIFTY")) return 65;
-  return 65;
+  const canonical = sym.includes("BANKNIFTY")
+    ? 30
+    : sym.includes("FINNIFTY")
+    ? 65
+    : sym.includes("MIDCPNIFTY")
+    ? 75
+    : sym.includes("SENSEX")
+    ? 20
+    : sym.includes("NIFTY")
+    ? 65
+    : 65;
+
+  const num = Number(explicitLot);
+  if (Number.isFinite(num) && num >= 15) return num;
+  return canonical;
 }
 
 export function calculateStatutoryCharges(entryPrice = 0, exitPrice = 0, totalQty = 65) {

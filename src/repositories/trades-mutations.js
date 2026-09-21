@@ -33,12 +33,22 @@ export function upsertInstrument(db, trade) {
     `)
     .get(trade.symbol, trade.market, trade.instrumentType, trade.optionType, trade.strikePrice, trade.expiryDate);
 
+  let cleanLotSize = Number(trade.lotSize || 1);
+  const symUpper = (trade.symbol || trade.underlyingSymbol || "").toUpperCase();
+  if (cleanLotSize <= 1) {
+    if (symUpper.includes("BANKNIFTY")) cleanLotSize = 30;
+    else if (symUpper.includes("FINNIFTY")) cleanLotSize = 65;
+    else if (symUpper.includes("MIDCPNIFTY")) cleanLotSize = 75;
+    else if (symUpper.includes("SENSEX")) cleanLotSize = 20;
+    else if (symUpper.includes("NIFTY")) cleanLotSize = 65;
+  }
+
   if (existing) {
     db.prepare(`
       UPDATE instruments
       SET display_name = ?, exchange = ?, currency = ?, underlying_symbol = ?, lot_size = ?, updated_at = datetime('now')
       WHERE id = ?
-    `).run(trade.displayName || trade.symbol, trade.exchange, trade.currency, trade.underlyingSymbol, trade.lotSize, existing.id);
+    `).run(trade.displayName || trade.symbol, trade.exchange, trade.currency, trade.underlyingSymbol, cleanLotSize, existing.id);
     return existing.id;
   }
 
@@ -61,7 +71,7 @@ export function upsertInstrument(db, trade) {
       trade.optionType,
       trade.strikePrice,
       trade.expiryDate,
-      trade.lotSize,
+      cleanLotSize,
     );
   return Number(result.lastInsertRowid);
 }

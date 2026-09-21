@@ -6,6 +6,8 @@ export function QuotaVaultAlertBar({
   activeQuotaMode,
   todayTradesCount,
   dailyQuotaLimit,
+  isDailyLossBreached,
+  todayRealizedLoss,
   vaultFormattedTime,
   vaultMsRemaining,
   onToggleTestingMode,
@@ -128,20 +130,24 @@ export function QuotaVaultAlertBar({
       )}
 
       {activeQuotaMode === "CAP_REACHED" && (
-        <div className="relative z-10 p-3 sm:p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/15 via-purple-500/10 to-amber-500/10 border border-amber-500/40 flex items-center justify-between gap-3 text-xs flex-wrap shadow-lg">
-          <div className="flex items-center gap-2.5 text-amber-200 min-w-0">
-            <ShieldAlert className="w-5 h-5 text-amber-400 flex-shrink-0" />
+        <div className={`relative z-10 p-3 sm:p-3.5 rounded-2xl ${isDailyLossBreached ? "bg-gradient-to-r from-rose-500/15 via-red-500/10 to-rose-500/10 border border-rose-500/40" : "bg-gradient-to-r from-amber-500/15 via-purple-500/10 to-amber-500/10 border border-amber-500/40"} flex items-center justify-between gap-3 text-xs flex-wrap shadow-lg`}>
+          <div className={`flex items-center gap-2.5 ${isDailyLossBreached ? "text-rose-200" : "text-amber-200"} min-w-0`}>
+            <ShieldAlert className={`w-5 h-5 ${isDailyLossBreached ? "text-rose-400" : "text-amber-400"} flex-shrink-0`} />
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <strong className="text-amber-300 font-bold">
-                  Daily 3-Trade Quota Reached ({todayTradesCount}/{dailyQuotaLimit})
+                <strong className={isDailyLossBreached ? "text-rose-300 font-bold" : "text-amber-300 font-bold"}>
+                  {isDailyLossBreached 
+                    ? `Daily Loss Limit Breached (-₹300 Cap · Realized: ₹${Number(todayRealizedLoss || 0).toFixed(0)})`
+                    : `Daily 3-Trade Quota Reached (${todayTradesCount}/${dailyQuotaLimit})`}
                 </strong>
-                <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40 text-[9px] font-bold">
-                  Anti-Tilt Protocol
+                <span className={`px-2 py-0.5 rounded-full ${isDailyLossBreached ? "bg-rose-500/20 text-rose-300 border border-rose-500/40" : "bg-purple-500/20 text-purple-300 border border-purple-500/40"} text-[9px] font-bold`}>
+                  {isDailyLossBreached ? "Hard Circuit Breaker" : "Anti-Tilt Protocol"}
                 </span>
               </div>
               <span className="text-[11px] text-slate-300 block mt-0.5">
-                Disciplined limit reached. Start a 15-minute cooling vault to reset cortisol before next execution, or switch to the simulation sandbox to test setups risk-free.
+                {isDailyLossBreached
+                  ? "Capital discipline ceiling reached. Step away from the screens and engage the 15-minute cooling vault to reset cortisol and eliminate revenge trading."
+                  : "Disciplined limit reached. Start a 15-minute cooling vault to reset cortisol before next execution, or switch to the simulation sandbox to test setups risk-free."}
               </span>
             </div>
           </div>

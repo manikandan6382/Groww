@@ -82,6 +82,8 @@ export function TimelineChartView({
         isDrawdownBreached={diagnostics.isDrawdownBreached}
         firstBreachPt={diagnostics.firstBreachPt}
         effectiveStopLoss={diagnostics.effectiveStopLoss}
+        isPinned={scrubber.isPinned}
+        onClear={scrubber.clearScrub}
       />
       <TimelineExpiryDisciplineDeck
         flightScope={flightScope}

@@ -21,7 +21,13 @@ export function EquityGrowthTab(props) {
           retentionPct={props.retentionPct}
           winRate={props.winRate}
           totalCharges={props.totalCharges}
+          calmarRatio={props.calmarRatio}
+          ulcerIndex={props.ulcerIndex}
+          recoveryFactor={props.recoveryFactor}
+          breachCount={props.breachCount}
+          profitFactor={props.profitFactor}
         />
+
 
         <EquityCurveSvgCanvas
           width={props.WIDTH}
@@ -38,8 +44,10 @@ export function EquityGrowthTab(props) {
           getX={props.getX}
           getY={props.getY}
           handleSvgMouseMove={props.handleSvgMouseMove}
+          handleSvgTouchMove={props.handleSvgTouchMove}
           setScrubIndex={props.setScrubIndex}
         />
+
       </div>
 
       <EquityActivePointInspector

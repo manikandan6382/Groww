@@ -11,7 +11,7 @@ export function executeEquityTrade({
   setToastMessage,
   setActiveModal
 }) {
-  const price = Number(meta.price || 1000);
+  const price = Number(meta?.price || 1000);
   deployPracticeTrade({
     symbol: `${cleanSym} (${productType})`,
     underlyingSymbol: cleanSym,
@@ -27,25 +27,25 @@ export function executeEquityTrade({
   });
   soundEngine.playOrderFillTone();
   setToastMessage(`✅ Order Executed: ${orderSide} ${tradeQty} shares of ${cleanSym} @ ₹${price.toFixed(2)} (${productType})`);
-  setActiveModal(null);
+  if (setActiveModal) setActiveModal(null);
 }
 
 export function executeOptionScalp({
   meta,
   cleanSym,
   optionType,
-  optionLots,
+  optionLots = 1,
   deployPracticeTrade,
   setToastMessage,
   setActiveModal
 }) {
-  const spot = Number(meta.price || 1000);
+  const spot = Number(meta?.price || 1000);
   const roundedStrike = Math.round(spot / 50) * 50;
   const strikeSymbol = `${cleanSym} ${roundedStrike} ${optionType}`;
   const estPremium = Number((spot * (optionType === "CE" ? 0.022 : 0.020)).toFixed(2));
   const lotSize = resolveIndexLotSize(cleanSym, 25);
-  const totalQty = optionLots * lotSize;
-  const rawSlPts = 250 / (totalQty || 65);
+  const totalQty = (optionLots || 1) * lotSize;
+  const rawSlPts = 250 / (totalQty || 25);
   const slPoints = Math.max(0.5, Math.round(rawSlPts * 2) / 2);
   const targetPoints = Number((slPoints * 2.0).toFixed(1));
   const stopLoss = Number(Math.max(0.05, estPremium - slPoints).toFixed(2));
@@ -59,34 +59,34 @@ export function executeOptionScalp({
     plannedEntryPrice: estPremium,
     targetPrice,
     stopLoss,
-    quantity: optionLots,
+    quantity: optionLots || 1,
     lotSize: lotSize,
     optionType: optionType === "CE" ? "CALL" : "PUT",
     tradeType: "INTRADAY",
     direction: optionType === "CE" ? "LONG" : "SHORT",
     strategyTag: "ATM Watchlist Scalp",
-    personalNotes: `Watchlist Scalp Desk · ${strikeSymbol} @ ₹${estPremium}`
+    personalNotes: `Watchlist Scalp Desk · ${strikeSymbol} @ ₹${estPremium} (SL Risk: ₹250 Budget)`
   });
   soundEngine.playOrderFillTone();
   setToastMessage(`🎯 Option Scalp Deployed: ${strikeSymbol} (${totalQty} Qty) @ ₹${estPremium.toFixed(2)}`);
-  setActiveModal(null);
+  if (setActiveModal) setActiveModal(null);
 }
 
 export function transferToPaperLab({
   meta,
   cleanSym,
   optionType,
-  optionLots,
+  optionLots = 1,
   setOrderPadPreFill,
   setActiveModal,
   setActiveView
 }) {
-  const spot = Number(meta.price || 1000);
+  const spot = Number(meta?.price || 1000);
   const roundedStrike = Math.round(spot / 50) * 50;
   const entryVal = Number((spot * 0.02).toFixed(2));
   const lotSizeVal = resolveIndexLotSize(cleanSym, 25);
   const totalUnits = (optionLots || 1) * lotSizeVal;
-  const rawSl = 250 / (totalUnits || 65);
+  const rawSl = 250 / (totalUnits || 25);
   const slPts = Math.max(0.5, Math.round(rawSl * 2) / 2);
   const tpPts = Number((slPts * 2.0).toFixed(1));
 
@@ -96,10 +96,10 @@ export function transferToPaperLab({
     entryPrice: entryVal,
     targetPrice: Number((entryVal + tpPts).toFixed(2)),
     stopLoss: Number(Math.max(0.05, entryVal - slPts).toFixed(2)),
-    quantity: optionLots,
+    quantity: optionLots || 1,
     lotSize: lotSizeVal
   });
-  setActiveModal(null);
-  setActiveView("paper");
+  if (setActiveModal) setActiveModal(null);
+  if (setActiveView) setActiveView("paper");
   soundEngine.playSuccessTone();
 }

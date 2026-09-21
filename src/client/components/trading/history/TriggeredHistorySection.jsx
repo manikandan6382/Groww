@@ -14,7 +14,10 @@ import { exportLedgerCsv, exportLedgerJson, importLedgerJson } from "./historyEx
 export const TriggeredHistorySection = React.memo(function TriggeredHistorySection() {
   const closedAlerts = useTradingStore((s) => s.closedAlerts || []);
   const openAlerts = useTradingStore((s) => s.openAlerts || []);
+  const journalTrades = useTradingStore((s) => s.journalTrades || []);
+  const logJournalTrade = useTradingStore((s) => s.logJournalTrade);
   const bulkAddJournalTrades = useTradingStore((s) => s.bulkAddJournalTrades);
+  const updateTradeDetails = useTradingStore((s) => s.updateTradeDetails);
   const deleteJournalTradesWithUndo = useTradingStore((s) => s.deleteJournalTradesWithUndo || s.deleteJournalTradeWithUndo);
   const undoTradeBackup = useTradingStore((s) => s.undoTradeBackup);
   const undoCountdown = useTradingStore((s) => s.undoCountdown);
@@ -24,22 +27,38 @@ export const TriggeredHistorySection = React.memo(function TriggeredHistorySecti
   const [assetFilter, setAssetFilter] = useState("ALL");
   const [dateRangeFilter, setDateRangeFilter] = useState("all");
   const [paperLedgerFilter, setPaperLedgerFilter] = useState("all");
+  const [diagnosticFilter, setDiagnosticFilter] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
   const [isCalendarOpen, setCalendarOpen] = useState(false);
   const [showAllRows, setShowAllRows] = useState(false);
   const [selectedTradeIds, setSelectedTradeIds] = useState(new Set());
   const [activeTimelineTrade, setActiveTimelineTrade] = useState(null);
-  const [highlightedTradeId, setHighlightedTradeId] = useState(null);
+  const [highlightedTradeId] = useState(null);
 
   const { allCount, niftyCount, bankCount, sensexCount } = useMemo(() => computeAssetCounts(closedAlerts), [closedAlerts]);
 
+  const journalIds = useMemo(() => new Set(journalTrades.map((jt) => jt.id)), [journalTrades]);
+
+  // Overall diagnostic counts for filter buttons
+  const baseMetrics = useMemo(() => computeRealizedMetrics(closedAlerts), [closedAlerts]);
+
   const filteredAlerts = useMemo(
-    () => filterAlerts(closedAlerts, { assetFilter, paperLedgerFilter, dateRangeFilter, customStart, customEnd }),
-    [closedAlerts, assetFilter, paperLedgerFilter, dateRangeFilter, customStart, customEnd]
+    () => filterAlerts(closedAlerts, {
+      assetFilter,
+      paperLedgerFilter,
+      diagnosticFilter,
+      dateRangeFilter,
+      customStart,
+      customEnd,
+      searchQuery,
+      journalIds
+    }),
+    [closedAlerts, assetFilter, paperLedgerFilter, diagnosticFilter, dateRangeFilter, customStart, customEnd, searchQuery, journalIds]
   );
 
-  const { totalRealizedPnl, totalGrossPnl, totalCharges, winCount, lossCount } = useMemo(
+  const { totalRealizedPnl, totalGrossPnl, totalCharges, winCount, lossCount, winRate, profitFactor, avgRMultiple, breachedCount } = useMemo(
     () => computeRealizedMetrics(filteredAlerts),
     [filteredAlerts]
   );
@@ -70,13 +89,33 @@ export const TriggeredHistorySection = React.memo(function TriggeredHistorySecti
     setSelectedTradeIds(new Set());
   }, [deleteJournalTradesWithUndo, selectedTradeIds, visibleAlerts]);
 
+  const handlePromoteToJournal = useCallback((trade) => {
+    soundEngine.playSuccessTone();
+    if (logJournalTrade) {
+      logJournalTrade(trade);
+    } else if (bulkAddJournalTrades) {
+      bulkAddJournalTrades([trade]);
+    }
+  }, [bulkAddJournalTrades, logJournalTrade]);
+
+  const handleUpdateTrade = useCallback((tradeId, updates) => {
+    updateTradeDetails?.(tradeId, updates);
+  }, [updateTradeDetails]);
+
+  const handleToggleBreachFilter = useCallback(() => {
+    setDiagnosticFilter((prev) => (prev === "breach" ? "all" : "breach"));
+  }, []);
+
   const handleResetFilters = useCallback(() => {
     soundEngine.playTabSwitchTone();
     setAssetFilter("ALL");
     setDateRangeFilter("all");
     setPaperLedgerFilter("all");
+    setDiagnosticFilter("all");
+    setSearchQuery("");
     setCustomStart("");
     setCustomEnd("");
+    setSelectedTradeIds(new Set());
   }, []);
 
   return (
@@ -85,12 +124,19 @@ export const TriggeredHistorySection = React.memo(function TriggeredHistorySecti
         displayCount={filteredAlerts.length}
         activeCount={openAlerts.length}
         settledCount={filteredAlerts.length}
-        rangeLabel={dateRangeFilter === "today" ? "Today" : dateRangeFilter === "week" ? "This Week" : dateRangeFilter === "month" ? "This Month" : "All Time"}
+        rangeLabel={dateRangeFilter === "today" ? "Today" : dateRangeFilter === "yesterday" ? "Yesterday" : dateRangeFilter === "week" ? "This Week" : dateRangeFilter === "month" ? "This Month" : "All Time"}
         totalRealizedPnl={totalRealizedPnl}
         totalGrossPnl={totalGrossPnl}
         totalCharges={totalCharges}
         winCount={winCount}
         lossCount={lossCount}
+        winRate={winRate}
+        profitFactor={profitFactor}
+        avgRMultiple={avgRMultiple}
+        breachedCount={breachedCount}
+        filteredAlerts={filteredAlerts}
+        diagnosticFilter={diagnosticFilter}
+        onToggleBreachFilter={handleToggleBreachFilter}
       />
 
       <HistoryFilterToolbar
@@ -104,6 +150,15 @@ export const TriggeredHistorySection = React.memo(function TriggeredHistorySecti
         setDateRangeFilter={setDateRangeFilter}
         paperLedgerFilter={paperLedgerFilter}
         setPaperLedgerFilter={setPaperLedgerFilter}
+        diagnosticFilter={diagnosticFilter}
+        setDiagnosticFilter={setDiagnosticFilter}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+        breachedCount={baseMetrics.breachedCount}
+        runnerCount={baseMetrics.runnerCount}
+        beCount={baseMetrics.beCount}
+        journalCount={journalIds.size}
+        middayCount={baseMetrics.middayCount}
         onOpenCalendar={() => setCalendarOpen(true)}
         onResetFilters={handleResetFilters}
         onExportCsv={() => exportLedgerCsv(filteredAlerts)}
@@ -127,6 +182,9 @@ export const TriggeredHistorySection = React.memo(function TriggeredHistorySecti
         highlightedTradeId={highlightedTradeId}
         activeTimelineTradeId={activeTimelineTrade?.id}
         onResetFilters={handleResetFilters}
+        journalIds={journalIds}
+        onPromoteToJournal={handlePromoteToJournal}
+        onUpdateTrade={handleUpdateTrade}
       />
 
       {filteredAlerts.length > 20 && (

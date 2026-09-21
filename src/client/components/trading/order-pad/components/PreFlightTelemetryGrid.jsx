@@ -12,6 +12,7 @@ export function PreFlightTelemetryGrid({
   isLiveStreaming,
   onSetIsLiveStreaming,
   liveContractTick,
+  liveMarkPrice = entryPrice,
   isValidSL,
   isValidTarget,
   rrRatio,
@@ -21,6 +22,7 @@ export function PreFlightTelemetryGrid({
   const netRewardAmount = Math.max(0, totalQty * (targetPrice - entryPrice) - estimatedFriction);
   const netRiskAmount = totalQty * (entryPrice - stopLoss) + estimatedFriction;
   const netRrRatio = netRiskAmount > 0 ? (netRewardAmount / netRiskAmount).toFixed(2) : "0.00";
+  const markDiff = Number(liveMarkPrice || entryPrice) - Number(entryPrice || 0);
 
   return (
     <div className="relative z-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -74,6 +76,11 @@ export function PreFlightTelemetryGrid({
             )}
             {isLiveStreaming && liveContractTick?.direction === "down" && (
               <span className="text-[10px] text-rose-400 font-bold animate-pulse">▼</span>
+            )}
+            {!isLiveStreaming && Math.abs(markDiff) >= 0.05 && (
+              <span className={clsx("text-[9px] font-mono font-bold px-1 rounded", markDiff > 0 ? "text-emerald-400 bg-emerald-500/10" : "text-rose-400 bg-rose-500/10")}>
+                Mark {markDiff > 0 ? "+" : ""}{markDiff.toFixed(1)}
+              </span>
             )}
           </div>
           <span className="text-[10px] text-slate-400 font-mono">

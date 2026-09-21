@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { handleTradingRequest } from "./routes/trades.routes.js";
 import { getPortfolio, getYahooChart, getYahooQuotes, getAlphaForeignQuotes } from "./server/marketDataApi.js";
 import { searchStocks } from "./server/stockUniverse.js";
-import { sendBrokerStatus, sendUpstoxCallback, sendKiteCallback } from "./server/oauthHandlers.js";
+import { sendBrokerStatus, sendUpstoxCallback, sendKiteCallback, createOAuthState } from "./server/oauthHandlers.js";
 import { serveStatic, sendJson, loadDotEnv } from "./server/staticServer.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -36,7 +36,8 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/upstox/login") {
       const upstoxClientId = process.env.UPSTOX_API_KEY || "61557114-951e-4b68-af88-e5121939f2e4";
       const redirectUri = process.env.UPSTOX_REDIRECT_URI || "http://127.0.0.1:3003/upstox/callback";
-      res.writeHead(302, { Location: `https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=${encodeURIComponent(upstoxClientId)}&redirect_uri=${encodeURIComponent(redirectUri)}` });
+      const state = createOAuthState();
+      res.writeHead(302, { Location: `https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=${encodeURIComponent(upstoxClientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(state)}` });
       return res.end();
     }
     if (url.pathname === "/kite/login") {

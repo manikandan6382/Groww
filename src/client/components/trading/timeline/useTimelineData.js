@@ -3,6 +3,7 @@ import { getCachedTimeline, setCachedTimeline } from './timelineCache';
 import { calculateDirectionalExcursions } from './flightSplineUtils';
 import { synthesizeMarketFlightPath } from './flightSynthesis';
 import { buildTimelineQueryParams } from './timelineDataHelpers';
+import { resolveFlightScopeWindow } from './flightTimeUtils';
 
 export function useTimelineData(trade, scenarioVariant, flightScope) {
   const containerRef = useRef(null);
@@ -33,7 +34,10 @@ export function useTimelineData(trade, scenarioVariant, flightScope) {
 
   useEffect(() => {
     const currentReqId = ++requestIdRef.current;
-    const cacheKey = `timeline_${trade?.tokenKey || symbol}_${entryTime}_${exitTime}_${entryPrice}_${exitPrice}_${scenarioVariant}_${flightScope}`;
+    const scopeWindow = resolveFlightScopeWindow(entryTime, exitTime, flightScope, trade);
+    const fromTime = scopeWindow.fromTime;
+    const toTime = scopeWindow.toTime;
+    const cacheKey = `timeline_${trade?.tokenKey || symbol}_${fromTime}_${toTime}_${entryPrice}_${exitPrice}_${scenarioVariant}_${flightScope}`;
     const cached = getCachedTimeline(cacheKey);
     if (cached) {
       if (currentReqId === requestIdRef.current) {
@@ -60,7 +64,7 @@ export function useTimelineData(trade, scenarioVariant, flightScope) {
     const abortController = new AbortController();
     setIsLoading(true);
     const params = buildTimelineQueryParams({
-      symbol, entryPrice, exitPrice, closeReason, flightScope, trade, targetPrice, stopLoss, entryTime, exitTime
+      symbol, entryPrice, exitPrice, closeReason, flightScope, trade, targetPrice, stopLoss, entryTime, exitTime, fromTime, toTime
     });
 
     fetch(`/api/market/trade-candles?${params.toString()}`, { signal: abortController.signal })

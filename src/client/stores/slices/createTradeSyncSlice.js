@@ -1,4 +1,4 @@
-import { deletedTradeIdSet, tradeIdMap } from "./tradePersistence";
+import { deletedTradeIdSet, tradeIdMap, flushTradeOutbox, queueTradeInOutbox } from "./tradePersistence";
 import { normalizeBackendOpenTrade, normalizeBackendTrade } from "./tradeNormalizers";
 
 export const createTradeSyncSlice = (set, get) => ({
@@ -84,8 +84,27 @@ export const createTradeSyncSlice = (set, get) => ({
 
     const validBackend = backendTrades.filter((t) => !deletedTradeIdSet.has(String(t.id)));
     const normalizedBackend = validBackend.map((t) => normalizeBackendTrade(t, currentMap.get(String(t.id))));
-    const pendingClientTrades = current.filter((t) => t.isPendingSync === true && !deletedTradeIdSet.has(String(t.id)));
-    const merged = [...normalizedBackend, ...pendingClientTrades];
+    
+    // Two-Way Resilience: Retain local-only trades not yet present in SQLite
+    const backendIdSet = new Set(validBackend.map((t) => String(t.id)));
+    const backendIdempotencySet = new Set(
+      validBackend.map((t) => String(t.idempotencyKey || "")).filter(Boolean)
+    );
+
+    const localOnlyTrades = current.filter((t) => {
+      if (deletedTradeIdSet.has(String(t.id))) return false;
+      if (backendIdSet.has(String(t.id))) return false;
+      if (t.serverId && backendIdSet.has(String(t.serverId))) return false;
+      if (t.idempotencyKey && backendIdempotencySet.has(String(t.idempotencyKey))) return false;
+      return true;
+    });
+
+    // Auto-queue local-only trades into outbox for backend durability
+    localOnlyTrades.forEach((lt) => {
+      queueTradeInOutbox(lt);
+    });
+
+    const merged = [...normalizedBackend, ...localOnlyTrades];
     merged.sort((a, b) => new Date(b.exitDatetime || b.entryDatetime || 0).getTime() - new Date(a.exitDatetime || a.entryDatetime || 0).getTime());
 
     const closedIdSet = new Set(validBackend.map((t) => String(t.id)));
@@ -104,6 +123,27 @@ export const createTradeSyncSlice = (set, get) => ({
       localStorage.setItem("portfolio-journal-trades", JSON.stringify(merged));
       if (openPruned) localStorage.setItem("portfoliox_open_alerts", JSON.stringify(prunedOpen));
     } catch {}
+  },
+
+  hydrateFromSqlite: async () => {
+    try {
+      // 1. Flush any unpersisted offline trades to SQLite first
+      await flushTradeOutbox();
+
+      // 2. Fetch all authoritative trades from SQLite database.sqlite
+      const res = await fetch("/api/trades?range=all");
+      if (res.ok) {
+        const data = await res.json();
+        const items = data?.items || [];
+        if (Array.isArray(items) && items.length > 0) {
+          get().syncBackendTrades(items);
+          return true;
+        }
+      }
+    } catch {
+      // Non-blocking offline fallback
+    }
+    return false;
   },
 
   purgeStaleMockTrades: () => {

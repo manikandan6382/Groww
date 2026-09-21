@@ -86,7 +86,9 @@ export async function handleTradeCandlesRoutes(req, res, url) {
     }
 
     if (candles.length < 2) {
-      candles = interpolateCandles({ fromTime, toTime, entryPrice, exitPrice, targetPrice, stopLoss, closeReason });
+      const tradeEntryTime = parseWithIST(url.searchParams.get("tradeEntryTime"), fromDate);
+      const tradeExitTime = parseWithIST(url.searchParams.get("tradeExitTime"), toDate);
+      candles = interpolateCandles({ fromTime, toTime, entryPrice, exitPrice, targetPrice, stopLoss, closeReason, tradeEntryTime, tradeExitTime });
       source = "interpolated";
     }
 

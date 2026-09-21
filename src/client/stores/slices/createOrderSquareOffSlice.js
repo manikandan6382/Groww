@@ -5,39 +5,73 @@ import { activeSquaringOffIds, tradeIdMap, broadcastTradeAction } from "./tradeP
 
 export const createOrderSquareOffSlice = (set, get) => ({
   squareOffTrade: (id, customExitPrice, explicitReason) => {
-    if (activeSquaringOffIds.has(id)) return;
+    if (activeSquaringOffIds.has(id) || activeSquaringOffIds.has(String(id))) return;
     activeSquaringOffIds.add(id);
-    setTimeout(() => activeSquaringOffIds.delete(id), 3000);
+    activeSquaringOffIds.add(String(id));
 
     const trade = get().openAlerts.find(
       (t) => t.id === id || t.serverId === id || String(t.id) === String(id) || String(t.serverId) === String(id)
     );
     if (!trade) return;
-    const baseExitPrice = customExitPrice ?? trade.lastMarkPrice ?? trade.entryPrice;
+
+    if (trade.id) {
+      activeSquaringOffIds.add(trade.id);
+      activeSquaringOffIds.add(String(trade.id));
+    }
+    if (trade.serverId) {
+      activeSquaringOffIds.add(trade.serverId);
+      activeSquaringOffIds.add(String(trade.serverId));
+    }
+    setTimeout(() => {
+      activeSquaringOffIds.delete(id);
+      activeSquaringOffIds.delete(String(id));
+      if (trade.id) {
+        activeSquaringOffIds.delete(trade.id);
+        activeSquaringOffIds.delete(String(trade.id));
+      }
+      if (trade.serverId) {
+        activeSquaringOffIds.delete(trade.serverId);
+        activeSquaringOffIds.delete(String(trade.serverId));
+      }
+    }, 4000);
     const isShort = trade.direction === "SHORT";
+    const entry = Number(trade.entryPrice || 0);
+    const sl = Number(trade.stopLoss || 0);
+    const tp = Number(trade.targetPrice || 0);
 
     let determinedReason = explicitReason;
     if (!determinedReason) {
+      const checkPrice = customExitPrice ?? trade.lastMarkPrice ?? entry;
       if (isShort) {
-        if (trade.targetPrice && baseExitPrice <= trade.targetPrice) determinedReason = "TARGET_HIT";
-        else if (trade.stopLoss && baseExitPrice >= trade.stopLoss) determinedReason = baseExitPrice <= trade.entryPrice ? "TRAILING_SL_HIT" : "STOP_LOSS_HIT";
+        if (tp > 0 && checkPrice <= tp) determinedReason = "TARGET_HIT";
+        else if (sl > 0 && checkPrice >= sl) determinedReason = sl < entry ? "TRAILING_SL_HIT" : "STOP_LOSS_HIT";
       } else {
-        if (trade.targetPrice && baseExitPrice >= trade.targetPrice) determinedReason = "TARGET_HIT";
-        else if (trade.stopLoss && baseExitPrice <= trade.stopLoss) determinedReason = baseExitPrice >= trade.entryPrice ? "TRAILING_SL_HIT" : "STOP_LOSS_HIT";
+        if (tp > 0 && checkPrice >= tp) determinedReason = "TARGET_HIT";
+        else if (sl > 0 && checkPrice <= sl) determinedReason = sl > entry ? "TRAILING_SL_HIT" : "STOP_LOSS_HIT";
       }
       if (!determinedReason) determinedReason = "MANUAL_SQUARE_OFF";
+    }
+
+    // Anchor execution: When an order hits Stop Loss or Target, anchor to the resting order price!
+    let baseExitPrice;
+    if (determinedReason.includes("TARGET")) {
+      baseExitPrice = tp > 0 ? tp : (customExitPrice ?? entry);
+    } else if (determinedReason.includes("STOP_LOSS") || determinedReason.includes("TRAILING") || determinedReason.includes("BREAKEVEN")) {
+      baseExitPrice = sl > 0 ? sl : (customExitPrice ?? entry);
+    } else {
+      baseExitPrice = customExitPrice ?? trade.lastMarkPrice ?? entry;
     }
 
     const shouldSlippage = get().simulateSlippage;
     let slippageDeltaPts = 0;
     if (shouldSlippage) {
       if (determinedReason.includes("TARGET")) slippageDeltaPts = 0.20;
-      else if (determinedReason.includes("TRAILING") || determinedReason.includes("BREAKEVEN") || determinedReason.includes("BE_HIT") || determinedReason.includes("RISK_FREE")) slippageDeltaPts = 0.60;
-      else if (determinedReason.includes("STOP_LOSS") || determinedReason.includes("SL_HIT")) slippageDeltaPts = 1.80;
-      else slippageDeltaPts = 0.75;
+      else if (determinedReason.includes("TRAILING") || determinedReason.includes("BREAKEVEN") || determinedReason.includes("BE_HIT") || determinedReason.includes("RISK_FREE")) slippageDeltaPts = 0.35;
+      else if (determinedReason.includes("STOP_LOSS") || determinedReason.includes("SL_HIT")) slippageDeltaPts = 0.50;
+      else slippageDeltaPts = 0.50;
     }
 
-    const exitPrice = shouldSlippage
+    let exitPrice = shouldSlippage
       ? (isShort ? Math.max(0.05, baseExitPrice + slippageDeltaPts) : Math.max(0.05, baseExitPrice - slippageDeltaPts))
       : Math.max(0.05, baseExitPrice);
     
@@ -45,9 +79,22 @@ export const createOrderSquareOffSlice = (set, get) => ({
     const rawQty = Number(trade.quantity || 1);
     const lots = (rawQty >= resolvedLot && rawQty % resolvedLot === 0) ? (rawQty / resolvedLot) : rawQty;
     const totalQty = trade.totalQty ? Number(trade.totalQty) : (Math.max(1, lots) * resolvedLot);
-    const grossPnl = isShort ? (trade.entryPrice - exitPrice) * totalQty : (exitPrice - trade.entryPrice) * totalQty;
-    const friction = calculateStatutoryCharges(trade.entryPrice, exitPrice, totalQty);
-    const netPnl = grossPnl - friction;
+    let grossPnl = isShort ? (entry - exitPrice) * totalQty : (exitPrice - entry) * totalQty;
+    const friction = calculateStatutoryCharges(entry, exitPrice, totalQty);
+    let netPnl = grossPnl - friction;
+
+    // Manikandan's Strict Capital Risk Invariant: Loss is physically clamped to ₹300 on single lot!
+    if (lots <= 1 && netPnl < -300.00) {
+      netPnl = -300.00;
+      grossPnl = -300.00 + friction;
+      exitPrice = isShort ? (entry - (grossPnl / totalQty)) : (entry + (grossPnl / totalQty));
+    }
+
+    // Label Integrity: Never claim a trailing stop profit on a net negative exit
+    if (netPnl < 0 && determinedReason === "TRAILING_SL_HIT") {
+      determinedReason = "STOP_LOSS_HIT";
+    }
+
     const exitSlippageCost = shouldSlippage ? Math.max(0, slippageDeltaPts * totalQty) : 0;
     const totalSlippageCost = (trade.entrySlippage ? trade.entrySlippage * totalQty : 0) + exitSlippageCost;
 
@@ -95,6 +142,12 @@ export const createOrderSquareOffSlice = (set, get) => ({
     const next = [closed, ...get().masterTrades];
     const nextAlerts = get().openAlerts.filter((t) => t.id !== trade.id && (!trade.serverId || t.serverId !== trade.serverId));
     set({ openAlerts: nextAlerts, masterTrades: next, closedAlerts: next, journalTrades: next, settlementToast: closed });
+
+    // Engage Anti-Tilt Cooling Shield for 30 seconds on any loss or SL hit
+    if (determinedReason.includes("STOP_LOSS") || determinedReason.includes("SL_HIT") || (netPnl < 0 && !determinedReason.includes("TARGET"))) {
+      get().activateTiltShield?.(30000, "Stop Loss executed. 30s Anti-Tilt Cooling Shield active to prevent revenge trading.");
+    }
+
     try {
       localStorage.setItem("portfoliox_open_alerts", JSON.stringify(nextAlerts));
       localStorage.setItem("portfolio-master-trades", JSON.stringify(next));

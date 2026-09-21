@@ -17,6 +17,7 @@ export function EquityCurveSvgCanvas({
   getX,
   getY,
   handleSvgMouseMove,
+  handleSvgTouchMove,
   setScrubIndex
 }) {
   return (
@@ -24,11 +25,16 @@ export function EquityCurveSvgCanvas({
       <svg
         ref={svgRef}
         viewBox={`0 0 ${width} ${height}`}
-        className="w-full h-64 sm:h-80 select-none touch-pan-y cursor-crosshair overflow-visible block"
+        className="w-full h-64 sm:h-80 select-none touch-none cursor-crosshair overflow-visible block"
         preserveAspectRatio="none"
         onMouseMove={handleSvgMouseMove}
         onMouseLeave={() => setScrubIndex(null)}
+        onTouchStart={handleSvgTouchMove}
+        onTouchMove={handleSvgTouchMove}
+        onTouchEnd={() => setScrubIndex(null)}
+        onTouchCancel={() => setScrubIndex(null)}
       >
+
         <EquitySvgDefs isProfitable={isProfitable} />
 
         {/* Subtle Background Micro-Grid */}
@@ -85,7 +91,20 @@ export function EquityCurveSvgCanvas({
           strokeLinejoin="round"
         />
 
+        {/* Capital Shield Invariant Breach Markers */}
+        {equityPoints.filter((p) => p.isBreach).map((p) => {
+          const x = getX(p.index);
+          const y = getY(p.capital);
+          return (
+            <g key={`breach-${p.id || p.index}`}>
+              <circle cx={x} cy={y} r="7" fill="none" stroke="#f43f5e" strokeWidth="1.5" opacity="0.6" className="animate-ping" />
+              <circle cx={x} cy={y} r="4" fill="#f43f5e" stroke="#0d111a" strokeWidth="1.5" />
+            </g>
+          );
+        })}
+
         <EquityCrosshairReticle
+
           activePoint={activePoint}
           activePointIndex={activePointIndex}
           equityPoints={equityPoints}

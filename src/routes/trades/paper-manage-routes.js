@@ -43,14 +43,51 @@ export async function handlePaperManageRoutes(req, res, url) {
     const id = Number(stopLossMatch[1]);
     const body = await readJsonBody(req);
     const stopLoss = Number(body.stopLoss || 0);
+
+    let trade = null;
+    try {
+      trade = getTradeById(id);
+    } catch (e) {}
+
+    if (!trade) {
+      sendJson(res, { error: "Trade not found." }, 404);
+      return true;
+    }
+
+    if (trade.status !== "OPEN") {
+      sendJson(res, { error: "Cannot modify Stop Loss on a closed trade." }, 400);
+      return true;
+    }
+
+    const currentMark = Number(trade.lastMarkPrice || trade.entryPrice || 0);
+    const isShort = trade.direction === "SHORT";
+
+    // Server-Side RMS Validation:
+    // In LONG, stop loss must be < current mark price!
+    // In SHORT, stop loss must be > current mark price!
+    if (stopLoss > 0 && currentMark > 0) {
+      if (!isShort && stopLoss >= currentMark) {
+        sendJson(res, { 
+          error: `RMS Boundary Violation: Stop Loss (₹${stopLoss.toFixed(2)}) cannot be at or above current market price (₹${currentMark.toFixed(2)}) for LONG position.` 
+        }, 422);
+        return true;
+      }
+      if (isShort && stopLoss <= currentMark) {
+        sendJson(res, { 
+          error: `RMS Boundary Violation: Stop Loss (₹${stopLoss.toFixed(2)}) cannot be at or below current market price (₹${currentMark.toFixed(2)}) for SHORT position.` 
+        }, 422);
+        return true;
+      }
+    }
+
     getDb().prepare("UPDATE trades SET stop_loss = ?, updated_at = datetime('now') WHERE id = ?").run(stopLoss, id);
-    const trade = getTradeById(id);
-    if (trade && paperTradeEngine.activeTrades.has(id)) {
+    if (paperTradeEngine.activeTrades.has(id)) {
       paperTradeEngine.activeTrades.get(id).trade.stopLoss = stopLoss;
     }
+    const updatedTrade = getTradeById(id);
     paperTradeEngine.publish("stop_loss_updated", { tradeId: id, stopLoss, message: `Stop Loss updated to ₹${stopLoss.toFixed(2)}` });
     paperTradeEngine.publish("trade_mutation", { action: "stop_loss", tradeId: id });
-    sendJson(res, { success: true, item: trade });
+    sendJson(res, { success: true, item: updatedTrade });
     return true;
   }
 
@@ -59,13 +96,50 @@ export async function handlePaperManageRoutes(req, res, url) {
     const id = Number(targetMatch[1]);
     const body = await readJsonBody(req);
     const targetPrice = Number(body.targetPrice || body.target || 0);
+
+    let trade = null;
+    try {
+      trade = getTradeById(id);
+    } catch (e) {}
+
+    if (!trade) {
+      sendJson(res, { error: "Trade not found." }, 404);
+      return true;
+    }
+
+    if (trade.status !== "OPEN") {
+      sendJson(res, { error: "Cannot modify Target on a closed trade." }, 400);
+      return true;
+    }
+
+    const currentMark = Number(trade.lastMarkPrice || trade.entryPrice || 0);
+    const isShort = trade.direction === "SHORT";
+
+    // Server-Side RMS Validation for Target:
+    // In LONG, target must be > current mark price!
+    // In SHORT, target must be < current mark price!
+    if (targetPrice > 0 && currentMark > 0) {
+      if (!isShort && targetPrice <= currentMark) {
+        sendJson(res, { 
+          error: `RMS Boundary Violation: Target (₹${targetPrice.toFixed(2)}) cannot be at or below current market price (₹${currentMark.toFixed(2)}) for LONG position.` 
+        }, 422);
+        return true;
+      }
+      if (isShort && targetPrice >= currentMark) {
+        sendJson(res, { 
+          error: `RMS Boundary Violation: Target (₹${targetPrice.toFixed(2)}) cannot be at or above current market price (₹${currentMark.toFixed(2)}) for SHORT position.` 
+        }, 422);
+        return true;
+      }
+    }
+
     getDb().prepare("UPDATE trades SET target_price = ?, updated_at = datetime('now') WHERE id = ?").run(targetPrice, id);
-    const trade = getTradeById(id);
-    if (trade && paperTradeEngine.activeTrades.has(id)) {
+    if (paperTradeEngine.activeTrades.has(id)) {
       paperTradeEngine.activeTrades.get(id).trade.targetPrice = targetPrice;
     }
+    const updatedTrade = getTradeById(id);
     paperTradeEngine.publish("target_updated", { tradeId: id, targetPrice, message: `Target updated to ₹${targetPrice.toFixed(2)}` });
-    sendJson(res, { success: true, item: trade });
+    sendJson(res, { success: true, item: updatedTrade });
     return true;
   }
 

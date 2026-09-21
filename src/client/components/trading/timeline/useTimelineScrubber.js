@@ -5,6 +5,7 @@ import { triggerScrubHaptic } from './timelineCache';
 export function useTimelineScrubber({
   renderedPoints = [],
   containerRef,
+  entryPoint,
   peakPoint,
   troughPoint,
   exitPoint,
@@ -14,12 +15,29 @@ export function useTimelineScrubber({
   const pendingClientX = useRef(null);
   const [scrubIndex, setScrubIndex] = useState(null);
   const [pinnedIndex, setPinnedIndex] = useState(null);
+  const [latchedIndex, setLatchedIndex] = useState(null);
 
-  const flushScrub = useCallback(() => {
-    rAFRef.current = null;
-    if (pendingClientX.current === null || !renderedPoints.length || !containerRef.current) return;
+  const resolveNearestIndex = useCallback((clientX) => {
+    if (!renderedPoints.length || !containerRef.current) return null;
     const rect = containerRef.current.getBoundingClientRect();
-    const cursorX = pendingClientX.current - rect.left;
+    const cursorX = clientX - rect.left;
+
+    // 12px Magnetic Milestone Snapping
+    const SNAP_THRESHOLD_PX = 12;
+    const milestones = [
+      entryPoint && { index: entryPoint.index ?? 0, x: entryPoint.x },
+      peakPoint && { index: peakPoint.index, x: peakPoint.x },
+      troughPoint && { index: troughPoint.index, x: troughPoint.x },
+      exitPoint && { index: exitPoint.index, x: exitPoint.x }
+    ].filter(Boolean);
+
+    for (const m of milestones) {
+      if (typeof m.x === 'number' && Math.abs(m.x - cursorX) <= SNAP_THRESHOLD_PX) {
+        if (m.index >= 0 && m.index < renderedPoints.length) {
+          return m.index;
+        }
+      }
+    }
 
     let index = 0;
     let minDistance = Infinity;
@@ -30,6 +48,14 @@ export function useTimelineScrubber({
         index = i;
       }
     }
+    return index;
+  }, [renderedPoints, containerRef, entryPoint, peakPoint, troughPoint, exitPoint]);
+
+  const flushScrub = useCallback(() => {
+    rAFRef.current = null;
+    if (pendingClientX.current === null) return;
+    const index = resolveNearestIndex(pendingClientX.current);
+    if (index === null) return;
 
     setScrubIndex((prev) => {
       if (prev !== index) {
@@ -40,7 +66,8 @@ export function useTimelineScrubber({
       }
       return index;
     });
-  }, [renderedPoints, containerRef, peakPoint, troughPoint, exitPoint]);
+    setLatchedIndex(index);
+  }, [resolveNearestIndex, peakPoint, troughPoint, exitPoint]);
 
   const updateScrubFromClientX = useCallback((clientX) => {
     pendingClientX.current = clientX;
@@ -50,44 +77,65 @@ export function useTimelineScrubber({
   }, [flushScrub]);
 
   const handleMouseMove = (e) => updateScrubFromClientX(e.clientX);
+
   const handleClickCanvas = (e) => {
-    updateScrubFromClientX(e.clientX);
-    if (scrubIndex !== null) {
-      setPinnedIndex((prev) => (prev === scrubIndex ? null : scrubIndex));
+    const clickedIdx = resolveNearestIndex(e.clientX);
+    if (clickedIdx !== null) {
+      setPinnedIndex((prev) => (prev === clickedIdx ? null : clickedIdx));
+      setScrubIndex(clickedIdx);
+      setLatchedIndex(clickedIdx);
     }
   };
+
   const handleTouch = (e) => {
     if (e.touches && e.touches[0]) {
       updateScrubFromClientX(e.touches[0].clientX);
     }
   };
+
   const handleEndScrub = () => {
     if (rAFRef.current) {
       cancelAnimationFrame(rAFRef.current);
       rAFRef.current = null;
     }
     pendingClientX.current = null;
-    setScrubIndex(null);
+    // Keep latchedIndex so the telemetry callout does not vanish jarringly
   };
 
+  const clearScrub = useCallback(() => {
+    if (rAFRef.current) {
+      cancelAnimationFrame(rAFRef.current);
+      rAFRef.current = null;
+    }
+    pendingClientX.current = null;
+    setScrubIndex(null);
+    setPinnedIndex(null);
+    setLatchedIndex(null);
+  }, []);
+
   const currentActivePoint = useMemo(() => {
+    if (pinnedIndex !== null && renderedPoints[pinnedIndex]) {
+      return renderedPoints[pinnedIndex];
+    }
     if (scrubIndex !== null && renderedPoints[scrubIndex]) {
       return renderedPoints[scrubIndex];
+    }
+    if (latchedIndex !== null && renderedPoints[latchedIndex]) {
+      return renderedPoints[latchedIndex];
     }
     if (replayIndex !== null && renderedPoints[renderedPoints.length - 1]) {
       return renderedPoints[renderedPoints.length - 1];
     }
-    if (pinnedIndex !== null && renderedPoints[pinnedIndex]) {
-      return renderedPoints[pinnedIndex];
-    }
     return null;
-  }, [scrubIndex, replayIndex, pinnedIndex, renderedPoints]);
+  }, [pinnedIndex, scrubIndex, latchedIndex, replayIndex, renderedPoints]);
 
   return {
     scrubIndex,
     pinnedIndex,
+    isPinned: pinnedIndex !== null,
     setScrubIndex,
     setPinnedIndex,
+    clearScrub,
     handleMouseMove,
     handleClickCanvas,
     handleTouch,
@@ -95,3 +143,4 @@ export function useTimelineScrubber({
     currentActivePoint
   };
 }
+

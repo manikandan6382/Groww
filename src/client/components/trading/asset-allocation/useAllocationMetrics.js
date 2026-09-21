@@ -1,8 +1,20 @@
 import { useMemo } from "react";
 import { extractAvailableMargin } from "./marginExtractor";
+import { calculateSectorBreakdown } from "./sectorEngine";
 
 export function useAllocationMetrics(holdings = [], margins = {}) {
-  const { equityValue, goldValue, cashValue, total, items, maxHoldingSymbol, maxConcentrationPct } = useMemo(() => {
+  const {
+    equityValue,
+    goldValue,
+    cashValue,
+    total,
+    items,
+    maxHoldingSymbol,
+    maxConcentrationPct,
+    healthScore,
+    healthStatus,
+    healthColor,
+  } = useMemo(() => {
     const currentItems = Array.isArray(holdings) ? holdings : [];
     let eqVal = 0;
     let gdVal = 0;
@@ -29,6 +41,35 @@ export function useAllocationMetrics(holdings = [], margins = {}) {
     const safeCash = extractAvailableMargin(margins);
     const sumTotal = safeEquity + safeGold + safeCash;
     const maxPct = sumTotal > 0 ? ((maxVal / sumTotal) * 100).toFixed(1) : "0.0";
+    const maxWeight = sumTotal > 0 ? (maxVal / sumTotal) : 0;
+
+    // Mathematical Health & Concentration Scoring (HHI & single-asset weighting)
+    let score = 95;
+    if (maxWeight > 0.70) {
+      score -= 35;
+    } else if (maxWeight > 0.50) {
+      score -= Math.round(15 + ((maxWeight - 0.50) / 0.20) * 15);
+    } else if (maxWeight > 0.35) {
+      score -= Math.round(5 + ((maxWeight - 0.35) / 0.15) * 10);
+    }
+
+    if (safeCash < 500 && sumTotal > 50000) {
+      score -= 5;
+    }
+
+    const healthScore = Math.max(20, Math.min(100, score));
+    let healthStatus = "Optimal";
+    let healthColor = "emerald";
+    if (healthScore < 70) {
+      healthStatus = "Concentrated";
+      healthColor = "amber";
+    } else if (healthScore < 85) {
+      healthStatus = "Moderate Concentration";
+      healthColor = "amber";
+    } else {
+      healthStatus = "Optimal";
+      healthColor = "emerald";
+    }
 
     return {
       equityValue: safeEquity,
@@ -37,7 +78,10 @@ export function useAllocationMetrics(holdings = [], margins = {}) {
       total: sumTotal,
       items: currentItems,
       maxHoldingSymbol: maxSym,
-      maxConcentrationPct: Number.isFinite(parseFloat(maxPct)) ? maxPct : "0.0"
+      maxConcentrationPct: Number.isFinite(parseFloat(maxPct)) ? maxPct : "0.0",
+      healthScore,
+      healthStatus,
+      healthColor
     };
   }, [holdings, margins]);
 
@@ -53,13 +97,21 @@ export function useAllocationMetrics(holdings = [], margins = {}) {
   const goldStroke = total > 0 ? (goldPct / 100) * circ : 0;
   const cashStroke = total > 0 ? (cashPct / 100) * circ : 0;
 
+  const sectorMetrics = useMemo(() => {
+    return calculateSectorBreakdown(holdings, total);
+  }, [holdings, total]);
+
   return {
     equityValue,
     goldValue,
     cashValue,
+    total,
     items,
     maxHoldingSymbol,
     maxConcentrationPct,
+    healthScore,
+    healthStatus,
+    healthColor,
     equityPct,
     goldPct,
     cashPct,
@@ -68,6 +120,7 @@ export function useAllocationMetrics(holdings = [], margins = {}) {
     circ,
     eqStroke,
     goldStroke,
-    cashStroke
+    cashStroke,
+    sectorMetrics,
   };
 }

@@ -1,8 +1,8 @@
 import { soundEngine } from '../../../utils/soundEngine';
 
 const timelineCandleCache = new Map();
-const MAX_CACHE_ENTRIES = 40;
-const CLIENT_CACHE_TTL = 10 * 60 * 1000;
+const MAX_CACHE_ENTRIES = 50;
+const CLIENT_CACHE_TTL = 15 * 60 * 1000;
 let lastScrubAudioTime = 0;
 
 export function getCachedTimeline(key) {
@@ -12,6 +12,9 @@ export function getCachedTimeline(key) {
     timelineCandleCache.delete(key);
     return null;
   }
+  // True LRU refresh: re-insert to keep recently read items fresh
+  timelineCandleCache.delete(key);
+  timelineCandleCache.set(key, cached);
   return cached.data;
 }
 

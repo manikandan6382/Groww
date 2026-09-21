@@ -12,6 +12,14 @@ export const createPayMyselfSlice = (set, get) => ({
       : rawExit;
 
     const isShort = trade.direction === "SHORT";
+    const grossPts = isShort ? (entry - exitPrice) : (exitPrice - entry);
+
+    // Guard: Cannot Pay Myself or Lock Breakeven if position is at a loss or flat
+    if (grossPts < 0.5) {
+      console.warn("Cannot Pay Myself or Lock Breakeven while position is at a loss or flat.");
+      return null;
+    }
+
     const totalLots = Number(trade.quantity || 1);
     const resolvedLot = Math.max(1, Number(trade.lotSize || (trade.symbol.includes("BANKNIFTY") ? 30 : trade.symbol.includes("SENSEX") ? 20 : 65)));
     const trancheIndex = (trade.scaledOutCount || 0) + 1;
@@ -22,7 +30,6 @@ export const createPayMyselfSlice = (set, get) => ({
     const scaledUnits = scaledLots * resolvedLot;
     const remainingUnits = remainingLots * resolvedLot;
 
-    const grossPts = isShort ? (entry - exitPrice) : (exitPrice - entry);
     const grossPnl = scaledUnits > 0 ? Number((grossPts * scaledUnits).toFixed(2)) : 0;
     const friction = scaledUnits > 0 ? Number((28.50 + (exitPrice * scaledUnits * 0.001)).toFixed(2)) : 0;
     const netPnl = scaledUnits > 0 ? Number((grossPnl - friction).toFixed(2)) : 0;
@@ -35,11 +42,23 @@ export const createPayMyselfSlice = (set, get) => ({
     let trancheLabel = isSingleLot ? "1-Lot Risk-Free BE Lock" : "Tranche 1 (T1 Scalp)";
     let closeReason = isSingleLot ? "LOCK_TRUE_BE" : "PAY_MYSELF_T1";
 
-    if (!isSingleLot && trancheIndex >= 2) {
+    if (isSingleLot && grossPts >= 2.5) {
+      const profitLockPts = Number((grossPts * 0.75).toFixed(2));
+      newSlPrice = isShort ? Number((entry - profitLockPts).toFixed(2)) : Number((entry + profitLockPts).toFixed(2));
+      trancheLabel = "1-Lot 75% Profit Lock";
+      closeReason = "PAY_MYSELF_75PCT_LOCK";
+    } else if (!isSingleLot && trancheIndex >= 2) {
       const lockOffset = Math.max(frictionPts + 3.0, Math.abs(grossPts) * 0.45);
       newSlPrice = isShort ? Number((entry - lockOffset).toFixed(2)) : Number((entry + lockOffset).toFixed(2));
       trancheLabel = "Tranche 2 (T2 Structural)";
       closeReason = "PAY_MYSELF_T2";
+    }
+
+    // Guard: Prevent Stop Loss from being placed above current market price in LONG (or below in SHORT)
+    if (!isShort && newSlPrice >= exitPrice) {
+      newSlPrice = Math.max(entry, Number((exitPrice - 0.50).toFixed(2)));
+    } else if (isShort && newSlPrice <= exitPrice) {
+      newSlPrice = Math.min(entry, Number((exitPrice + 0.50).toFixed(2)));
     }
 
     let closedPartial = null;
@@ -98,15 +117,13 @@ export const createPayMyselfSlice = (set, get) => ({
       return t;
     });
 
-    const noticeToast = closedPartial || {
-      id: Date.now(),
-      symbol: trade.symbol,
-      netPnl: 0,
-      closeReason: "RISK_FREE_BE_LOCKED",
-      executionDetails: `1-Lot Position Protected! SL moved to True BE at ₹${newSlPrice.toFixed(2)} (+${frictionPts.toFixed(1)} pts friction).`
-    };
-
-    set({ openAlerts: updatedAlerts, masterTrades: nextMaster, closedAlerts: nextMaster, journalTrades: nextMaster, settlementToast: noticeToast });
+    set({
+      openAlerts: updatedAlerts,
+      masterTrades: nextMaster,
+      closedAlerts: nextMaster,
+      journalTrades: nextMaster,
+      settlementToast: closedPartial || null
+    });
 
     try {
       localStorage.setItem("portfoliox_open_alerts", JSON.stringify(updatedAlerts));

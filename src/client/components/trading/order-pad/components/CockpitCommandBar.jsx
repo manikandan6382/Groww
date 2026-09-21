@@ -1,5 +1,5 @@
 import React from "react";
-import { Clock, Lock, AlertTriangle, RefreshCw, Sparkles } from "lucide-react";
+import { Clock, Lock, AlertTriangle, RefreshCw, Sparkles, ShieldCheck, Zap, ShieldX, Shield } from "lucide-react";
 import clsx from "clsx";
 import { soundEngine } from "../../../../utils/soundEngine";
 import { isIndianMarketOpenHours } from "../../../../utils/dateUtils";
@@ -23,7 +23,13 @@ export function CockpitCommandBar({
   isValidTarget,
   isVaultRunning,
   vaultFormattedTime,
-  on1ClickAutoDeploy
+  on1ClickAutoDeploy,
+  isDeploying,
+  lots = 1,
+  totalQty = 65,
+  tiltSecondsRemaining = 0,
+  strategyMode = "OUTRIGHT",
+  onToggleSpreadMode
 }) {
   const isMarketHours = isIndianMarketOpenHours();
 
@@ -132,23 +138,56 @@ export function CockpitCommandBar({
             <Sparkles className="w-3 h-3 text-cyan-400" />
             <span>{show12FilterDrawer ? "Hide Formula Radar" : "Why this pick? (12-Filter Radar)"}</span>
           </button>
+
+          {/* 1-Tap Friction Trap Mitigator Pill */}
+          {copilotState.status === "FRICTION_TRAP" && (
+            <button
+              type="button"
+              onClick={onToggleSpreadMode}
+              className={clsx(
+                "px-2.5 py-1 rounded-lg border transition flex items-center gap-1.5 text-[10px] font-bold font-mono cursor-pointer active:scale-95 shadow-sm",
+                strategyMode === "SPREAD"
+                  ? "bg-emerald-500/20 text-emerald-200 border-emerald-500/40 shadow-emerald-500/20"
+                  : "bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border-amber-500/40 animate-pulse"
+              )}
+              title={strategyMode === "SPREAD" ? "Spread active: Theta drag eliminated" : "1-Tap Friction Remedy: Convert to hedged debit spread to eliminate theta & statutory friction drag"}
+            >
+              <Shield className="w-3 h-3 text-amber-400" />
+              <span>{strategyMode === "SPREAD" ? "🛡️ Spread Active (Theta Protected)" : "⚡ 1-Tap Hedge: Convert to Spread"}</span>
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Right: Anchored Execution CTA Flight Deck */}
-      <div className="flex flex-col items-start lg:items-end justify-center gap-1.5 shrink-0">
+      {/* Right: Anchored 1-Click Execution Flight Deck & Contract Spec Capsule */}
+      <div className="flex flex-col items-start lg:items-end justify-center gap-2 shrink-0">
         <button
           type="button"
           onClick={on1ClickAutoDeploy}
-          disabled={isDailyCapReached || !copilotState.canDeploy || !isValidSL || !isValidTarget}
+          disabled={tiltSecondsRemaining > 0 || isDailyCapReached || !copilotState.canDeploy || !isValidSL || !isValidTarget || isDeploying}
           className={clsx(
-            "w-full sm:w-auto px-5 py-2.5 rounded-xl text-xs font-bold font-mono transition-all flex items-center justify-center gap-2 shrink-0 active:scale-95 shadow-lg",
-            isDailyCapReached || !isValidSL || !isValidTarget
+            "w-full sm:w-auto px-5 py-2.5 rounded-xl text-xs font-bold font-mono transition-all flex items-center justify-center gap-2 shrink-0 active:scale-95 shadow-lg cursor-pointer",
+            tiltSecondsRemaining > 0
+              ? "bg-rose-950/60 text-rose-300/80 border border-rose-500/40 cursor-not-allowed opacity-90 shadow-[0_0_20px_rgba(244,63,94,0.15)]"
+              : isDeploying
+              ? "opacity-75 cursor-wait"
+              : isDailyCapReached || !isValidSL || !isValidTarget
               ? "bg-amber-950/60 text-amber-300/80 border border-amber-500/30 cursor-not-allowed opacity-80"
               : copilotState.buttonClass
           )}
+          title={tiltSecondsRemaining > 0 ? `Anti-Tilt cooling active (${tiltSecondsRemaining}s)` : copilotState.canDeploy ? "Instant 1-Click Execution anchored to pre-flight risk gate (Ctrl+Enter)" : "Regime locked"}
         >
-          {isVaultRunning ? (
+          {tiltSecondsRemaining > 0 ? (
+            <>
+              <ShieldX className="w-4 h-4 text-rose-400 animate-pulse" />
+              <span>Anti-Tilt Shield ({tiltSecondsRemaining}s)</span>
+            </>
+          ) : isDeploying ? (
+            <>
+              <RefreshCw className="w-4 h-4 animate-spin text-black" />
+              <span>Arming Order...</span>
+            </>
+          ) : isVaultRunning ? (
             <>
               <Clock className="w-4 h-4 animate-spin text-cyan-300" />
               <span>Vault Active ({vaultFormattedTime})</span>
@@ -169,12 +208,21 @@ export function CockpitCommandBar({
               <span>Inverted Target</span>
             </>
           ) : (
-            copilotState.buttonText
+            <>
+              <span>{copilotState.buttonText}</span>
+              <kbd className="hidden sm:inline-block ml-1 px-1.5 py-0.5 text-[9px] font-mono rounded bg-black/25 border border-black/20 text-black font-extrabold tracking-tight">
+                ⌘↵
+              </kbd>
+            </>
           )}
         </button>
-        <span className="text-[10px] text-slate-400 font-mono text-right hidden lg:block">
-          {copilotState.canDeploy ? "Hardware Mutex Protected" : "Requires Regime Override"}
-        </span>
+
+        <div className="flex items-center gap-2 font-mono text-[10px] text-slate-400 text-right">
+          <ShieldCheck className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+          <span className="text-slate-300 font-semibold">{lots} Lot ({totalQty} Qty) · Risk Cap ₹260</span>
+          <span>·</span>
+          <span className="text-cyan-300 font-medium">1:2.00 Validated</span>
+        </div>
       </div>
     </div>
   );

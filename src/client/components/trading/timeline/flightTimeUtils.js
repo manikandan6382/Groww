@@ -1,93 +1,92 @@
 export function resolveFlightScopeWindow(fromTime, exitTime, flightScope = 'scalp', trade = {}) {
+  const entryMs = new Date(trade?.entryDatetime || trade?.timestamp || fromTime || Date.now()).getTime();
+  const exitMs = new Date(trade?.exitDatetime || trade?.closedAt || exitTime || entryMs).getTime();
+
   if (flightScope === 'scalp') {
     return {
-      toTime: exitTime,
+      fromTime: entryMs,
+      toTime: exitMs,
       scopeLabel: 'Active Scalp',
       subLabel: 'Entry to Exit',
-      postSteps: 0
+      postSteps: 0,
+      isMultiDay: false
     };
   }
 
-  const symbol = String(trade?.symbol || trade?.tradingsymbol || '').toUpperCase();
-  const isSensex = symbol.includes('SENSEX');
-  const targetDayOfWeek = isSensex ? 5 : 4; // 5 = Friday (BSE), 4 = Thursday (NSE)
+  const d = new Date(entryMs);
+  const istDateStr = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }); // YYYY-MM-DD
+  const marketOpen = new Date(`${istDateStr}T09:15:00+05:30`).getTime();
+  const marketClose = new Date(`${istDateStr}T15:30:00+05:30`).getTime();
+  const now = Date.now();
+  const todayIstStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const isToday = (istDateStr === todayIstStr);
+
+  // For Day session: 09:15 AM IST to now (if market is open today) or 15:30 IST close
+  let dayToTime;
+  if (isToday) {
+    if (now < marketOpen) {
+      dayToTime = marketOpen + 15 * 60000;
+    } else if (now < marketClose) {
+      dayToTime = Math.max(exitMs, now);
+    } else {
+      dayToTime = Math.max(exitMs, marketClose);
+    }
+  } else {
+    dayToTime = Math.max(exitMs, marketClose);
+  }
 
   if (flightScope === 'day' || flightScope === 'expiry') {
-    const d = new Date(fromTime);
-    d.setHours(15, 30, 0, 0);
-    let dayEnd = d.getTime();
-    if (dayEnd <= fromTime) {
-      dayEnd = Math.max(exitTime, fromTime + 4 * 3600 * 1000);
-    }
     return {
-      toTime: dayEnd,
-      scopeLabel: 'Day Expiry',
-      subLabel: 'Daily 15:30 IST Close',
-      postSteps: 18
+      fromTime: marketOpen,
+      toTime: dayToTime,
+      scopeLabel: 'Full Day Session',
+      subLabel: '09:15 AM to 03:30 PM IST',
+      postSteps: 24,
+      isMultiDay: false
     };
   }
 
   if (flightScope === 'week') {
-    if (trade?.expiryDatetime) {
-      const expMs = new Date(trade.expiryDatetime).getTime();
-      if (expMs > fromTime && expMs <= fromTime + 8 * 86400000) {
-        return {
-          toTime: expMs,
-          scopeLabel: 'Weekly Expiry',
-          subLabel: `Weekly Settlement (${trade.expiryDate || 'Active Week'})`,
-          postSteps: 26
-        };
-      }
-    }
+    // Last 1 Full Week: 7 calendar days anchored at 09:15 AM IST
+    const weekTargetEnd = dayToTime;
+    const sevenDaysAgo = new Date(weekTargetEnd - 7 * 86400000);
+    const weekStartStr = sevenDaysAgo.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    const weekFromTime = new Date(`${weekStartStr}T09:15:00+05:30`).getTime();
 
-    const d = new Date(fromTime);
-    d.setHours(15, 30, 0, 0);
-    const day = d.getDay();
-    let diff = (targetDayOfWeek - day + 7) % 7;
-    if (diff === 0 && d.getTime() <= fromTime) {
-      diff = 7;
-    }
-    d.setDate(d.getDate() + diff);
     return {
-      toTime: d.getTime(),
-      scopeLabel: 'Weekly Expiry',
-      subLabel: `${isSensex ? 'Friday' : 'Thursday'} 15:30 Settlement`,
-      postSteps: 26
+      fromTime: weekFromTime,
+      toTime: weekTargetEnd,
+      scopeLabel: 'Last 1 Week',
+      subLabel: '7-Day Market Session Horizon',
+      postSteps: 32,
+      isMultiDay: true
     };
   }
 
   if (flightScope === 'month') {
-    const d = new Date(fromTime);
-    const year = d.getFullYear();
-    const month = d.getMonth();
-
-    const lastDay = new Date(year, month + 1, 0, 15, 30, 0, 0);
-    while (lastDay.getDay() !== targetDayOfWeek) {
-      lastDay.setDate(lastDay.getDate() - 1);
-    }
-
-    let monthExp = lastDay.getTime();
-    if (monthExp <= fromTime) {
-      const nextMonthLastDay = new Date(year, month + 2, 0, 15, 30, 0, 0);
-      while (nextMonthLastDay.getDay() !== targetDayOfWeek) {
-        nextMonthLastDay.setDate(nextMonthLastDay.getDate() - 1);
-      }
-      monthExp = nextMonthLastDay.getTime();
-    }
+    // Last 1 Full Month: 30 calendar days anchored at 09:15 AM IST
+    const monthTargetEnd = dayToTime;
+    const thirtyDaysAgo = new Date(monthTargetEnd - 30 * 86400000);
+    const monthStartStr = thirtyDaysAgo.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    const monthFromTime = new Date(`${monthStartStr}T09:15:00+05:30`).getTime();
 
     return {
-      toTime: monthExp,
-      scopeLabel: 'Monthly Expiry',
-      subLabel: `Month-End ${isSensex ? 'Friday' : 'Thursday'} 15:30`,
-      postSteps: 34
+      fromTime: monthFromTime,
+      toTime: monthTargetEnd,
+      scopeLabel: 'Last 1 Month',
+      subLabel: '30-Day Market Session Horizon',
+      postSteps: 40,
+      isMultiDay: true
     };
   }
 
   return {
-    toTime: exitTime,
+    fromTime: entryMs,
+    toTime: exitMs,
     scopeLabel: 'Active Scalp',
     subLabel: 'Entry to Exit',
-    postSteps: 0
+    postSteps: 0,
+    isMultiDay: false
   };
 }
 

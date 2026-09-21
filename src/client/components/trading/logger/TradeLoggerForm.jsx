@@ -25,11 +25,14 @@ export function TradeLoggerForm({ onLogged }) {
 
   const _todayStr = getLocalDateKey();
   const todayTradesCount = (journalTrades || []).filter(
-    (t) => t.entryDatetime?.split("T")[0] === _todayStr
+    (t) => getLocalDateKey(t.entryDatetime || t.exitDatetime) === _todayStr
   ).length;
 
   return (
-    <form onSubmit={logger.handleSubmit} className="apple-ceramic-card p-6 space-y-4">
+    <form id="trade-logger-form" data-deck="trade-logger" onSubmit={logger.handleSubmit} className="p-6 rounded-3xl bg-[#0d111a]/85 backdrop-blur-2xl border border-white/[0.08] shadow-[0_24px_60px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.08)] space-y-4 hover:border-white/[0.14] transition-all duration-300 relative overflow-hidden">
+      {/* Subtle Ambient Glow */}
+      <div className="absolute -top-20 -right-20 w-64 h-64 bg-cyan-500/[0.04] rounded-full blur-[80px] pointer-events-none" />
+
       <LoggerHeader todayTradesCount={todayTradesCount} />
 
       <TiltCircuitBreaker
@@ -64,6 +67,11 @@ export function TradeLoggerForm({ onLogged }) {
         notes={logger.notes}
         setNotes={logger.setNotes}
         onOpenTopic={(topic) => openRosettaWithTopic?.(topic)}
+        plannedRiskCash={logger.plannedRiskCash}
+        isRiskBreached={logger.isRiskBreached}
+        plannedTargetCash={logger.plannedTargetCash}
+        plannedRR={logger.plannedRR}
+        autoPegRisk={logger.autoPegRisk}
       />
 
       <LoggerSummaryFooter
@@ -82,3 +90,4 @@ export function TradeLoggerForm({ onLogged }) {
 }
 
 export default TradeLoggerForm;
+

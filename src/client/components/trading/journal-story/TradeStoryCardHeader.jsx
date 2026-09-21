@@ -5,12 +5,17 @@ import {
   ShieldCheck, 
   CheckCircle2, 
   ShieldAlert, 
+  AlertTriangle,
   Check, 
   Copy, 
-  Trash2 
+  Trash2,
+  LineChart,
+  Share2
 } from "lucide-react";
 import { RollingTicker } from "../../common/RollingTicker";
 import { formatLocalDateTime, calculateTradeDuration } from "../../../utils/dateUtils";
+import { resolveMarketSession } from "../history/historyCalculations";
+import { resolveIndexLotSize } from "../../../stores/slices/tradeHelpers";
 
 export function TradeStoryCardHeader({
   trade,
@@ -20,11 +25,19 @@ export function TradeStoryCardHeader({
   pnlPercent,
   copiedTradeId,
   copyTradeMarkdown,
-  handleDeleteWithUndo
+  handleDeleteWithUndo,
+  inspectInEquityCurve,
+  isSelected,
+  onShareTrade
 }) {
   const stratName = Array.isArray(trade.strategyTags) 
     ? (trade.strategyTags[0] || trade.strategyTag || "Intraday Momentum") 
     : (trade.strategyTags || trade.strategyTag || "Intraday Momentum");
+
+  const session = resolveMarketSession(trade.entryDatetime || trade.datetime);
+  const effectiveLotSize = resolveIndexLotSize(trade.symbol, trade.lotSize);
+  const rawQty = Number(trade.quantity || 1);
+  const totalQuantity = Number(trade.totalQty || (rawQty >= effectiveLotSize ? rawQty : rawQty * effectiveLotSize));
 
   return (
     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-white/10">
@@ -44,11 +57,25 @@ export function TradeStoryCardHeader({
             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 font-sans shadow-sm">
               {stratName}
             </span>
+            <span className={clsx(
+              "text-[10px] font-bold px-2 py-0.5 rounded-full border font-sans shadow-sm",
+              session.isChopRisk 
+                ? "bg-amber-500/15 text-amber-300 border-amber-500/30" 
+                : "bg-white/[0.04] text-slate-300 border-white/10"
+            )}>
+              {session.label}
+            </span>
+            {audit.isInvariantBreached && (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 font-sans shadow-sm animate-pulse flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3 text-rose-400" />
+                <span>Breached &gt;₹300</span>
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2 text-[10px] text-slate-400 font-mono mt-0.5">
             <span>📅 {formatLocalDateTime(trade.entryDatetime)}</span>
             <span>•</span>
-            <span>{trade.quantity || 1} Lot ({trade.lotSize || 65} Qty)</span>
+            <span>{trade.quantity || 1} Lot ({totalQuantity} Qty)</span>
             <span>•</span>
             <span className="text-cyan-300 flex items-center gap-1 font-sans font-medium">
               <Clock className="w-3 h-3 text-cyan-400" />
@@ -94,11 +121,40 @@ export function TradeStoryCardHeader({
           </span>
         </div>
 
+        {/* Bi-directional inspect on Equity Curve */}
+        {inspectInEquityCurve && (
+          <button
+            type="button"
+            onClick={() => inspectInEquityCurve(trade.id)}
+            className={clsx(
+              "p-2 rounded-xl transition-all",
+              isSelected 
+                ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm" 
+                : "text-slate-400 hover:text-cyan-300 hover:bg-cyan-500/10"
+            )}
+            title="Inspect position on Equity Curve (Section 3)"
+          >
+            <LineChart className="w-3.5 h-3.5" />
+          </button>
+        )}
+
+        {/* 1-Click Shareable Apple Luxury Autopsy Card */}
+        {onShareTrade && (
+          <button
+            type="button"
+            onClick={() => onShareTrade(trade)}
+            className="p-2 text-slate-400 hover:text-cyan-300 hover:bg-cyan-500/10 rounded-xl transition-all cursor-pointer"
+            title="Generate Shareable Apple Luxury Autopsy Card (PNG / Clipboard)"
+          >
+            <Share2 className="w-3.5 h-3.5" />
+          </button>
+        )}
+
         {/* 1-Click Copy Forensic Markdown Card Button */}
         <button
           type="button"
           onClick={() => copyTradeMarkdown(trade)}
-          className="p-2 text-slate-400 hover:text-cyan-300 hover:bg-cyan-500/10 rounded-xl transition-all"
+          className="p-2 text-slate-400 hover:text-cyan-300 hover:bg-cyan-500/10 rounded-xl transition-all cursor-pointer"
           title="Copy Forensic Markdown Autopsy to Clipboard"
         >
           {copiedTradeId === trade.id ? (

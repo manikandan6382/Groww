@@ -22,9 +22,13 @@ export function usePerformanceStudioData() {
   const [pmCustomStart, setPmCustomStart] = useState("");
   const [pmCustomEnd, setPmCustomEnd] = useState("");
   const [selectedDayIndex, setSelectedDayIndex] = useState(0);
+  const [promotedTradeIds, setPromotedTradeIds] = useState(() => new Set());
 
   const handlePromoteToJournal = (trade) => {
     if (!trade) return;
+    const tradeId = trade.id || trade.orderId || `${trade.symbol}-${trade.entryDatetime || trade.entryPrice}`;
+    if (promotedTradeIds.has(tradeId)) return;
+
     logJournalTrade({
       symbol: trade.symbol,
       entryPrice: Number(trade.entryPrice || 0),
@@ -42,6 +46,7 @@ export function usePerformanceStudioData() {
       executionDetails: trade.executionDetails || "Executed trade as per predefined quantitative risk rules.",
       lessonsLearned: trade.lessonsLearned || "Predetermined level honored with disciplined execution."
     });
+    setPromotedTradeIds((prev) => new Set([...prev, tradeId]));
     setPromoteSuccessToast(`Trade ${trade.symbol} promoted to Official 4-Act Journal!`);
     setTimeout(() => setPromoteSuccessToast(null), 4000);
   };
@@ -69,14 +74,15 @@ export function usePerformanceStudioData() {
     return filterTradesByRange(closedAlerts || [], postMortemRange, pmCustomStart, pmCustomEnd);
   }, [closedAlerts, postMortemRange, pmCustomStart, pmCustomEnd]);
 
-  const selectedDay = currentDataset.bars[selectedDayIndex] || currentDataset.bars[0];
+  const clampedDayIndex = Math.min(selectedDayIndex, Math.max(0, (currentDataset.bars?.length || 1) - 1));
+  const selectedDay = currentDataset.bars[clampedDayIndex] || currentDataset.bars[0];
 
   const activePostMortemTrades = useMemo(() => {
     if (postMortemScope === "day" && selectedDay) {
-      const selectedDate = selectedDay.dateStr || (selectedDay.date ? `2026-${selectedDay.date}` : null);
+      const selectedDate = selectedDay.dateStr || selectedDay.fullDate || selectedDay.date || null;
       const dayTrades = (closedAlerts || []).filter((t) => {
         const d = t.exitDatetime?.split("T")[0] || t.entryDatetime?.split("T")[0];
-        return d === selectedDate || (selectedDay.date && d?.endsWith(selectedDay.date));
+        return d === selectedDate || (selectedDay.date && (d === selectedDay.date || d?.endsWith(selectedDay.date)));
       });
       if (dayTrades.length > 0) return dayTrades;
     }
@@ -101,6 +107,7 @@ export function usePerformanceStudioData() {
     postMortemScope,
     setPostMortemScope,
     promoteSuccessToast,
+    promotedTradeIds,
     postMortemRange,
     setPostMortemRange,
     pmCalendarOpen,

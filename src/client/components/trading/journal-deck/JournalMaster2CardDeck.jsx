@@ -6,6 +6,7 @@ import { TargetDisciplineCard } from "./TargetDisciplineCard";
 export function JournalMaster2CardDeck() {
   const {
     filteredTrades,
+    tradeCount,
     totalNetPnl,
     winTrades,
     lossTrades,
@@ -13,13 +14,30 @@ export function JournalMaster2CardDeck() {
     grossWins,
     grossLosses,
     profitFactor,
+    profitFactorNum,
+    isZeroLossWinning,
+    payoffRatio,
+    payoffRatioNum,
     avgNet,
+    expectancy,
+    returnOnRisk,
     wilsonFloor,
     winAngle,
+    disciplineAngle,
     netYieldPct,
+    totalFriction,
+    frictionDragPct,
     ruleDisciplinePct,
-    displayStreak,
+    streakType,
+    streakCount,
     maxLoss,
+    maxLossBreached,
+    breachedLossCount,
+    riskInvariantViolated,
+    sparklinePath,
+    sparklineArea,
+    topSetup,
+    topSetupPnl,
     rangeLabel
   } = useJournalDeckMetrics();
 
@@ -30,25 +48,43 @@ export function JournalMaster2CardDeck() {
         netYieldPct={netYieldPct}
         totalNetPnl={totalNetPnl}
         profitFactor={profitFactor}
+        profitFactorNum={profitFactorNum}
+        isZeroLossWinning={isZeroLossWinning}
         grossWins={grossWins}
         grossLosses={grossLosses}
-        tradeCount={filteredTrades.length}
+        tradeCount={tradeCount}
+        totalFriction={totalFriction}
+        frictionDragPct={frictionDragPct}
         avgNet={avgNet}
+        expectancy={expectancy}
+        returnOnRisk={returnOnRisk}
+        payoffRatio={payoffRatio}
+        payoffRatioNum={payoffRatioNum}
+        sparklinePath={sparklinePath}
+        sparklineArea={sparklineArea}
       />
 
       <TargetDisciplineCard
-        filteredTradesLength={filteredTrades.length}
+        filteredTradesLength={tradeCount}
         winAngle={winAngle}
+        disciplineAngle={disciplineAngle}
         winRate={winRate}
         winTradesLength={winTrades.length}
         lossTradesLength={lossTrades.length}
         wilsonFloor={wilsonFloor}
         ruleDisciplinePct={ruleDisciplinePct}
-        displayStreak={displayStreak}
+        streakType={streakType}
+        streakCount={streakCount}
         maxLoss={maxLoss}
+        maxLossBreached={maxLossBreached}
+        breachedLossCount={breachedLossCount}
+        riskInvariantViolated={riskInvariantViolated}
+        topSetup={topSetup}
+        topSetupPnl={topSetupPnl}
       />
     </div>
   );
 }
 
 export default JournalMaster2CardDeck;
+

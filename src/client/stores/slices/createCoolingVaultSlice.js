@@ -83,4 +83,16 @@ export const createCoolingVaultSlice = (set, get) => ({
     const closedCount = (get().masterTrades || []).filter(t => t.entryDatetime && getLocalDateKey(new Date(t.entryDatetime)) === todayKey).length;
     return openCount + closedCount;
   },
+  getTodayRealizedLoss: () => {
+    const todayKey = getLocalDateKey(new Date());
+    const closed = (get().masterTrades || []).filter(t => {
+      const d = t.exitDatetime || t.entryDatetime;
+      return d && getLocalDateKey(new Date(d)) === todayKey;
+    });
+    return closed.reduce((sum, t) => sum + Number(t.netPnl || 0), 0);
+  },
+  isDailyLossCapReached: () => {
+    const pnl = typeof get().getTodayRealizedLoss === "function" ? get().getTodayRealizedLoss() : 0;
+    return pnl <= -300;
+  },
 });

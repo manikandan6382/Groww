@@ -15,19 +15,12 @@ export function PortfolioTimeframeSwitcher({ activeTf, onSelectTimeframe }) {
               type="button"
               onClick={() => onSelectTimeframe(tf.id)}
               className={clsx(
-                "relative w-full min-h-[36px] flex items-center justify-center gap-1 text-xs font-sans font-bold tracking-wide rounded-xl transition-all duration-200 cursor-pointer whitespace-nowrap active:scale-[0.97] z-10",
+                "w-full h-9 flex items-center justify-center gap-1 text-xs font-mono font-bold tracking-wider rounded-xl transition-all duration-200 cursor-pointer whitespace-nowrap active:scale-[0.97]",
                 isSelected
-                  ? "text-white"
-                  : "text-slate-400 hover:text-slate-200"
+                  ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-[0_0_14px_rgba(6,182,212,0.28)] font-black"
+                  : "text-slate-400 hover:text-slate-200 border border-transparent hover:bg-white/[0.04]"
               )}
             >
-              {isSelected && (
-                <motion.div
-                  layoutId="activeWealthTfPill"
-                  transition={{ type: "spring", stiffness: 450, damping: 32 }}
-                  className="absolute inset-0 rounded-xl bg-cyan-500/20 border border-cyan-500/35 shadow-[0_0_12px_rgba(6,182,212,0.25)] -z-10"
-                />
-              )}
               <span>{tf.label}</span>
             </button>
           );

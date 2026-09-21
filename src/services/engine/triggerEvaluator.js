@@ -17,6 +17,11 @@ export function evaluateTradeTrigger(engine, trade, tick) {
     return;
   }
 
+  if (entry >= 20.0 && ltp <= 0.10) {
+    console.warn(`[paperTradeEngine] Ghost zero tick suppressed on trade ${id}: entry ₹${entry} vs tick LTP ₹${ltp}`);
+    return;
+  }
+
   if (entry > 0 && tradeAgeMs < 5000 && Math.abs(ltp - entry) / entry > 0.35) {
     console.warn(`[paperTradeEngine] Anomaly suppressed on trade ${id} (${trade.symbol}): entry ₹${entry} vs tick LTP ₹${ltp}. False trigger blocked.`);
     return;
@@ -46,12 +51,12 @@ export function evaluateTradeTrigger(engine, trade, tick) {
   if (isShortTrade) {
     if (target > 0 && ltp <= target) reason = "TARGET_HIT";
     if (!reason && stopLoss > 0 && ltp >= stopLoss) {
-      reason = stopLoss <= entry ? "TRAILING_SL_HIT" : "STOP_LOSS_HIT";
+      reason = isShortTrade ? (stopLoss < entry ? "TRAILING_SL_HIT" : "STOP_LOSS_HIT") : (stopLoss > entry ? "TRAILING_SL_HIT" : "STOP_LOSS_HIT");
     }
   } else {
     if (target > 0 && ltp >= target) reason = "TARGET_HIT";
     if (!reason && stopLoss > 0 && ltp <= stopLoss) {
-      reason = stopLoss >= entry ? "TRAILING_SL_HIT" : "STOP_LOSS_HIT";
+      reason = stopLoss > entry ? "TRAILING_SL_HIT" : "STOP_LOSS_HIT";
     }
   }
 
@@ -87,13 +92,18 @@ export function triggerTradeExecution(engine, trade, tick, reason) {
   engine.triggering.add(id);
 
   try {
-    const result = markPaperTrade(id, { price: tick.ltp, reason });
+    // Exchange-Grade Anchor: Fill at resting Stop Loss or Target price, not an arbitrary lagged HTTP polling tick
+    const fillPrice = reason === "TARGET_HIT" 
+      ? Number(trade.targetPrice || tick.ltp)
+      : Number(trade.stopLoss || tick.ltp);
+
+    const result = markPaperTrade(id, { price: fillPrice, reason });
     engine.removeTrade(id);
     const eventType = reason === "TARGET_HIT" ? "target_hit" : "stop_loss_hit";
     engine.publish(eventType, {
       tradeId: id,
       symbol: trade.symbol,
-      ltp: tick.ltp,
+      ltp: fillPrice,
       reason,
       exitTime: result.trade.exitDatetime,
       pnl: result.trade.netPnl,

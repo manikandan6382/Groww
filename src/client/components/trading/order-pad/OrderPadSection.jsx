@@ -1,5 +1,6 @@
 import React from "react";
 import clsx from "clsx";
+import { ChevronDown } from "lucide-react";
 import { useOrderPadFullLogic } from "./hooks/useOrderPadFullLogic";
 import { OrderPadHeader } from "./components/OrderPadHeader";
 import { CockpitDeck } from "./components/CockpitDeck";
@@ -13,11 +14,36 @@ import { OrderDeployActionBar } from "./components/OrderDeployActionBar";
 
 export const OrderPadSection = React.memo(function OrderPadSection() {
   const logic = useOrderPadFullLogic();
+  const [isPayoffOpen, setIsPayoffOpen] = React.useState(false);
 
   const handleSubmit = (e) => {
     e.preventDefault();
     logic.handleExecute();
   };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter") {
+      if (e.ctrlKey || e.metaKey) {
+        // Deliberate power-user shortcut: Ctrl+Enter / Cmd+Enter
+        e.preventDefault();
+        logic.handleExecute();
+      } else if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") {
+        // Prevent accidental submission when typing in input boxes
+        e.preventDefault();
+      }
+    }
+  };
+
+  React.useEffect(() => {
+    const handleGlobalKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        logic.handleExecute();
+      }
+    };
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, [logic.handleExecute]);
 
   const isValidSL = Number(logic.entryPrice) > 0 && Number(logic.stopLoss) > 0 && Number(logic.stopLoss) < Number(logic.entryPrice);
   const isValidTarget = Number(logic.entryPrice) > 0 && Number(logic.targetPrice) > Number(logic.entryPrice);
@@ -52,7 +78,7 @@ export const OrderPadSection = React.memo(function OrderPadSection() {
         onSelectAsset={logic.handleSelectAsset}
       />
 
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} onKeyDown={handleKeyDown} className="space-y-4">
         <ModeAndSentimentSwitches
           feedMode={logic.feedMode}
           setFeedMode={logic.setFeedMode}
@@ -66,6 +92,8 @@ export const OrderPadSection = React.memo(function OrderPadSection() {
 
         <ContractSizingInputs
           optionType={logic.optionType}
+          setOptionType={logic.setOptionType}
+          handleQuickFlipOptionType={logic.handleQuickFlipOptionType}
           underlying={logic.underlying}
           strikePrice={logic.strikePrice}
           setStrikePrice={logic.setStrikePrice}
@@ -96,25 +124,51 @@ export const OrderPadSection = React.memo(function OrderPadSection() {
           targetPrice={logic.targetPrice}
           setTargetPrice={logic.setTargetPrice}
           handleManualInputFocus={logic.handleManualInputFocus}
+          totalQty={logic.totalQty}
+          underlying={logic.underlying}
         />
 
-        <div id="option-outcome-simulator" className="scroll-mt-24">
-          <ApplePayoffCanvas
-            optionType={logic.optionType}
-            direction="BUY"
-            spotPrice={logic.currentAsset.spot}
-            strikePrice={logic.strikePrice}
-            netEntryPrice={logic.entryPrice}
-            stopLoss={logic.stopLoss}
-            targetPrice={logic.targetPrice}
-            quantity={logic.lots}
-            lotSize={logic.lotSize}
-            strategyMode={logic.strategyMode}
-            hedgeStrike={logic.hedgeStrike}
-            hedgePrice={logic.hedgePrice}
-            onSetTarget={(val) => logic.setTargetPrice(val)}
-            onSetStopLoss={(val) => logic.setStopLoss(val)}
-          />
+        {/* Collapsible Deep Option Intelligence & Payoff Lab */}
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] overflow-hidden transition-all duration-300">
+          <button
+            type="button"
+            onClick={() => setIsPayoffOpen((prev) => !prev)}
+            className="w-full flex items-center justify-between px-4 py-3 text-xs font-semibold text-slate-300 hover:bg-white/[0.04] transition-colors select-none group"
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-base group-hover:scale-110 transition-transform">📐</span>
+              <span className="font-bold tracking-wide uppercase font-mono text-[11px] text-cyan-300">
+                Deep Option Intelligence &amp; Payoff Lab
+              </span>
+              <span className="text-[9px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 font-mono">
+                Interactive P&amp;L Simulation
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-slate-400 text-[11px]">
+              <span>{isPayoffOpen ? "Hide Simulation" : "Inspect P&L Curves"}</span>
+              <ChevronDown className={clsx("w-4 h-4 transition-transform duration-300 text-slate-400 group-hover:text-cyan-400", isPayoffOpen && "rotate-180 text-cyan-400")} />
+            </div>
+          </button>
+          {isPayoffOpen && (
+            <div id="option-outcome-simulator" className="p-4 pt-2 border-t border-white/5 scroll-mt-24">
+              <ApplePayoffCanvas
+                optionType={logic.optionType}
+                direction="BUY"
+                spotPrice={logic.currentAsset.spot}
+                strikePrice={logic.strikePrice}
+                netEntryPrice={logic.entryPrice}
+                stopLoss={logic.stopLoss}
+                targetPrice={logic.targetPrice}
+                quantity={logic.lots}
+                lotSize={logic.lotSize}
+                strategyMode={logic.strategyMode}
+                hedgeStrike={logic.hedgeStrike}
+                hedgePrice={logic.hedgePrice}
+                onSetTarget={(val) => logic.setTargetPrice(val)}
+                onSetStopLoss={(val) => logic.setStopLoss(val)}
+              />
+            </div>
+          )}
         </div>
 
         <OrderDeployActionBar

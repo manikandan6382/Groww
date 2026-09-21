@@ -37,12 +37,13 @@ export function useTimelineCoordinates({
   const netZeroPrice = isShort ? entryPrice - frictionPerUnit : entryPrice + frictionPerUnit;
   const riskPerShare = stopLoss ? Math.abs(entryPrice - stopLoss) : entryPrice * 0.05;
   const oneRTargetPrice = isShort ? entryPrice - riskPerShare : entryPrice + riskPerShare;
+  const entryTime = trade?.entryDatetime || trade?.timestamp;
   const exitTime = trade?.exitDatetime || trade?.closedAt;
 
   const coords = useMemo(() => {
     if (!displayCandles.length) {
       return {
-        allPoints: [], exitPoint: null, minVal: entryPrice * 0.95, maxVal: entryPrice * 1.05,
+        allPoints: [], entryPoint: null, exitPoint: null, minVal: entryPrice * 0.95, maxVal: entryPrice * 1.05,
         entryY: 0, netZeroY: 0, targetY: null, stopY: null, exitY: 0, oneRY: null,
         peakPoint: null, troughPoint: null, maxVolume: 1, scaleY: () => 0
       };
@@ -62,19 +63,19 @@ export function useTimelineCoordinates({
     const scaleY = (p) => padding.top + (1 - (p - minVal) / safeRange) * graphHeight;
     const maxVol = Math.max(...displayCandles.map(c => Number(c.volume || 1000)), 1000);
 
-    const { pts, peak, trough, exitPoint } = computeTimelinePoints({
-      displayCandles, scaleY, padding, graphWidth, flightScope, isShort, exitTime
+    const { pts, peak, trough, entryPoint, exitPoint } = computeTimelinePoints({
+      displayCandles, scaleY, padding, graphWidth, flightScope, isShort, entryTime, exitTime
     });
 
     return {
-      allPoints: pts, exitPoint, minVal, maxVal,
+      allPoints: pts, entryPoint, exitPoint, minVal, maxVal,
       entryY: scaleY(entryPrice), netZeroY: scaleY(netZeroPrice),
       targetY: targetPrice ? scaleY(targetPrice) : null,
       stopY: stopLoss ? scaleY(stopLoss) : null,
       exitY: scaleY(exitPrice), oneRY: scaleY(oneRTargetPrice),
       peakPoint: peak, troughPoint: trough, maxVolume: maxVol, scaleY
     };
-  }, [displayCandles, entryPrice, exitPrice, targetPrice, stopLoss, netZeroPrice, oneRTargetPrice, graphWidth, graphHeight, padding.top, padding.left, flightScope, isShort, exitTime]);
+  }, [displayCandles, entryPrice, exitPrice, targetPrice, stopLoss, netZeroPrice, oneRTargetPrice, graphWidth, graphHeight, padding.top, padding.left, flightScope, isShort, entryTime, exitTime]);
 
   const renderedPoints = useMemo(() => {
     if (replayIndex === null || replayIndex >= coords.allPoints.length - 1) return coords.allPoints;

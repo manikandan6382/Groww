@@ -4,10 +4,16 @@ import { WatchlistCard } from "./WatchlistCard";
 
 export const WatchlistCardsGrid = React.memo(function WatchlistCardsGrid({
   filteredSymbols,
+  holdings = [],
+  openAlerts = [],
   onOpenDepth,
   onOpenTrade,
+  onSquareOff,
   onRemove,
   onResetFilters,
+  currencySymbol = "₹",
+  fxRate = 1,
+  isPrivacyMode = false,
 }) {
   if (filteredSymbols.length === 0) {
     return (
@@ -33,9 +39,15 @@ export const WatchlistCardsGrid = React.memo(function WatchlistCardsGrid({
         <WatchlistCard
           key={symbol}
           symbol={symbol}
+          holdings={holdings}
+          openAlerts={openAlerts}
           onOpenDepth={onOpenDepth}
           onOpenTrade={onOpenTrade}
+          onSquareOff={onSquareOff}
           onRemove={onRemove}
+          currencySymbol={currencySymbol}
+          fxRate={fxRate}
+          isPrivacyMode={isPrivacyMode}
         />
       ))}
     </div>

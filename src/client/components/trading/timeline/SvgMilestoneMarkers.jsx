@@ -3,6 +3,8 @@ import React from 'react';
 export function SvgMilestoneMarkers({
   renderedPoints = [],
   entryPrice,
+  entryPoint,
+  exitPoint,
   peakPoint,
   peakPrice,
   troughPoint,
@@ -16,14 +18,17 @@ export function SvgMilestoneMarkers({
   graphWidth,
   chartH
 }) {
+  const resolvedEntry = entryPoint || renderedPoints.find(p => p.isEntryPoint) || renderedPoints[0];
+  const resolvedExit = exitPoint || renderedPoints.find(p => p.isExitPoint) || (renderedPoints.length > 1 ? renderedPoints[renderedPoints.length - 1] : null);
+
   return (
     <g className="milestone-markers-group">
       {/* Milestone 1: ⚡ ORDER ENTRY */}
-      {renderedPoints[0] && (
-        <g transform={`translate(${renderedPoints[0].x}, ${renderedPoints[0].y})`}>
+      {resolvedEntry && (
+        <g transform={`translate(${resolvedEntry.x}, ${resolvedEntry.y})`}>
           <circle r="9" fill="#ffffff" fillOpacity="0.25" className="animate-ping" />
           <circle r="5" fill="#ffffff" stroke="#0f172a" strokeWidth="1.8" />
-          <g transform="translate(-40, -26)">
+          <g transform={`translate(${resolvedEntry.x < 50 ? 0 : resolvedEntry.x > graphWidth - 50 ? -80 : -40}, -26)`}>
             <rect width="80" height="18" rx="5" fill="#18181b" stroke="rgba(255,255,255,0.3)" strokeWidth="1" />
             <text x="40" y="12.5" textAnchor="middle" fill="#ffffff" fontSize="9" fontFamily="monospace" fontWeight="bold">
               ⚡ Entry ₹{entryPrice.toFixed(1)}
@@ -91,8 +96,8 @@ export function SvgMilestoneMarkers({
       )}
 
       {/* Milestone 4: 🎯 / 🛑 REALIZED EXIT PIN */}
-      {renderedPoints.length > 1 && (
-        <g transform={`translate(${renderedPoints[renderedPoints.length - 1].x}, ${renderedPoints[renderedPoints.length - 1].y})`}>
+      {resolvedExit && (
+        <g transform={`translate(${resolvedExit.x}, ${resolvedExit.y})`}>
           <circle
             r="10"
             fill={exitPrice >= entryPrice ? "#10b981" : "#f43f5e"}
@@ -105,7 +110,7 @@ export function SvgMilestoneMarkers({
             stroke="#ffffff"
             strokeWidth="1.8"
           />
-          <g transform={`translate(${renderedPoints[renderedPoints.length - 1].x > graphWidth - 50 ? -85 : -45}, 14)`}>
+          <g transform={`translate(${resolvedExit.x > graphWidth - 50 ? -85 : resolvedExit.x < 50 ? 0 : -45}, 14)`}>
             <rect
               width="90"
               height="20"

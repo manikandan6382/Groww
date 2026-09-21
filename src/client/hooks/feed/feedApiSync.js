@@ -1,6 +1,28 @@
 import { useLivePriceStore } from "../../stores/useLivePriceStore";
 import { useTradingStore } from "../../stores/useTradingStore";
 
+// Module-level timer handle hoisted to prevent TDZ
+let sebiResetTimer = null;
+
+// Schedule proactive auto-trip timer at exactly 06:00 AM IST (SEBI daily reset)
+export function scheduleSebiResetTrip(setBrokerStatus) {
+  if (typeof window === "undefined") return;
+  if (sebiResetTimer) clearTimeout(sebiResetTimer);
+
+  const istNow = new Date(Date.now() + 5.5 * 3600 * 1000);
+  const istTarget = new Date(Date.UTC(istNow.getUTCFullYear(), istNow.getUTCMonth(), istNow.getUTCDate(), 6, 0, 0, 0));
+  if (istNow.getUTCHours() >= 6) {
+    istTarget.setUTCDate(istTarget.getUTCDate() + 1);
+  }
+  const msUntil0600 = istTarget.getTime() - (5.5 * 3600 * 1000) - Date.now();
+
+  sebiResetTimer = setTimeout(() => {
+    setBrokerStatus({ kiteConnected: false, kiteExpired: true });
+    checkTokenStatus(setBrokerStatus).catch(() => {});
+    scheduleSebiResetTrip(setBrokerStatus);
+  }, Math.max(1000, msUntil0600));
+}
+
 // Check token status periodically (Upstox & Zerodha Kite)
 export async function checkTokenStatus(setBrokerStatus) {
   try {
@@ -21,7 +43,9 @@ export async function checkTokenStatus(setBrokerStatus) {
       nextStatus.upstoxTokenAgeMinutes = upstoxData.sessionAgeMinutes;
     }
     if (brokerData?.kite) {
-      nextStatus.kiteConnected = Boolean(brokerData.kite.connected);
+      const isKiteExpired = Boolean(brokerData.kite.isExpired ?? brokerData.kite.expired);
+      nextStatus.kiteExpired = isKiteExpired;
+      nextStatus.kiteConnected = Boolean(brokerData.kite.connected && !isKiteExpired);
       nextStatus.kiteUserName = brokerData.kite.userName || "";
       nextStatus.kiteUserId = brokerData.kite.userId || "";
       nextStatus.kiteTokenAgeMinutes = brokerData.kite.sessionAgeMinutes;
@@ -29,6 +53,7 @@ export async function checkTokenStatus(setBrokerStatus) {
     if (Object.keys(nextStatus).length > 0) {
       setBrokerStatus(nextStatus);
     }
+    scheduleSebiResetTrip(setBrokerStatus);
   } catch { /* ignore offline */ }
 }
 

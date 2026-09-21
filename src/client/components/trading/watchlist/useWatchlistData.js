@@ -7,22 +7,62 @@ import { executeEquityTrade, executeOptionScalp, transferToPaperLab } from "./wa
 
 export function useWatchlistData() {
   const { 
-    watchlistSymbols, addWatchSymbol, removeWatchSymbol, 
-    activeSectorFilter, setActiveSectorFilter, setActiveView,
-    setOrderPadPreFill, deployPracticeTrade 
+    watchlistSymbols, 
+    addWatchSymbol, 
+    removeWatchSymbol, 
+    activeSectorFilter, 
+    setActiveSectorFilter,
+    deployPracticeTrade,
+    squareOffTrade,
+    openAlerts = [],
+    setOrderPadPreFill,
+    setActiveView
   } = useTradingStore();
 
   const [search, setSearch] = useState("");
-  const [viewMode, setViewMode] = useState("grid");
-  const [sortBy, setSortBy] = useState("default");
-  const [activeModal, setActiveModal] = useState(null);
-  const [tradeTab, setTradeTab] = useState("equity");
-  const [orderSide, setOrderSide] = useState("BUY");
-  const [productType, setProductType] = useState("CNC");
-  const [tradeQty, setTradeQty] = useState(10);
-  const [optionType, setOptionType] = useState("CE");
-  const [optionLots, setOptionLots] = useState(1);
+  
+  const [viewMode, setViewModeState] = useState(() => {
+    try {
+      return localStorage.getItem("portfoliox_watchlist_view_mode") || "grid";
+    } catch {
+      return "grid";
+    }
+  });
+
+  const setViewMode = (mode) => {
+    setViewModeState(mode);
+    try {
+      localStorage.setItem("portfoliox_watchlist_view_mode", mode);
+    } catch {}
+  };
+
+  const [sortBy, setSortByState] = useState(() => {
+    try {
+      return localStorage.getItem("portfoliox_watchlist_sort") || "default";
+    } catch {
+      return "default";
+    }
+  });
+
+  const setSortBy = (val) => {
+    setSortByState(val);
+    try {
+      localStorage.setItem("portfoliox_watchlist_sort", val);
+    } catch {}
+  };
+
+  const [activeModal, setActiveModal] = useState(null); // { type: 'depth', symbol }
+  const [activeTradeModal, setActiveTradeModal] = useState(null); // { symbol, side }
   const [toastMessage, setToastMessage] = useState(null);
+
+  // Quick Order Pad Form State
+  const [tradeTab, setTradeTab] = useState("equity"); // 'equity' | 'option'
+  const [orderSide, setOrderSide] = useState("BUY"); // 'BUY' | 'SELL'
+  const [productType, setProductType] = useState("CNC"); // 'CNC' | 'MIS'
+  const [tradeQty, setTradeQty] = useState(10);
+  const [optionType, setOptionType] = useState("CE"); // 'CE' | 'PE'
+  const [optionLots, setOptionLots] = useState(1);
+
   const searchInputRef = useRef(null);
 
   useEffect(() => {
@@ -31,13 +71,23 @@ export function useWatchlistData() {
     return () => clearTimeout(timer);
   }, [toastMessage]);
 
+  // Global keydown listeners (Escape to dismiss, hotkeys when idle)
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.key === "Escape" && activeModal) setActiveModal(null);
+      if (e.key === "Escape") {
+        if (activeModal) setActiveModal(null);
+        if (activeTradeModal) setActiveTradeModal(null);
+      }
+      if (e.key === "/" && document.activeElement !== searchInputRef.current) {
+        if (!activeModal && !activeTradeModal) {
+          e.preventDefault();
+          searchInputRef.current?.focus();
+        }
+      }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeModal]);
+  }, [activeModal, activeTradeModal]);
 
   const searchCandidates = useMemo(() => {
     if (!search?.trim()) return [];
@@ -45,7 +95,7 @@ export function useWatchlistData() {
     return Object.keys(INDIAN_STOCK_META)
       .filter((sym) => {
         const meta = INDIAN_STOCK_META[sym];
-        const match = sym.toLowerCase().includes(q) || meta.name.toLowerCase().includes(q) || meta.sector.toLowerCase().includes(q);
+        const match = sym.toLowerCase().includes(q) || (meta?.name || "").toLowerCase().includes(q) || (meta?.sector || "").toLowerCase().includes(q);
         return match && !watchlistSymbols.includes(sym);
       })
       .slice(0, 5);
@@ -72,41 +122,82 @@ export function useWatchlistData() {
     soundEngine.playDeleteTone();
   };
 
-  const handleOpenTradeModal = (symbol, e) => {
-    e?.stopPropagation();
-    setActiveModal({ type: "trade", symbol });
-    setTradeTab("equity");
-    setTradeQty(10);
-    setOrderSide("BUY");
-    soundEngine.playTabSwitchTone();
-  };
-
   const handleOpenDepthModal = (symbol, e) => {
     e?.stopPropagation();
     setActiveModal({ type: "depth", symbol });
     soundEngine.playTabSwitchTone();
   };
 
-  const handleExecuteEquityTrade = (meta, cleanSym) =>
-    executeEquityTrade({ meta, cleanSym, productType, tradeQty, orderSide, deployPracticeTrade, setToastMessage, setActiveModal });
+  const handleOpenTradeModal = (symbol, side = "BUY") => {
+    setOrderSide(side);
+    setActiveTradeModal({ symbol, side });
+    soundEngine.playTabSwitchTone();
+  };
 
-  const handleExecuteOptionScalp = (meta, cleanSym) =>
-    executeOptionScalp({ meta, cleanSym, optionType, optionLots, deployPracticeTrade, setToastMessage, setActiveModal });
+  const handleCloseTradeModal = () => {
+    setActiveTradeModal(null);
+  };
 
-  const handleTransferToPaperLab = (meta, cleanSym) =>
-    transferToPaperLab({ meta, cleanSym, optionType, optionLots, setOrderPadPreFill, setActiveModal, setActiveView });
+  const handleSquareOff = (tradeId, e) => {
+    e?.stopPropagation();
+    squareOffTrade(tradeId);
+    soundEngine.playSuccessTone();
+    setToastMessage("🛑 Position squared off successfully.");
+  };
 
-  const activeStockMeta = activeModal ? getStockMeta(activeModal.symbol) : null;
-  const activeRadarData = activeModal ? getLiquidityRadarData(activeModal.symbol, activeStockMeta) : null;
-  const activeCleanSym = activeModal ? activeModal.symbol.replace(/\.(NS|BO)$/, "") : "";
+  // Execution triggers
+  const handleExecuteEquity = (meta, cleanSym) => {
+    executeEquityTrade({
+      meta,
+      cleanSym,
+      productType,
+      tradeQty,
+      orderSide,
+      deployPracticeTrade,
+      setToastMessage,
+      setActiveModal: setActiveTradeModal
+    });
+  };
+
+  const handleExecuteScalp = (meta, cleanSym) => {
+    executeOptionScalp({
+      meta,
+      cleanSym,
+      optionType,
+      optionLots,
+      deployPracticeTrade,
+      setToastMessage,
+      setActiveModal: setActiveTradeModal
+    });
+  };
+
+  const handleTransferToPaperLab = (meta, cleanSym) => {
+    transferToPaperLab({
+      meta,
+      cleanSym,
+      optionType,
+      optionLots,
+      setOrderPadPreFill,
+      setActiveModal: setActiveTradeModal,
+      setActiveView
+    });
+  };
+
+  // Derive active stock meta for modals
+  const activeModalSymbol = activeModal?.symbol || activeTradeModal?.symbol;
+  const activeStockMeta = activeModalSymbol ? getStockMeta(activeModalSymbol) : null;
+  const activeRadarData = activeModalSymbol ? getLiquidityRadarData(activeModalSymbol, activeStockMeta) : null;
+  const activeCleanSym = activeModalSymbol ? activeModalSymbol.replace(/\.(NS|BO)$/, "") : "";
 
   return {
     watchlistSymbols, search, setSearch, viewMode, setViewMode, sortBy, setSortBy,
-    activeModal, setActiveModal, tradeTab, setTradeTab, orderSide, setOrderSide,
-    productType, setProductType, tradeQty, setTradeQty, optionType, setOptionType,
-    optionLots, setOptionLots, toastMessage, searchInputRef, searchCandidates, filteredSymbols,
-    handleTabChange, handleAddPreset, handleRemove, handleOpenTradeModal, handleOpenDepthModal,
-    handleExecuteEquityTrade, handleExecuteOptionScalp, handleTransferToPaperLab,
+    activeModal, setActiveModal, activeTradeModal, setActiveTradeModal,
+    tradeTab, setTradeTab, orderSide, setOrderSide, productType, setProductType,
+    tradeQty, setTradeQty, optionType, setOptionType, optionLots, setOptionLots,
+    toastMessage, setToastMessage, searchInputRef, searchCandidates, filteredSymbols,
+    openAlerts, handleSquareOff,
+    handleTabChange, handleAddPreset, handleRemove, handleOpenDepthModal,
+    handleOpenTradeModal, handleCloseTradeModal, handleExecuteEquity, handleExecuteScalp, handleTransferToPaperLab,
     activeStockMeta, activeRadarData, activeCleanSym, activeSectorFilter, setActiveSectorFilter
   };
 }

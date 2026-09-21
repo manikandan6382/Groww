@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useTradingStore } from "../../stores/useTradingStore";
 import { soundEngine } from "../../utils/soundEngine";
 
@@ -84,9 +84,11 @@ export function useLiveAlertsViewData() {
     return () => clearTimeout(timer);
   }, [settlementToast, setSettlementToast]);
 
-  const telemetry = getPortfolioTelemetry
-    ? getPortfolioTelemetry(scorecardTimeframe)
-    : { ...DEFAULT_TELEMETRY, timeframe: scorecardTimeframe };
+  const telemetry = useMemo(() => {
+    return getPortfolioTelemetry
+      ? getPortfolioTelemetry(scorecardTimeframe)
+      : { ...DEFAULT_TELEMETRY, timeframe: scorecardTimeframe };
+  }, [getPortfolioTelemetry, scorecardTimeframe, openAlerts, closedAlerts]);
 
   return {
     openAlerts,

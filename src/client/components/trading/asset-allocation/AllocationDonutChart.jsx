@@ -1,4 +1,5 @@
 import React from "react";
+import clsx from "clsx";
 import { RollingTicker } from "../../common/RollingTicker";
 
 export function AllocationDonutChart({
@@ -12,8 +13,15 @@ export function AllocationDonutChart({
   goldValue,
   goldPct,
   cashValue,
-  cashPct
+  cashPct,
+  isPrivacyMode = false,
+  currencySymbol = "₹",
+  fxRate = 1,
 }) {
+  const convertedEq = Math.round((equityValue || 0) / fxRate);
+  const convertedGold = Math.round((goldValue || 0) / fxRate);
+  const convertedCash = Math.round((cashValue || 0) / fxRate);
+
   return (
     <div className="relative flex flex-col sm:flex-row items-center gap-5">
       {/* Donut SVG */}
@@ -67,46 +75,79 @@ export function AllocationDonutChart({
       </div>
 
       {/* 3-Row Value Pills */}
-      <div className="flex-1 w-full space-y-2 text-xs">
+      <div className="flex-1 w-full space-y-2 text-xs font-mono">
         {/* Row 1: Equities */}
-        <div className="flex items-center justify-between p-2.5 rounded-2xl bg-white/[0.03] hover:bg-white/[0.05] border border-white/[0.08] transition-all">
-          <div className="flex items-center gap-2.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.8)]" />
-            <div className="flex flex-col">
-              <span className="text-slate-300 font-medium leading-tight">Equities (Growth)</span>
-              <span className="text-[10px] text-slate-400 font-mono">₹{(equityValue / 100000).toFixed(2)}L</span>
+        <div className="p-3 rounded-2xl bg-white/[0.03] hover:bg-white/[0.05] border border-white/[0.08] transition-all space-y-1.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(6,182,212,0.8)]" />
+              <span className="text-slate-200 font-semibold leading-tight font-sans">Equities (Growth)</span>
+            </div>
+            <div className="flex items-baseline gap-2">
+              <span
+                className={clsx(
+                  "text-[11px] text-slate-400 transition-all duration-300",
+                  isPrivacyMode && "filter blur-[6px] select-none hover:blur-none cursor-pointer"
+                )}
+                title={isPrivacyMode ? "Privacy Mode Active" : undefined}
+              >
+                {currencySymbol}{convertedEq.toLocaleString("en-IN")}
+              </span>
+              <span className="text-white font-bold text-xs">{equityPct}%</span>
             </div>
           </div>
-          <div className="text-white font-mono font-bold text-sm">
-            <RollingTicker value={equityPct} suffix="%" decimalPlaces={0} className="text-white" />
+          <div className="w-full h-1 rounded-full bg-white/[0.06] overflow-hidden">
+            <div className="h-full bg-cyan-400/80 rounded-full transition-all duration-500" style={{ width: `${Math.min(100, Math.max(0, equityPct))}%` }} />
           </div>
         </div>
 
         {/* Row 2: Gold & Commodities */}
-        <div className="flex items-center justify-between p-2.5 rounded-2xl bg-white/[0.03] hover:bg-white/[0.05] border border-white/[0.08] transition-all">
-          <div className="flex items-center gap-2.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-amber-400 shadow-[0_0_10px_rgba(245,158,11,0.8)]" />
-            <div className="flex flex-col">
-              <span className="text-slate-300 font-medium leading-tight">Gold &amp; Hedge</span>
-              <span className="text-[10px] text-slate-400 font-mono">₹{(goldValue / 1000).toFixed(1)}K</span>
+        <div className="p-3 rounded-2xl bg-white/[0.03] hover:bg-white/[0.05] border border-white/[0.08] transition-all space-y-1.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.8)]" />
+              <span className="text-slate-200 font-semibold leading-tight font-sans">Gold &amp; Hedge</span>
+            </div>
+            <div className="flex items-baseline gap-2">
+              <span
+                className={clsx(
+                  "text-[11px] text-slate-400 transition-all duration-300",
+                  isPrivacyMode && "filter blur-[6px] select-none hover:blur-none cursor-pointer"
+                )}
+                title={isPrivacyMode ? "Privacy Mode Active" : undefined}
+              >
+                {currencySymbol}{convertedGold.toLocaleString("en-IN")}
+              </span>
+              <span className="text-white font-bold text-xs">{goldPct}%</span>
             </div>
           </div>
-          <div className="text-white font-mono font-bold text-sm">
-            <RollingTicker value={goldPct} suffix="%" decimalPlaces={0} className="text-white" />
+          <div className="w-full h-1 rounded-full bg-white/[0.06] overflow-hidden">
+            <div className="h-full bg-amber-400/80 rounded-full transition-all duration-500" style={{ width: `${Math.min(100, Math.max(0, goldPct))}%` }} />
           </div>
         </div>
 
         {/* Row 3: Liquid Cash Margin */}
-        <div className="flex items-center justify-between p-2.5 rounded-2xl bg-white/[0.03] hover:bg-white/[0.05] border border-white/[0.08] transition-all">
-          <div className="flex items-center gap-2.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.8)]" />
-            <div className="flex flex-col">
-              <span className="text-slate-300 font-medium leading-tight">Liquid Margin Buffer</span>
-              <span className="text-[10px] text-slate-400 font-mono">₹{(cashValue / 100000).toFixed(2)}L</span>
+        <div className="p-3 rounded-2xl bg-white/[0.03] hover:bg-white/[0.05] border border-white/[0.08] transition-all space-y-1.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.8)]" />
+              <span className="text-slate-200 font-semibold leading-tight font-sans">Liquid Margin Buffer</span>
+            </div>
+            <div className="flex items-baseline gap-2">
+              <span
+                className={clsx(
+                  "text-[11px] text-slate-400 transition-all duration-300",
+                  isPrivacyMode && "filter blur-[6px] select-none hover:blur-none cursor-pointer"
+                )}
+                title={isPrivacyMode ? "Privacy Mode Active" : undefined}
+              >
+                {currencySymbol}{convertedCash.toLocaleString("en-IN")}
+              </span>
+              <span className="text-white font-bold text-xs">{cashPct}%</span>
             </div>
           </div>
-          <div className="text-white font-mono font-bold text-sm">
-            <RollingTicker value={cashPct} suffix="%" decimalPlaces={0} className="text-white" />
+          <div className="w-full h-1 rounded-full bg-white/[0.06] overflow-hidden">
+            <div className="h-full bg-emerald-400/80 rounded-full transition-all duration-500" style={{ width: `${Math.min(100, Math.max(0, cashPct))}%` }} />
           </div>
         </div>
       </div>

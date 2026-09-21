@@ -1,10 +1,13 @@
 import React, { useRef, useEffect } from "react";
-import { ChevronDown, Sparkles } from "lucide-react";
+import { ChevronDown, Sparkles, ShieldCheck, ShieldAlert, Zap } from "lucide-react";
 import clsx from "clsx";
 import { IndexDropdownPopover } from "./IndexDropdownPopover";
+import { soundEngine } from "../../../../utils/soundEngine";
 
 export function ContractSizingInputs({
   optionType,
+  setOptionType,
+  handleQuickFlipOptionType,
   underlying,
   strikePrice,
   setStrikePrice,
@@ -39,26 +42,145 @@ export function ContractSizingInputs({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [setIsIndexDropdownOpen]);
 
+  const step = underlying === "BANKNIFTY" || underlying === "SENSEX" ? 100 : 50;
+  const spot = Number(currentAsset?.spot || 24000);
+  const atm = Math.round(spot / step) * step;
+  const strikesLadder = [
+    atm - 2 * step,
+    atm - step,
+    atm,
+    atm + step,
+    atm + 2 * step
+  ];
+
   return (
-    <div>
+    <div className="space-y-3">
+      {/* 1-Click Institutional ATM Strike Ladder & Quick Reversal Deck */}
+      <div className="p-3 rounded-2xl bg-black/40 border border-white/10 space-y-2 shadow-inner">
+        <div className="flex items-center justify-between text-[11px] font-mono flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <span className="text-white font-extrabold uppercase tracking-wider flex items-center gap-1.5">
+              <span>🎯</span>
+              <span>1-CLICK ATM STRIKE LADDER</span>
+            </span>
+            <span className="text-[10px] text-cyan-300 bg-cyan-500/15 border border-cyan-500/30 px-2 py-0.5 rounded-full font-bold">
+              Spot: ₹{spot.toLocaleString("en-IN", { maximumFractionDigits: 1 })}
+            </span>
+          </div>
+
+          {handleQuickFlipOptionType && (
+            <button
+              type="button"
+              onClick={handleQuickFlipOptionType}
+              className="px-2.5 py-1 rounded-lg font-mono font-bold text-[10px] bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200 border border-indigo-500/40 flex items-center gap-1.5 transition cursor-pointer active:scale-95 shadow-sm"
+              title="1-Tap Quick Flip: Inverts market sentiment (CE ⇄ PE), resets strike to ATM, and auto-calibrates ₹250 stop loss."
+            >
+              <Zap className="w-3 h-3 text-indigo-300 fill-current" />
+              <span>⚡ Quick Flip ({optionType === "CALL" ? "CE ➔ PE" : "PE ➔ CE"})</span>
+            </button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-5 gap-1.5 sm:gap-2">
+          {strikesLadder.map((k) => {
+            const isSelected = strikePrice === k;
+            const isAtm = k === atm;
+            let moneyness = isAtm ? "★ ATM" : "";
+            let isItm = false;
+            if (!isAtm) {
+              if (optionType === "CALL") {
+                isItm = k < atm;
+                moneyness = isItm ? `ITM ${Math.abs(k - atm) / step}` : `OTM ${Math.abs(k - atm) / step}`;
+              } else {
+                isItm = k > atm;
+                moneyness = isItm ? `ITM ${Math.abs(k - atm) / step}` : `OTM ${Math.abs(k - atm) / step}`;
+              }
+            }
+
+            return (
+              <button
+                key={k}
+                type="button"
+                onClick={() => {
+                  soundEngine?.playTabSwitchTone?.();
+                  handleManualInputFocus?.();
+                  setStrikePrice(k);
+                }}
+                className={clsx(
+                  "p-2 sm:p-2.5 rounded-xl text-center border transition-all cursor-pointer flex flex-col items-center justify-center gap-0.5 active:scale-95",
+                  isSelected
+                    ? "bg-cyan-500/25 border-cyan-400 text-white shadow-[0_0_12px_rgba(6,182,212,0.4)] ring-1 ring-cyan-400/50"
+                    : isAtm
+                      ? "bg-white/[0.05] border-white/20 text-cyan-200 hover:bg-white/[0.08]"
+                      : "bg-white/[0.02] border-white/5 text-slate-400 hover:text-slate-200 hover:bg-white/[0.05]"
+                )}
+              >
+                <span className="font-mono text-xs sm:text-sm font-black">{k}</span>
+                <span className={clsx(
+                  "text-[8.5px] font-mono uppercase px-1.5 py-0.2 rounded font-extrabold tracking-tight",
+                  isSelected
+                    ? "bg-cyan-400 text-slate-950 font-black"
+                    : isAtm
+                      ? "bg-cyan-500/20 text-cyan-300"
+                      : isItm
+                        ? "bg-emerald-500/15 text-emerald-300"
+                        : "bg-slate-800 text-slate-400"
+                )}>
+                  {moneyness}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 mb-1.5">
         <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
           2️⃣ Contract Parameters &amp; Sizing
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
+          {underlying === "SENSEX" ? (
+            <button
+              type="button"
+              onClick={() => {
+                setStopLoss(Number(Math.max(0.05, entryPrice - 12.5).toFixed(2)));
+                setTargetPrice(Number((entryPrice + 25.0).toFixed(2)));
+              }}
+              className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 text-[10px] font-mono font-bold transition flex items-center gap-1 shadow-sm cursor-pointer"
+              title="SENSEX Lot Size 20: Allows 12.5 pt stop with exact ₹250 risk (3x breathing room vs NIFTY)"
+            >
+              <ShieldCheck className="w-3 h-3 text-emerald-400" />
+              <span>🛡️ SENSEX 12.5pt (₹250 Risk)</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                const slDist = underlying === "BANKNIFTY" ? 8.5 : 4.0;
+                const tpDist = underlying === "BANKNIFTY" ? 17.0 : 8.0;
+                setStopLoss(Number(Math.max(0.05, entryPrice - slDist).toFixed(2)));
+                setTargetPrice(Number((entryPrice + tpDist).toFixed(2)));
+              }}
+              className="px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-[10px] font-mono font-bold transition flex items-center gap-1 shadow-sm cursor-pointer"
+              title={`${underlying} Lot Size ${lotSize}: ₹250 risk limits stop to ${underlying === "BANKNIFTY" ? "8.5" : "4.0"} pts (High Friction Drag)`}
+            >
+              <ShieldAlert className="w-3 h-3 text-amber-400" />
+              <span>⚠️ Micro-Stop ({underlying === "BANKNIFTY" ? "8.5pt" : "4.0pt"} · ₹250)</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => {
-              const slDist = underlying === "SENSEX" ? 12.5 : underlying === "BANKNIFTY" ? 8.5 : 4.0;
-              const tpDist = underlying === "SENSEX" ? 25.0 : underlying === "BANKNIFTY" ? 17.0 : 8.0;
-              setStopLoss(Number((entryPrice - slDist).toFixed(2)));
+              const slDist = underlying === "SENSEX" ? 25.0 : underlying === "BANKNIFTY" ? 18.0 : 10.0;
+              const tpDist = underlying === "SENSEX" ? 50.0 : underlying === "BANKNIFTY" ? 36.0 : 20.0;
+              setStopLoss(Number(Math.max(0.05, entryPrice - slDist).toFixed(2)));
               setTargetPrice(Number((entryPrice + tpDist).toFixed(2)));
             }}
             className="px-2.5 py-1 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/30 text-cyan-300 text-[10px] font-mono font-bold transition flex items-center gap-1 shadow-sm cursor-pointer"
-            title="Calibrate exact ₹250 SL / ₹500 TP for ₹10k account"
+            title="15m Multi-Candle Structure Setup (Friction < 8%)"
           >
             <Sparkles className="w-3 h-3 text-cyan-300" />
-            <span>🏛️ ₹10k Greeks Rule</span>
+            <span>🏛️ 15m Structure Setup</span>
           </button>
         </div>
       </div>
@@ -161,7 +283,12 @@ export function ContractSizingInputs({
         <div className="space-y-1">
           <div className="flex items-center justify-between">
             <label className="text-slate-400 font-medium">Entry Price (₹)</label>
-            <span className="text-[10px] font-mono text-cyan-400 font-bold">{underlying} {strikePrice}</span>
+            <span
+              className="text-[10px] font-mono text-cyan-400 font-bold"
+              title={`Total Trade Capital: ₹${Number(entryPrice || 0).toFixed(2)} × ${lots * lotSize} Qty = ₹${(Number(entryPrice || 0) * lots * lotSize).toFixed(2)}`}
+            >
+              Total: ₹{Math.round(Number(entryPrice || 0) * lots * lotSize).toLocaleString("en-IN")} ({Number(entryPrice || 0)} × {lots * lotSize})
+            </span>
           </div>
           <input
             type="number"
@@ -180,7 +307,10 @@ export function ContractSizingInputs({
         <div className="space-y-1">
           <div className="flex items-center justify-between">
             <label className="text-slate-400 font-medium">Lots (Count)</label>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-mono text-slate-300 font-semibold" title={`1 Lot = ${lotSize} Shares/Contracts`}>
+                {lots * lotSize} Qty ({lotSize}/lot)
+              </span>
               {[1, 2, 5].map((l) => (
                 <button
                   key={l}

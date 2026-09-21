@@ -42,10 +42,10 @@ export async function handleAutoDeploy(res) {
 
     const entryPrice = Math.round(optionLtp * 20) / 20;
     const isNifty = symbol === "NIFTY";
-    // Institutional 1:2.25 R:R to outrun friction & slippage:
-    // 8.00 pts SL (₹520 risk on 1 lot) / 18.00 pts Target (₹1,170 reward on 1 lot)
-    const slBuffer = isNifty ? 8.00 : Math.max(12.00, Math.round((entryPrice * 0.10) * 20) / 20);
-    const tpBuffer = isNifty ? 18.00 : Math.max(26.00, Math.round((entryPrice * 0.225) * 20) / 20);
+    // Manikandan Strict Capital Protection Invariant:
+    // ₹250 risk per trade (3.85 pts on 65 qty) / ₹500 reward per trade (7.70 pts on 65 qty) -> Exact 1:2.00 R:R
+    const slBuffer = isNifty ? (Math.round((250 / 65) * 20) / 20) : Math.max(8.00, Math.round((250 / 30) * 20) / 20);
+    const tpBuffer = isNifty ? (Math.round((500 / 65) * 20) / 20) : Math.max(16.00, Math.round((500 / 30) * 20) / 20);
     const stopLoss = Math.max(0.05, Math.round((entryPrice - slBuffer) * 20) / 20);
     const targetPrice = Math.round((entryPrice + tpBuffer) * 20) / 20;
 
@@ -59,7 +59,7 @@ export async function handleAutoDeploy(res) {
       targetPrice,
       quantity: 1,
       lotSize: 65,
-      personalNotes: `UPSTOX_TOKEN:${tokenKey} Institutional 1:2.25 R:R Scalp (₹520 SL / ₹1,170 TP · Friction Protected)`
+      personalNotes: `UPSTOX_TOKEN:${tokenKey} Institutional 1:2.00 R:R Scalp (₹250 SL / ₹500 TP · Manikandan Capital Protection)`
     });
 
     ensurePaperEngineStarted();

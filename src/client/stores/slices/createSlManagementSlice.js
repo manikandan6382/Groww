@@ -73,11 +73,20 @@ export const createSlManagementSlice = (set, get) => ({
         const frictionPts = Math.max(1.50, Number((estimatedCharges / units + 0.30).toFixed(2)));
         const trueBePrice = isShort ? (entry - frictionPts) : (entry + frictionPts);
         
+        // Guard: Cannot lock Breakeven if trade is currently in a loss!
+        if (typeof currentLtp === "number" && currentLtp > 0) {
+          const inLoss = isShort ? (currentLtp >= entry) : (currentLtp <= entry);
+          if (inLoss) {
+            console.warn("Cannot lock Breakeven while trade is currently in a loss.");
+            return t;
+          }
+        }
+
         let targetSl = trueBePrice;
         if (typeof currentLtp === "number" && currentLtp > 0) {
           targetSl = isShort
-            ? (currentLtp >= trueBePrice ? Math.min(entry, currentLtp + 0.30) : trueBePrice)
-            : (currentLtp <= trueBePrice ? Math.max(entry, currentLtp - 0.30) : trueBePrice);
+            ? Math.max(trueBePrice, Number((currentLtp + 0.30).toFixed(2)))
+            : Math.min(trueBePrice, Number((currentLtp - 0.30).toFixed(2)));
         }
 
         const safeSl = isShort ? Math.max(currentTp + 1.0, targetSl) : Math.min(currentTp - 1.0, targetSl);

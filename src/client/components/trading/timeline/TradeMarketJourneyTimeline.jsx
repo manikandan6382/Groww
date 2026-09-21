@@ -31,6 +31,7 @@ export function TradeMarketJourneyTimeline({
   const scrubber = useTimelineScrubber({
     renderedPoints: coords.renderedPoints,
     containerRef,
+    entryPoint: coords.entryPoint,
     peakPoint: coords.peakPoint,
     troughPoint: coords.troughPoint,
     exitPoint: coords.exitPoint,
@@ -58,7 +59,10 @@ export function TradeMarketJourneyTimeline({
   const diagnostics = useTimelineDiagnostics({
     trade,
     allPoints: coords.allPoints,
+    entryPoint: coords.entryPoint,
     peakPoint: coords.peakPoint,
+    troughPoint: coords.troughPoint,
+    exitPoint: coords.exitPoint,
     flightScope,
     currentActivePoint: scrubber.currentActivePoint
   });

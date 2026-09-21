@@ -17,12 +17,19 @@ export const PerformanceStudioSection = React.memo(function PerformanceStudioSec
   return (
     <div className="space-y-6">
       <StudioHeaderTelemetry
-        paperTradesCount={data.paperTradesCount}
-        selectedDay={data.selectedDay}
-        winRatePercent={data.winRatePercent}
+        currentDatasetLabel={data.currentDataset?.label}
+        paperPnlRange={data.paperPnlRange}
+        totalRealizedPnl={data.totalRealizedPnl}
+        winRate={data.winRate}
+        winCount={data.winCount}
+        lossCount={data.lossCount}
+        totalTradesCount={data.totalTradesCount}
         profitFactor={data.profitFactor}
-        isPureWins={data.isPureWins}
-        soundEngine={data.soundEngine}
+        expectancyStr={data.expectancyStr}
+        totalFriction={data.totalFriction}
+        frictionDragPct={data.frictionDragPct}
+        disciplineTaxRupees={data.disciplineTaxRupees}
+        rawStrategyAlphaRupees={data.rawStrategyAlphaRupees}
       />
 
       <SessionCardsDeck
@@ -47,19 +54,23 @@ export const PerformanceStudioSection = React.memo(function PerformanceStudioSec
       />
 
       <DisciplineExpectancyMatrix
-        matrixStrategy={data.matrixStrategy}
-        setMatrixStrategy={data.setMatrixStrategy}
-        matrixTimeframe={data.matrixTimeframe}
-        setMatrixTimeframe={data.setMatrixTimeframe}
-        matrixTradesCount={data.matrixTradesCount}
-        matrixGrossWins={data.matrixGrossWins}
-        matrixGrossLosses={data.matrixGrossLosses}
-        matrixProfitFactor={data.matrixProfitFactor}
+        matrixTotalCount={data.matrixTotalCount}
+        matrixWinsCount={data.matrixWinsCount}
+        matrixLossesCount={data.matrixLossesCount}
+        currentDatasetLabel={data.currentDataset?.label}
+        paperPnlRange={data.paperPnlRange}
+        matrixWinRate={data.matrixWinRate}
         isMatrixPureWins={data.isMatrixPureWins}
+        matrixProfitFactor={data.matrixProfitFactor}
         avgRRValue={data.avgRRValue}
-        calculatedRRs={data.calculatedRRs}
+        avgRealizedR={data.avgRealizedR}
+        quantExpectancy={data.quantExpectancy}
+        expectancyStr={data.expectancyStr}
+        rBuckets={data.rBuckets}
+        maxDrawdownRupees={data.maxDrawdownRupees}
+        quarterKellyPct={data.quarterKellyPct}
+        recommendedRiskRupees={data.recommendedRiskRupees}
         matrixBestStreak={data.matrixBestStreak}
-        soundEngine={data.soundEngine}
       />
 
       <PostMortemAlphaReview
@@ -70,16 +81,30 @@ export const PerformanceStudioSection = React.memo(function PerformanceStudioSec
         setPmCalendarOpen={data.setPmCalendarOpen}
         bestAlert={data.bestAlert}
         worstAlert={data.worstAlert}
+        onPromoteToJournal={data.handlePromoteToJournal}
+        promotedTradeIds={data.promotedTradeIds}
+        promoteSuccessToast={data.promoteSuccessToast}
         soundEngine={data.soundEngine}
       />
 
       <GraduationGateCard
         practiceCompleted={data.practiceCompleted}
+        distinctSessionsCount={data.distinctSessionsCount}
+        sessionsTarget={data.sessionsTarget}
         gateProfitFactor={data.gateProfitFactor}
         isPureWins={data.isPureWins}
         gateDisciplinePct={data.gateDisciplinePct}
         sampleSizeProgress={data.sampleSizeProgress}
         profitFactor={data.profitFactor}
+        totalFriction={data.totalFriction}
+        frictionDragPct={data.frictionDragPct}
+        expectancyPerTrade={data.expectancyPerTrade}
+        consistencyScorePct={data.consistencyScorePct}
+        isConsistencyPassed={data.isConsistencyPassed}
+        syntheticSlippageTotal={data.syntheticSlippageTotal}
+        stressedProfitFactor={data.stressedProfitFactor}
+        stressedExpectancy={data.stressedExpectancy}
+        isSlippageImmune={data.isSlippageImmune}
       />
 
       <LuxuryDateRangePicker

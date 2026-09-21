@@ -41,7 +41,6 @@ export function TimelineSvgCanvas({
       onClick={scrubber.handleClickCanvas}
       onTouchStart={scrubber.handleTouch}
       onTouchMove={scrubber.handleTouch}
-      onMouseLeave={scrubber.handleEndScrub}
     >
       <SvgDefs
         profitAreaGradId={profitAreaGradId}
@@ -74,6 +73,8 @@ export function TimelineSvgCanvas({
         netZeroY={netZeroY}
         entryPrice={entryPrice}
         isMobile={coords.isMobile}
+        entryPoint={coords.entryPoint}
+        exitPoint={coords.exitPoint}
       />
 
       <SvgVolumeHistogram
@@ -112,6 +113,8 @@ export function TimelineSvgCanvas({
       <SvgMilestoneMarkers
         renderedPoints={renderedPoints}
         entryPrice={entryPrice}
+        entryPoint={coords.entryPoint}
+        exitPoint={coords.exitPoint}
         peakPoint={coords.peakPoint}
         peakPrice={diagnostics.peakPrice}
         troughPoint={coords.troughPoint}

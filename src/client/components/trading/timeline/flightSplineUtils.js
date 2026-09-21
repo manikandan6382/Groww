@@ -25,7 +25,7 @@ export function calculateDirectionalExcursions(direction, entryPrice, candles) {
   return { mfe, mae, maxPrice: rawMax, minPrice: rawMin };
 }
 
-// Silky cubic-bezier spline interpolation
+// Silky cubic-bezier spline interpolation with monotonicity slope clamping to prevent overshoot
 export function calculateSplinePath(points) {
   if (!points || points.length < 2) return '';
   let d = `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
@@ -35,10 +35,17 @@ export function calculateSplinePath(points) {
     const p2 = points[i + 1];
     const p3 = points[i + 2 < points.length ? i + 2 : i + 1];
 
-    const cp1x = p1.x + (p2.x - p0.x) / 6;
-    const cp1y = p1.y + (p2.y - p0.y) / 6;
-    const cp2x = p2.x - (p3.x - p1.x) / 6;
-    const cp2y = p2.y - (p3.y - p1.y) / 6;
+    let cp1x = p1.x + (p2.x - p0.x) / 6;
+    let cp1y = p1.y + (p2.y - p0.y) / 6;
+    let cp2x = p2.x - (p3.x - p1.x) / 6;
+    let cp2y = p2.y - (p3.y - p1.y) / 6;
+
+    // Clamp control points between p1 and p2 to eliminate overshoot across sharp session moves
+    const minY = Math.min(p1.y, p2.y);
+    const maxY = Math.max(p1.y, p2.y);
+    const deltaY = maxY - minY;
+    cp1y = Math.max(minY - deltaY * 0.25, Math.min(maxY + deltaY * 0.25, cp1y));
+    cp2y = Math.max(minY - deltaY * 0.25, Math.min(maxY + deltaY * 0.25, cp2y));
 
     d += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
   }

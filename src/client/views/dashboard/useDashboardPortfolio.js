@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { extractAvailableMargin } from "../../components/trading/AssetAllocationDeck";
 import { soundEngine } from "../../utils/soundEngine";
 import { openBrokerAuthPopup } from "../../utils/brokerPopupAuth";
+import { useTradingStore } from "../../stores/useTradingStore";
 
 export function useDashboardPortfolio() {
   const [portfolio, setPortfolio] = useState(null);
@@ -10,21 +11,42 @@ export function useDashboardPortfolio() {
   const [lastRefreshedAt, setLastRefreshedAt] = useState(new Date());
   const [fetchError, setFetchError] = useState(null);
 
+  const abortControllerRef = useRef(null);
+
   const loadPortfolio = useCallback(async (isManual = false) => {
+    // Abort previous in-flight request if another refresh is triggered
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
       if (isManual) setRefreshing(true);
-      const res = await fetch(`/api/portfolio${isManual ? "?refresh=true" : ""}`);
+      const res = await fetch(`/api/portfolio${isManual ? "?refresh=true" : ""}`, {
+        signal: controller.signal,
+      });
       if (res.ok) {
         const data = await res.json();
         setPortfolio(data);
         setFetchError(null);
         setLastRefreshedAt(new Date());
+        if (data) {
+          useTradingStore.getState().setBrokerStatus({
+            kiteConnected: Boolean(!data.isExpired && !data.isKiteOffline),
+            kiteExpired: Boolean(data.isExpired),
+            kiteUserName: data.userName || "",
+            kiteUserId: data.userId || ""
+          });
+        }
         if (isManual) soundEngine.playSuccessTone();
       } else {
         throw new Error(`HTTP ${res.status}`);
       }
     } catch (err) {
-      console.warn("Live portfolio sync notice:", err.message);
+      if (err.name === "AbortError") {
+        return; // Clean cancellation, do not trigger error states
+      }
       setFetchError(err.message);
     } finally {
       setLoading(false);
@@ -43,15 +65,34 @@ export function useDashboardPortfolio() {
     return () => window.removeEventListener("message", handleAuthMessage);
   }, [loadPortfolio]);
 
-  // Exponential backoff / circuit breaker: Pause 15s polling if token is expired
+  // Tab-Visibility Aware Smart Polling & Circuit Breaker:
+  // - Pauses when tab is hidden (zero background resource waste)
+  // - Immediately resyncs when tab becomes visible
+  // - Pauses if session token is expired
   useEffect(() => {
     loadPortfolio();
+
+    const handleVisibilityChange = () => {
+      if (!document.hidden && !portfolio?.isExpired) {
+        loadPortfolio(false);
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
     const interval = setInterval(() => {
-      if (!portfolio?.isExpired) {
-        loadPortfolio();
+      if (!document.hidden && !portfolio?.isExpired) {
+        loadPortfolio(false);
       }
     }, 15000);
-    return () => clearInterval(interval);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      clearInterval(interval);
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
   }, [loadPortfolio, portfolio?.isExpired]);
 
   const isKiteOffline = Boolean(portfolio?.isKiteOffline);
@@ -62,6 +103,23 @@ export function useDashboardPortfolio() {
 
   // Dynamic Container Hygiene: Render actual holdings, or empty array if offline/empty
   const holdings = Array.isArray(portfolio?.holdings) ? portfolio.holdings : [];
+
+  // Live Intraday & F&O Positions Normalization
+  const rawPositions = portfolio?.positions;
+  const positions = useMemo(() => {
+    if (Array.isArray(rawPositions?.net)) return rawPositions.net;
+    if (Array.isArray(rawPositions)) return rawPositions;
+    return [];
+  }, [rawPositions]);
+
+  const openPositions = useMemo(() => {
+    return positions.filter((p) => Number(p.quantity || 0) !== 0);
+  }, [positions]);
+
+  const positionsTotalM2m = useMemo(() => {
+    return positions.reduce((acc, p) => acc + Number(p.m2m || p.pnl || 0), 0);
+  }, [positions]);
+
   const availableMargin = extractAvailableMargin(portfolio?.margins);
   const utilisedMargin = Number(portfolio?.margins?.utilised?.debits ?? portfolio?.margins?.utilised?.m2m_realised ?? 0);
   const netMargin = Number(portfolio?.margins?.net ?? (availableMargin + utilisedMargin));
@@ -105,6 +163,10 @@ export function useDashboardPortfolio() {
     fetchError,
     loadPortfolio,
     holdings,
+    positions,
+    openPositions,
+    openPositionsCount: openPositions.length,
+    positionsTotalM2m,
     margins,
     totalCurrentValue,
     totalInvested,

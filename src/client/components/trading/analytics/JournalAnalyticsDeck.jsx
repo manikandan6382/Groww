@@ -1,9 +1,9 @@
 import React, { useMemo } from "react";
 import { useTradingStore } from "../../../stores/useTradingStore";
-import { filterActiveTrades, aggregateDailySessions } from "./sessionAggregationEngine";
+import { filterActiveTrades } from "./sessionAggregationEngine";
 import { aggregateStrategyMetrics } from "./strategyEdgeEngine";
-import { DailySessionsDeck } from "./DailySessionsDeck";
 import { StrategyLeaderboardDeck } from "./StrategyLeaderboardDeck";
+import { PlaybookRiskDistributionCard } from "./PlaybookRiskDistributionCard";
 
 export function JournalAnalyticsDeck() {
   const { 
@@ -12,7 +12,7 @@ export function JournalAnalyticsDeck() {
     journalCustomStart, 
     journalCustomEnd,
     selectedStrategyFilter,
-    setSelectedStrategyFilter 
+    setSelectedStrategyFilter
   } = useTradingStore();
 
   const activeTrades = useMemo(
@@ -20,35 +20,20 @@ export function JournalAnalyticsDeck() {
     [journalTrades, journalRange, journalCustomStart, journalCustomEnd]
   );
 
-  const dailySessions = useMemo(
-    () => aggregateDailySessions(activeTrades),
-    [activeTrades]
-  );
-
   const dynamicStrategies = useMemo(
     () => aggregateStrategyMetrics(activeTrades),
     [activeTrades]
   );
 
-  const rangeLabel = journalRange === "today" 
-    ? "Today" 
-    : journalRange === "week" 
-    ? "This Week" 
-    : journalRange === "month" 
-    ? "This Month" 
-    : journalRange === "custom" 
-    ? `${journalCustomStart} to ${journalCustomEnd}` 
-    : "All Time";
-
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      <DailySessionsDeck
-        dailySessions={dailySessions}
-        rangeLabel={rangeLabel}
-        journalRange={journalRange}
+    <div id="journal-playbook-deck" data-deck="journal-playbook" className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <StrategyLeaderboardDeck
+        dynamicStrategies={dynamicStrategies}
+        selectedStrategyFilter={selectedStrategyFilter}
+        onSelectStrategy={setSelectedStrategyFilter}
       />
 
-      <StrategyLeaderboardDeck
+      <PlaybookRiskDistributionCard
         dynamicStrategies={dynamicStrategies}
         selectedStrategyFilter={selectedStrategyFilter}
         onSelectStrategy={setSelectedStrategyFilter}

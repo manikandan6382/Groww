@@ -1,10 +1,35 @@
 import fs from "node:fs";
+import crypto from "node:crypto";
 import { renderUpstoxCallbackHtml, renderKiteCallbackHtml } from "./htmlTemplates.js";
 import { exchangeKiteRequestToken, exchangeUpstoxCode } from "./oauthExchange.js";
 import { sendJson } from "./staticServer.js";
 
+// Top-level module store for CSRF OAuth states (TDZ safe)
+const oauthStates = new Map();
+
+export function createOAuthState() {
+  const cutoff = Date.now() - 15 * 60 * 1000;
+  for (const [key, timestamp] of oauthStates.entries()) {
+    if (timestamp < cutoff) oauthStates.delete(key);
+  }
+  const state = crypto.randomBytes(16).toString("hex");
+  oauthStates.set(state, Date.now());
+  return state;
+}
+
+export function validateOAuthState(state) {
+  if (!state) return true; // Graceful fallback
+  const timestamp = oauthStates.get(state);
+  if (timestamp) {
+    oauthStates.delete(state);
+    return (Date.now() - timestamp) <= 15 * 60 * 1000;
+  }
+  return false;
+}
+
 export async function sendBrokerStatus(res, sessionFile, upstoxSessionFile) {
   let kiteConnected = false;
+  let kiteExpired = false;
   let kiteUserName = "";
   let kiteUserId = "";
   let kiteAgeMinutes = null;
@@ -14,9 +39,18 @@ export async function sendBrokerStatus(res, sessionFile, upstoxSessionFile) {
       kiteAgeMinutes = Math.round((Date.now() - stat.mtimeMs) / 60000);
       const raw = JSON.parse(fs.readFileSync(sessionFile, "utf8"));
       if (raw.access_token) {
-        kiteConnected = true;
         kiteUserName = raw.user_name || "";
         kiteUserId = raw.user_id || "";
+
+        // Kite tokens reset daily at 06:00 AM IST per SEBI protocol (00:30 UTC)
+        const dateToCheck = raw.saved_at ? new Date(raw.saved_at) : (raw.login_time ? new Date(raw.login_time) : new Date(stat.mtimeMs));
+        const istNow = new Date(Date.now() + 5.5 * 3600 * 1000);
+        const istCutoff = new Date(Date.UTC(istNow.getUTCFullYear(), istNow.getUTCMonth(), istNow.getUTCDate(), 6, 0, 0, 0));
+        if (istNow.getUTCHours() < 6) istCutoff.setUTCDate(istCutoff.getUTCDate() - 1);
+        const utcCutoffMs = istCutoff.getTime() - 5.5 * 3600 * 1000;
+
+        kiteExpired = dateToCheck.getTime() < utcCutoffMs;
+        kiteConnected = !kiteExpired;
       }
     } catch { /* ignore */ }
   }
@@ -43,6 +77,7 @@ export async function sendBrokerStatus(res, sessionFile, upstoxSessionFile) {
   await sendJson(res, {
     kite: {
       connected: kiteConnected,
+      isExpired: kiteExpired,
       userName: kiteUserName,
       userId: kiteUserId,
       sessionAgeMinutes: kiteAgeMinutes,
@@ -60,9 +95,26 @@ export async function sendBrokerStatus(res, sessionFile, upstoxSessionFile) {
 export async function sendUpstoxCallback(res, url, upstoxSessionFile) {
   const code = url.searchParams.get("code") || "";
   const error = url.searchParams.get("error") || url.searchParams.get("message") || "";
+  const state = url.searchParams.get("state") || "";
   let status = "";
   let statusTone = "ok";
   let tokenSaved = false;
+
+  if (state && !validateOAuthState(state)) {
+    const upstoxClientId = process.env.UPSTOX_API_KEY || "61557114-951e-4b68-af88-e5121939f2e4";
+    const redirectUri = process.env.UPSTOX_REDIRECT_URI || "http://127.0.0.1:3003/upstox/callback";
+    const retryAuthUrl = `https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=${encodeURIComponent(upstoxClientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(createOAuthState())}`;
+
+    const body = renderUpstoxCallbackHtml({
+      isError: true,
+      tokenSaved: false,
+      error: "OAuth state parameter validation failed (expired or invalid). Please retry login.",
+      status: "",
+      retryAuthUrl,
+    });
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    return res.end(body);
+  }
 
   if (code && !error) {
     try {
@@ -78,7 +130,7 @@ export async function sendUpstoxCallback(res, url, upstoxSessionFile) {
   const isError = Boolean(error) || statusTone === "error";
   const upstoxClientId = process.env.UPSTOX_API_KEY || "61557114-951e-4b68-af88-e5121939f2e4";
   const redirectUri = process.env.UPSTOX_REDIRECT_URI || "http://127.0.0.1:3003/upstox/callback";
-  const retryAuthUrl = `https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=${encodeURIComponent(upstoxClientId)}&redirect_uri=${encodeURIComponent(redirectUri)}`;
+  const retryAuthUrl = `https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=${encodeURIComponent(upstoxClientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(createOAuthState())}`;
 
   const body = renderUpstoxCallbackHtml({ isError, tokenSaved, error, status, retryAuthUrl });
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });

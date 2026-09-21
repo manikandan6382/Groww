@@ -1,5 +1,6 @@
 import React from "react";
 import clsx from "clsx";
+import { Layers, Calendar } from "lucide-react";
 import { RollingTicker } from "../../common/RollingTicker";
 
 export function JournalStoryHeader({
@@ -8,30 +9,69 @@ export function JournalStoryHeader({
   rangeLabel,
   totalNet,
   winCount,
-  lossCount
+  lossCount,
+  deckMode = "feed",
+  setDeckMode
 }) {
+  const totalTrades = winCount + lossCount;
+  const winRate = totalTrades > 0 ? Math.round((winCount / totalTrades) * 100) : 0;
+  const avgTrade = totalTrades > 0 ? Math.round(totalNet / totalTrades) : 0;
+
   return (
-    <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-5 pb-5 border-b border-white/10">
+    <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-5 pb-5 border-b border-white/[0.08]">
       <div className="space-y-1.5">
-        <div className="flex items-center gap-2 mb-2">
+        <div className="flex items-center gap-2 mb-2 flex-wrap">
           <span className="text-[10px] font-extrabold uppercase tracking-wider text-cyan-400 bg-cyan-500/10 px-2.5 py-0.5 rounded-full border border-cyan-500/20 whitespace-nowrap shadow-sm">
             EVIDENCE-AUDITED FORENSICS
           </span>
           <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20 whitespace-nowrap shadow-sm">
             {filteredCount} of {dateFilteredCount} Trade Stories ({rangeLabel})
           </span>
+
+          {setDeckMode && (
+            <div className="flex items-center p-0.5 rounded-xl bg-black/40 border border-white/10 text-xs ml-auto sm:ml-2">
+              <button
+                type="button"
+                onClick={() => setDeckMode("feed")}
+                className={clsx(
+                  "px-2.5 py-1 rounded-lg font-bold text-[10px] transition-all cursor-pointer flex items-center gap-1.5",
+                  deckMode === "feed" 
+                    ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm" 
+                    : "text-slate-400 hover:text-slate-200"
+                )}
+                title="View all trades in continuous chronological feed"
+              >
+                <Layers className="w-3 h-3" />
+                <span>Feed</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeckMode("sessions")}
+                className={clsx(
+                  "px-2.5 py-1 rounded-lg font-bold text-[10px] transition-all cursor-pointer flex items-center gap-1.5",
+                  deckMode === "sessions" 
+                    ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm" 
+                    : "text-slate-400 hover:text-slate-200"
+                )}
+                title="Group trades by calendar trading sessions"
+              >
+                <Calendar className="w-3 h-3" />
+                <span>Session Grouped</span>
+              </button>
+            </div>
+          )}
         </div>
         <h2 className="text-lg sm:text-xl font-black text-white tracking-tight">
           Every Trade's Story &amp; Audit Log
         </h2>
-        <p className="text-xs text-slate-400 leading-relaxed max-w-2xl mt-1">
+        <p className="text-xs text-slate-400 leading-relaxed max-w-2xl mt-0.5">
           Full 4-Act autopsy with Objective 12-Filter Quality Scoring, dynamic price action sparklines, and zero self-delusion bias.
         </p>
       </div>
 
       {/* Realized Summary Strip with Apple-Grade Rolling Odometer Ticker */}
       <div className="flex items-center gap-3 text-xs flex-wrap sm:flex-nowrap flex-shrink-0">
-        <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-xl text-right shadow-sm min-w-[140px]">
+        <div className="p-3 rounded-2xl bg-[#0f1422]/80 border border-white/[0.08] backdrop-blur-xl text-right shadow-[0_4px_20px_rgba(0,0,0,0.3)] min-w-[140px]">
           <span className="text-[10px] text-slate-400 font-semibold block mb-0.5">
             Total Net Realized ({rangeLabel})
           </span>
@@ -46,12 +86,20 @@ export function JournalStoryHeader({
           </div>
         </div>
 
-        <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/10 backdrop-blur-xl text-right shadow-sm min-w-[110px]">
+        <div className="p-3 rounded-2xl bg-[#0f1422]/80 border border-white/[0.08] backdrop-blur-xl text-right shadow-[0_4px_20px_rgba(0,0,0,0.3)] min-w-[110px]">
           <span className="text-[10px] text-slate-400 font-semibold block mb-0.5">Win/Stop Record</span>
           <div className="font-mono text-sm sm:text-base font-black text-cyan-400 flex items-center justify-end gap-1">
             <RollingTicker value={winCount} suffix="W" decimalPlaces={0} className="text-emerald-400 font-black" />
             <span className="text-slate-500 font-normal">·</span>
             <RollingTicker value={lossCount} suffix="L" decimalPlaces={0} className="text-rose-400 font-black" />
+          </div>
+        </div>
+
+        <div className="p-3 rounded-2xl bg-[#0f1422]/80 border border-white/[0.08] backdrop-blur-xl text-right shadow-[0_4px_20px_rgba(0,0,0,0.3)] min-w-[100px] hidden md:block">
+          <span className="text-[10px] text-slate-400 font-semibold block mb-0.5">Expectancy</span>
+          <div className={clsx("font-mono text-sm sm:text-base font-black flex justify-end items-baseline", avgTrade >= 0 ? "text-cyan-300" : "text-amber-400")}>
+            <span>{avgTrade >= 0 ? "+" : ""}₹{avgTrade}</span>
+            <span className="text-[10px] text-slate-500 font-normal ml-1">({winRate}%)</span>
           </div>
         </div>
       </div>

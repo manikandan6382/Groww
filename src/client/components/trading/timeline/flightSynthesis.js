@@ -1,6 +1,6 @@
-import { snapTick } from './flightSplineUtils';
-import { resolveFlightScopeWindow } from './flightTimeUtils';
-import { getMarketSessionTimestamps } from './flightSessionTimestamps';
+import { snapTick } from './flightSplineUtils.js';
+import { resolveFlightScopeWindow } from './flightTimeUtils.js';
+import { getMarketSessionTimestamps } from './flightSessionTimestamps.js';
 
 function computePriceAlongCurve(progress, entryPrice, exitPrice, peakPrice, dipPrice, scenarioVariant, isTarget, isStop) {
   if (progress === 0) return entryPrice;
@@ -45,14 +45,16 @@ export function synthesizeMarketFlightPath(trade, scenarioVariant = 'rollercoast
   const closeReason = String(trade.closeReason || '');
   const terminalIntrinsic = Number(trade.terminalIntrinsic ?? (closeReason.includes('STOP') ? 0.0 : exitPrice * 1.15));
 
-  const fromTime = new Date(trade.entryDatetime || Date.now() - 20 * 60000).getTime();
-  const exitTime = new Date(trade.exitDatetime || Date.now()).getTime();
+  const entryTime = new Date(trade.entryDatetime || trade.timestamp || Date.now() - 20 * 60000).getTime();
+  const exitTime = new Date(trade.exitDatetime || trade.closedAt || Date.now()).getTime();
 
-  const scopeWindow = resolveFlightScopeWindow(fromTime, exitTime, flightScope, trade);
+  const scopeWindow = resolveFlightScopeWindow(entryTime, exitTime, flightScope, trade);
+  const fromTime = scopeWindow.fromTime;
   const toTime = scopeWindow.toTime;
 
   const isTarget = closeReason.includes('TARGET') || scenarioVariant === 'target';
   const isStop = closeReason.includes('STOP') || exitPrice <= (stopLoss || entryPrice * 0.95);
+  const isShort = trade.direction === 'SHORT';
 
   let peakPrice;
   let dipPrice;
@@ -72,50 +74,66 @@ export function synthesizeMarketFlightPath(trade, scenarioVariant = 'rollercoast
     dipPrice = stopLoss ? entryPrice - Math.abs(entryPrice - stopLoss) * 0.2 : entryPrice * 0.98;
   }
 
-  const candles = [];
-  let prevClose = entryPrice;
   const isExtended = flightScope !== 'scalp';
+  const hasPreTrade = isExtended && fromTime < (entryTime - 60000);
+  const preSteps = hasPreTrade ? Math.min(18, Math.max(8, Math.round((entryTime - fromTime) / (30 * 60000)) || 10)) : 0;
   const scalpSteps = isExtended ? 16 : 28;
   const postSteps = isExtended ? (scopeWindow.postSteps || 18) : 0;
-  const totalSteps = scalpSteps + postSteps;
-  const scalpStepMs = Math.max(1000, (exitTime - fromTime) / scalpSteps);
+
+  const preTimestamps = hasPreTrade ? getMarketSessionTimestamps(fromTime, entryTime, preSteps + 1) : [];
+  const scalpStepMs = Math.max(1000, (exitTime - entryTime) / scalpSteps);
   const postStepMs = postSteps > 0 ? Math.max(1000, (toTime - exitTime) / postSteps) : 0;
   const postTimestamps = isExtended ? getMarketSessionTimestamps(exitTime, toTime, postSteps + 1) : [];
 
-  for (let i = 0; i <= totalSteps; i++) {
-    let t;
-    let p;
-    let isExitPoint = false;
-    let isPostExit = false;
+  const morningOpenPrice = entryPrice + (isShort ? 1 : -1) * Math.max(1.5, entryPrice * 0.015);
+  const candles = [];
+  let prevClose = hasPreTrade ? morningOpenPrice : entryPrice;
 
-    if (i <= scalpSteps) {
-      const progress = i / scalpSteps;
-      t = fromTime + i * scalpStepMs;
-      if (i === scalpSteps) isExitPoint = true;
-      p = computePriceAlongCurve(progress, entryPrice, exitPrice, peakPrice, dipPrice, scenarioVariant, isTarget, isStop);
-    } else {
-      isPostExit = true;
-      const postIdx = i - scalpSteps;
-      const progress = postIdx / postSteps;
-      t = postTimestamps[postIdx] ?? (exitTime + postIdx * postStepMs);
-      const tau = Math.max(0, 1 - progress);
-      const sqrtDecay = Math.sqrt(tau);
-      const thetaCrush = Math.pow(progress, 1.8);
+  // Phase 1: Pre-trade market session candles (09:15 AM to entryTime)
+  if (hasPreTrade) {
+    for (let i = 0; i < preSteps; i++) {
+      const progress = i / preSteps;
+      const t = preTimestamps[i] ?? (fromTime + (i / preSteps) * (entryTime - fromTime));
+      const p = morningOpenPrice + (entryPrice - morningOpenPrice) * Math.sin((progress * Math.PI) / 2);
 
-      if (terminalIntrinsic <= 0.05) {
-        p = Math.max(0.05, exitPrice * sqrtDecay * Math.max(0.02, 1 - thetaCrush));
-      } else {
-        p = terminalIntrinsic + (exitPrice - terminalIntrinsic) * sqrtDecay;
-      }
+      const closeVal = snapTick(p);
+      const openVal = snapTick(i === 0 ? morningOpenPrice : prevClose);
+      const wickHigh = (i % 3 === 0) ? 0.20 : 0.08;
+      const wickLow = (i % 2 === 0) ? 0.20 : 0.08;
+      const highVal = snapTick(Math.max(openVal, closeVal) + wickHigh);
+      const lowVal = snapTick(Math.min(openVal, closeVal) - wickLow);
+      const vol = Math.round(1500 + (i % 5) * 400);
+
+      candles.push({
+        time: new Date(t).toISOString(),
+        timestamp: t,
+        open: openVal,
+        high: highVal,
+        low: lowVal,
+        close: closeVal,
+        volume: vol,
+        isBullish: closeVal >= openVal,
+        isPreEntry: true
+      });
+      prevClose = closeVal;
     }
+  }
+
+  // Phase 2: Active Trade Execution Candles (entryTime to exitTime)
+  for (let i = 0; i <= scalpSteps; i++) {
+    const progress = i / scalpSteps;
+    const t = entryTime + i * scalpStepMs;
+    const isEntryPoint = (i === 0);
+    const isExitPoint = (i === scalpSteps);
+    const p = computePriceAlongCurve(progress, entryPrice, exitPrice, peakPrice, dipPrice, scenarioVariant, isTarget, isStop);
 
     const closeVal = snapTick(p);
-    const openVal = snapTick(i === 0 ? entryPrice : prevClose);
+    const openVal = snapTick(i === 0 ? (hasPreTrade ? prevClose : entryPrice) : prevClose);
     const wickHigh = (i % 3 === 0) ? 0.15 : 0.05;
     const wickLow = (i % 2 === 0) ? 0.15 : 0.05;
     const highVal = snapTick(Math.max(openVal, closeVal) + wickHigh);
     const lowVal = snapTick(Math.min(openVal, closeVal) - wickLow);
-    const vol = Math.round(1200 + (i % 6) * 320);
+    const vol = Math.round(1800 + (i % 6) * 450);
 
     candles.push({
       time: new Date(t).toISOString(),
@@ -126,10 +144,50 @@ export function synthesizeMarketFlightPath(trade, scenarioVariant = 'rollercoast
       close: closeVal,
       volume: vol,
       isBullish: closeVal >= openVal,
+      isEntryPoint,
       isExitPoint,
-      isPostExit
+      isInTrade: true
     });
     prevClose = closeVal;
+  }
+
+  // Phase 3: Post-exit Continuation Candles (exitTime to toTime)
+  if (isExtended && postSteps > 0) {
+    for (let postIdx = 1; postIdx <= postSteps; postIdx++) {
+      const progress = postIdx / postSteps;
+      const t = postTimestamps[postIdx] ?? (exitTime + postIdx * postStepMs);
+      const tau = Math.max(0, 1 - progress);
+      const sqrtDecay = Math.sqrt(tau);
+      const thetaCrush = Math.pow(progress, 1.8);
+
+      let p;
+      if (terminalIntrinsic <= 0.05) {
+        p = Math.max(0.05, exitPrice * sqrtDecay * Math.max(0.02, 1 - thetaCrush));
+      } else {
+        p = terminalIntrinsic + (exitPrice - terminalIntrinsic) * sqrtDecay;
+      }
+
+      const closeVal = snapTick(p);
+      const openVal = snapTick(prevClose);
+      const wickHigh = (postIdx % 3 === 0) ? 0.15 : 0.05;
+      const wickLow = (postIdx % 2 === 0) ? 0.15 : 0.05;
+      const highVal = snapTick(Math.max(openVal, closeVal) + wickHigh);
+      const lowVal = snapTick(Math.min(openVal, closeVal) - wickLow);
+      const vol = Math.round(1200 + (postIdx % 4) * 280);
+
+      candles.push({
+        time: new Date(t).toISOString(),
+        timestamp: t,
+        open: openVal,
+        high: highVal,
+        low: lowVal,
+        close: closeVal,
+        volume: vol,
+        isBullish: closeVal >= openVal,
+        isPostExit: true
+      });
+      prevClose = closeVal;
+    }
   }
 
   return candles;

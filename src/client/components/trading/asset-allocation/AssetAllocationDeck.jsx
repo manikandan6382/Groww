@@ -1,17 +1,39 @@
-import React from "react";
-import { PieChart, ShieldCheck } from "lucide-react";
+import React, { useState } from "react";
+import clsx from "clsx";
+import { PieChart, ShieldCheck, Scale, Activity, Layers } from "lucide-react";
+import { useTradingStore } from "../../../stores/useTradingStore";
 import { useAllocationMetrics } from "./useAllocationMetrics";
 import { AllocationDonutChart } from "./AllocationDonutChart";
 import { AllocationTelemetryBars } from "./AllocationTelemetryBars";
+import { SectorBreakdownCard } from "./SectorBreakdownCard";
+import { RebalanceEngineCard } from "./RebalanceEngineCard";
+import { soundEngine } from "../../../utils/soundEngine";
+import { FX_RATES } from "../portfolio/portfolioNavEngine";
 
-export function AssetAllocationDeck({ holdings = [], margins = {} }) {
+export function AssetAllocationDeck({
+  holdings = [],
+  margins = {},
+  currencySymbol = "₹",
+  fxRate = 1,
+}) {
+  const [activeDeckTab, setActiveDeckTab] = useState("telemetry"); // 'telemetry' | 'sectors' | 'rebalance'
+  const isPrivacyMode = useTradingStore((s) => s.isPrivacyMode);
+  const storeCurrency = useTradingStore((s) => s.portfolioCurrency || "INR");
+  const fxConfig = FX_RATES[storeCurrency] || FX_RATES.INR;
+  const activeFxRate = fxRate !== 1 ? fxRate : fxConfig.rate;
+  const activeCurrencySymbol = currencySymbol !== "₹" ? currencySymbol : fxConfig.symbol;
+
   const {
     equityValue,
     goldValue,
     cashValue,
+    total,
     items,
     maxHoldingSymbol,
     maxConcentrationPct,
+    healthScore = 94,
+    healthStatus = "Optimal",
+    healthColor = "emerald",
     equityPct,
     goldPct,
     cashPct,
@@ -20,7 +42,8 @@ export function AssetAllocationDeck({ holdings = [], margins = {} }) {
     circ,
     eqStroke,
     goldStroke,
-    cashStroke
+    cashStroke,
+    sectorMetrics,
   } = useAllocationMetrics(holdings, margins);
 
   return (
@@ -29,7 +52,7 @@ export function AssetAllocationDeck({ holdings = [], margins = {} }) {
       <div className="absolute top-0 right-0 w-[260px] h-[260px] bg-cyan-500/[0.06] rounded-full blur-[80px] pointer-events-none -mt-20 -mr-20" />
       <div className="absolute bottom-0 left-0 w-[240px] h-[240px] bg-emerald-500/[0.05] rounded-full blur-[70px] pointer-events-none -mb-16 -ml-16" />
 
-      {/* 1. Header: Master Title & Health Score Pill */}
+      {/* 1. Header: Master Title & Mode Switcher */}
       <div className="relative flex items-center justify-between gap-3 border-b border-white/[0.08] pb-4">
         <div className="flex items-center gap-2.5 min-w-0 flex-shrink-0">
           <div className="w-8 h-8 rounded-xl bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center text-cyan-300 shadow-[0_0_12px_rgba(6,182,212,0.25)] flex-shrink-0">
@@ -40,10 +63,61 @@ export function AssetAllocationDeck({ holdings = [], margins = {} }) {
             <p className="text-[10px] text-slate-400 font-mono whitespace-nowrap">Dynamic Portfolio Balance</p>
           </div>
         </div>
-        <span className="text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shadow-[0_0_12px_rgba(16,185,129,0.2)] flex items-center gap-1.5 whitespace-nowrap font-mono flex-shrink-0">
-          <ShieldCheck className="w-3 h-3 text-emerald-400" />
-          <span>94/100 · Optimal</span>
-        </span>
+
+        {/* Mode Toggle: Telemetry vs Sectors vs Dhandho Rebalance */}
+        <div className="p-0.5 rounded-xl bg-black/40 border border-white/10 flex items-center font-mono text-[10px] shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              setActiveDeckTab("telemetry");
+              soundEngine.playTabSwitchTone();
+            }}
+            className={clsx(
+              "px-2 py-1 rounded-lg font-bold transition flex items-center gap-1 cursor-pointer",
+              activeDeckTab === "telemetry"
+                ? "bg-white/15 text-white border border-white/20 shadow-sm"
+                : "text-slate-400 hover:text-white"
+            )}
+            title="Overview Telemetry"
+          >
+            <Activity className="w-3 h-3 text-cyan-400" />
+            <span className="hidden sm:inline">Overview</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveDeckTab("sectors");
+              soundEngine.playTabSwitchTone();
+            }}
+            className={clsx(
+              "px-2 py-1 rounded-lg font-bold transition flex items-center gap-1 cursor-pointer",
+              activeDeckTab === "sectors"
+                ? "bg-cyan-500/25 text-cyan-300 border border-cyan-500/40 shadow-sm"
+                : "text-slate-400 hover:text-white"
+            )}
+            title="Sector Exposure & Concentration"
+          >
+            <Layers className="w-3 h-3 text-cyan-400" />
+            <span>Sectors</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveDeckTab("rebalance");
+              soundEngine.playTabSwitchTone();
+            }}
+            className={clsx(
+              "px-2 py-1 rounded-lg font-bold transition flex items-center gap-1 cursor-pointer",
+              activeDeckTab === "rebalance"
+                ? "bg-cyan-500/25 text-cyan-300 border border-cyan-500/40 shadow-sm"
+                : "text-slate-400 hover:text-white"
+            )}
+            title="Dhandho Rebalancing Engine"
+          >
+            <Scale className="w-3 h-3 text-cyan-400" />
+            <span>Rebalance</span>
+          </button>
+        </div>
       </div>
 
       {/* 2. Visual Donut & Detailed Asset Breakdown */}
@@ -59,15 +133,45 @@ export function AssetAllocationDeck({ holdings = [], margins = {} }) {
         goldPct={goldPct}
         cashValue={cashValue}
         cashPct={cashPct}
+        isPrivacyMode={isPrivacyMode}
+        currencySymbol={activeCurrencySymbol}
+        fxRate={activeFxRate}
       />
 
-      {/* 3. Streamlined Capital Health Telemetry Strip */}
-      <AllocationTelemetryBars
-        maxHoldingSymbol={maxHoldingSymbol}
-        maxConcentrationPct={maxConcentrationPct}
-        liquidShieldVal={liquidShieldVal}
-        capitalGuardPct={capitalGuardPct}
-      />
+      {/* 3. Dynamic Switch: Capital Health Telemetry vs Sector Breakdown vs Dhandho Rebalancing Engine */}
+      {activeDeckTab === "telemetry" ? (
+        <AllocationTelemetryBars
+          maxHoldingSymbol={maxHoldingSymbol}
+          maxConcentrationPct={maxConcentrationPct}
+          liquidShieldVal={liquidShieldVal}
+          capitalGuardPct={capitalGuardPct}
+          sectorMetrics={sectorMetrics}
+          isPrivacyMode={isPrivacyMode}
+          currencySymbol={activeCurrencySymbol}
+          fxRate={activeFxRate}
+        />
+      ) : activeDeckTab === "sectors" ? (
+        <SectorBreakdownCard
+          sectors={sectorMetrics?.sectors || []}
+          topSector={sectorMetrics?.topSector}
+          hhiScore={sectorMetrics?.hhiScore || 0}
+          diversificationLabel={sectorMetrics?.diversificationLabel || "Optimal"}
+          diversificationColor={sectorMetrics?.diversificationColor || "emerald"}
+          isPrivacyMode={isPrivacyMode}
+          currencySymbol={activeCurrencySymbol}
+          fxRate={activeFxRate}
+        />
+      ) : (
+        <RebalanceEngineCard
+          equityValue={equityValue}
+          goldValue={goldValue}
+          cashValue={cashValue}
+          total={total}
+          isPrivacyMode={isPrivacyMode}
+          currencySymbol={activeCurrencySymbol}
+          fxRate={activeFxRate}
+        />
+      )}
     </div>
   );
 }

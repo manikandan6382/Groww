@@ -21,12 +21,28 @@ export const PostMortemAlphaReview = React.memo(function PostMortemAlphaReview({
   setPmCalendarOpen,
   bestAlert,
   worstAlert,
+  onPromoteToJournal,
+  promotedTradeIds,
+  promoteSuccessToast,
   soundEngine,
 }) {
   return (
     <div className="relative overflow-hidden rounded-3xl bg-slate-900/60 backdrop-blur-2xl border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.5)] p-5 space-y-4 w-full transition-all duration-300 hover:border-cyan-500/30 group">
       <div className="absolute top-0 right-0 w-80 h-80 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none -mr-10 -mt-10" />
       <div className="absolute bottom-0 left-0 w-80 h-80 bg-rose-500/5 rounded-full blur-3xl pointer-events-none -ml-10 -mb-10" />
+
+      {/* Promotion Toast Notification */}
+      {promoteSuccessToast && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          className="p-3 rounded-2xl bg-emerald-500/20 border border-emerald-400/50 text-emerald-200 text-xs font-mono font-bold flex items-center justify-between shadow-lg shadow-emerald-500/20"
+        >
+          <span>✨ {promoteSuccessToast}</span>
+          <span className="text-[10px] text-emerald-300 font-sans">Synced with 4-Act Journal</span>
+        </motion.div>
+      )}
 
       <div className="relative space-y-2 pb-3 border-b border-white/5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -97,8 +113,16 @@ export const PostMortemAlphaReview = React.memo(function PostMortemAlphaReview({
       </div>
 
       <div className="relative grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <BestAlertCard bestAlert={bestAlert} />
-        <WorstAlertCard worstAlert={worstAlert} />
+        <BestAlertCard
+          bestAlert={bestAlert}
+          onPromoteToJournal={onPromoteToJournal}
+          promotedTradeIds={promotedTradeIds}
+        />
+        <WorstAlertCard
+          worstAlert={worstAlert}
+          onPromoteToJournal={onPromoteToJournal}
+          promotedTradeIds={promotedTradeIds}
+        />
       </div>
     </div>
   );

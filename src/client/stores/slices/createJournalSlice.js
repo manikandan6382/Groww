@@ -1,4 +1,5 @@
 import { MASTER_INITIAL_TRADES } from "./initialData";
+import { persistTradeToBackend, persistTradesBatchToBackend, broadcastTradeAction } from "./tradePersistence";
 
 export const createJournalSlice = (set, get) => ({
   isTimeframeLocked: true,
@@ -30,6 +31,20 @@ export const createJournalSlice = (set, get) => ({
     selectedStrategyFilter: state.selectedStrategyFilter === name ? null : name 
   })),
   clearSelectedStrategyFilter: () => set({ selectedStrategyFilter: null }),
+  selectedTradeId: null,
+  setSelectedTradeId: (id) => set((state) => ({
+    selectedTradeId: state.selectedTradeId === id ? null : id
+  })),
+
+  updateTradeDetails: (tradeId, updates) => {
+    const list = get().masterTrades || [];
+    const next = list.map((t) => (t.id === tradeId ? { ...t, ...updates } : t));
+    set({ masterTrades: next, closedAlerts: next, journalTrades: next });
+    try {
+      localStorage.setItem("portfolio-master-trades", JSON.stringify(next));
+      localStorage.setItem("portfolio-journal-trades", JSON.stringify(next));
+    } catch {}
+  },
 
   logJournalTrade: (trade) => {
     const newEntry = {
@@ -43,12 +58,12 @@ export const createJournalSlice = (set, get) => ({
       duration: trade.duration || "15 mins",
       entryPrice: Number(trade.entryPrice || 0),
       exitPrice: Number(trade.exitPrice || 0),
-      targetPrice: Number(trade.targetPrice || trade.entryPrice * 1.1),
-      stopLoss: Number(trade.stopLoss || trade.entryPrice * 0.9),
+      targetPrice: Number(trade.targetPrice || (Number(trade.entryPrice || 0) + (250 / Math.max(1, Number(trade.quantity || 1) * Number(trade.lotSize || 65))) * 2.0)),
+      stopLoss: Number(trade.stopLoss || Math.max(0.1, Number(trade.entryPrice || 0) - (250 / Math.max(1, Number(trade.quantity || 1) * Number(trade.lotSize || 65))))),
       quantity: Number(trade.quantity || 1),
       lotSize: Number(trade.lotSize || 65),
       grossPnl: Number(trade.grossPnl || trade.netPnl || 0),
-      taxesAndCharges: Number(trade.taxesAndCharges || 56.0),
+      taxesAndCharges: Number(trade.taxesAndCharges || 55.20),
       netPnl: Number(trade.netPnl || 0),
       closeReason: trade.closeReason || (trade.netPnl >= 0 ? "TARGET_HIT" : "STOP_LOSS_HIT"),
       strategyTag: trade.strategyTags || trade.strategyTag || "Manual Journal Scalp",
@@ -67,6 +82,9 @@ export const createJournalSlice = (set, get) => ({
       localStorage.setItem("portfolio-master-trades", JSON.stringify(next));
       localStorage.setItem("portfolio-journal-trades", JSON.stringify(next));
     } catch {}
+    // Background SQLite Persistence Guard
+    persistTradeToBackend(newEntry);
+    broadcastTradeAction("JOURNAL_TRADE_LOGGED", { trade: newEntry });
   },
 
   bulkAddJournalTrades: (trades) => {
@@ -105,6 +123,9 @@ export const createJournalSlice = (set, get) => ({
       localStorage.setItem("portfolio-master-trades", JSON.stringify(next));
       localStorage.setItem("portfolio-journal-trades", JSON.stringify(next));
     } catch {}
+    // Background SQLite Persistence Guard
+    persistTradesBatchToBackend(enriched);
+    broadcastTradeAction("JOURNAL_TRADES_BATCH_LOGGED", { count: enriched.length });
   },
 
   resetJournalTrades: () => {

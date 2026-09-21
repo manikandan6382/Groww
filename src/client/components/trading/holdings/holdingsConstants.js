@@ -17,6 +17,22 @@ export const FILTER_TABS = [
   { id: "large", label: "💎 Core (>15%)" },
 ];
 
+export const SORT_OPTIONS = [
+  { id: "weight", label: "Portfolio Weight %" },
+  { id: "invested", label: "Invested Capital (Cost Basis)" },
+  { id: "val", label: "Current Valuation (NAV)" },
+  { id: "pnl", label: "Total P&L (₹)" },
+  { id: "pnlPct", label: "Return %" },
+  { id: "day", label: "Today's Change %" },
+  { id: "symbol", label: "Stock Symbol (A-Z)" },
+];
+
+export const VIEW_MODES = [
+  { id: "all", label: "Comprehensive Matrix", desc: "Full institutional view with cost, valuation & returns" },
+  { id: "cost", label: "Capital Basis (No Profit)", desc: "Focused on raw invested capital & break-even price" },
+  { id: "performance", label: "P&L & Cushion", desc: "Focused on profit spread, cushion % & alpha" },
+];
+
 export const CONCENTRATION_COLORS = [
   "from-cyan-500 to-sky-400",
   "from-teal-500 to-emerald-400",
@@ -26,3 +42,83 @@ export const CONCENTRATION_COLORS = [
   "from-blue-500 to-cyan-400",
   "from-emerald-500 to-teal-400"
 ];
+
+export const DEFAULT_POSITIONS = [
+  {
+    tradingsymbol: "NIFTY24SEP25000CE",
+    exchange: "NFO",
+    instrument_token: 112233,
+    product: "NRML",
+    quantity: 50,
+    multiplier: 1,
+    average_price: 135.40,
+    close_price: 128.00,
+    last_price: 148.60,
+    value: 7430.00,
+    pnl: 660.00,
+    m2m: 660.00,
+    unrealised: 660.00,
+    realised: 0.00,
+    buy_quantity: 50,
+    buy_price: 135.40,
+    sell_quantity: 0,
+    sell_price: 0,
+  },
+  {
+    tradingsymbol: "BANKNIFTY24SEP52500PE",
+    exchange: "NFO",
+    instrument_token: 445566,
+    product: "NRML",
+    quantity: -30,
+    multiplier: 1,
+    average_price: 210.00,
+    close_price: 225.00,
+    last_price: 185.20,
+    value: -5556.00,
+    pnl: 744.00,
+    m2m: 744.00,
+    unrealised: 744.00,
+    realised: 0.00,
+    buy_quantity: 0,
+    buy_price: 0,
+    sell_quantity: 30,
+    sell_price: 210.00,
+  },
+  {
+    tradingsymbol: "TATASTEEL",
+    exchange: "NSE",
+    instrument_token: 896434,
+    product: "MIS",
+    quantity: 200,
+    multiplier: 1,
+    average_price: 152.00,
+    close_price: 150.50,
+    last_price: 153.80,
+    value: 30760.00,
+    pnl: 360.00,
+    m2m: 360.00,
+    unrealised: 360.00,
+    realised: 0.00,
+    buy_quantity: 200,
+    buy_price: 152.00,
+    sell_quantity: 0,
+    sell_price: 0,
+  }
+];
+
+export const POSITION_FILTER_TABS = [
+  { id: "all", label: "All Positions" },
+  { id: "open", label: "⚡ Active Open" },
+  { id: "fno", label: "🎯 Options & Futures" },
+  { id: "mis", label: "⏱️ Intraday MIS" },
+  { id: "closed", label: "🏁 Closed Today" },
+];
+
+export const POSITION_SORT_OPTIONS = [
+  { id: "pnl", label: "MTM P&L (₹)" },
+  { id: "val", label: "Position Exposure / Value" },
+  { id: "qty", label: "Quantity / Size" },
+  { id: "symbol", label: "Contract Symbol (A-Z)" },
+];
+
+

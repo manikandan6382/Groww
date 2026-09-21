@@ -69,10 +69,22 @@ export function BrokerSessionModal({ isOpen, onClose }) {
               <span className="text-[10px] text-slate-400 font-bold group-hover:text-orange-300">ZERODHA KITE</span>
               <span className="text-[9px] text-orange-400 underline">Popup ↗</span>
             </div>
-            <span className={clsx("font-bold flex items-center gap-1.5 text-xs", brokerStatus?.kiteConnected ? "text-emerald-400" : "text-amber-400")}>
-              <span className={clsx("w-1.5 h-1.5 rounded-full", brokerStatus?.kiteConnected ? "bg-emerald-400 animate-ping" : "bg-amber-400")} />
-              {brokerStatus?.kiteConnected ? (brokerStatus.kiteUserName || "Live Connected") : "Expired / Login"}
-            </span>
+            {(() => {
+              const isKiteLive = Boolean(brokerStatus?.kiteConnected && !brokerStatus?.kiteExpired);
+              const isKiteExpired = Boolean(brokerStatus?.kiteExpired);
+              return (
+                <span className={clsx(
+                  "font-bold flex items-center gap-1.5 text-xs",
+                  isKiteLive ? "text-emerald-400" : isKiteExpired ? "text-amber-400 font-bold" : "text-orange-400"
+                )}>
+                  <span className={clsx(
+                    "w-1.5 h-1.5 rounded-full",
+                    isKiteLive ? "bg-emerald-400 animate-ping" : isKiteExpired ? "bg-amber-400 animate-ping" : "bg-orange-400"
+                  )} />
+                  {isKiteLive ? (brokerStatus?.kiteUserName || "Live Connected") : isKiteExpired ? "Expired / Reconnect" : "OAuth Ready"}
+                </span>
+              );
+            })()}
           </button>
         </div>
 

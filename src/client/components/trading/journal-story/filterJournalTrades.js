@@ -1,4 +1,4 @@
-import { getLocalDateKey } from "../../../utils/dateUtils";
+import { getLocalDateKey } from "../../../utils/dateUtils.js";
 
 export function getTradeDate(trade) {
   return getLocalDateKey(trade.exitDatetime || trade.entryDatetime);
@@ -37,6 +37,15 @@ export function getDateFilteredTrades(journalTrades, journalRange, journalCustom
   });
 }
 
+export function isTradeInMiddayChop(trade) {
+  const d = new Date(trade.entryDatetime || trade.datetime || Date.now());
+  const utcHours = d.getUTCHours();
+  const utcMins = d.getUTCMinutes();
+  const totalMins = utcHours * 60 + utcMins;
+  // 10:30 AM IST (05:00 UTC = 300m) to 13:30 PM IST (08:00 UTC = 480m)
+  return totalMins >= 300 && totalMins < 480;
+}
+
 export function getFilteredTrades(dateFilteredTrades, selectedStrategyFilter, journalFilter, searchQuery) {
   return dateFilteredTrades.filter((trade) => {
     const rawStrat = Array.isArray(trade.strategyTags)
@@ -45,18 +54,37 @@ export function getFilteredTrades(dateFilteredTrades, selectedStrategyFilter, jo
     const tradeStrat = String(rawStrat || "").trim();
 
     if (selectedStrategyFilter && tradeStrat !== selectedStrategyFilter) return false;
-    if (journalFilter === "WIN" && !(trade.closeReason === "TARGET_HIT" || trade.netPnl > 0)) return false;
-    if (journalFilter === "LOSS" && !(trade.closeReason === "STOP_LOSS_HIT" || trade.netPnl < 0)) return false;
-    if (journalFilter === "BREAKEVEN" && !(trade.closeReason === "BREAKEVEN_LOCKED" || trade.netPnl === 0)) return false;
 
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      const matchSymbol = trade.symbol?.toLowerCase().includes(q);
+    const net = Number(trade.netPnl !== undefined ? trade.netPnl : 0);
+    const m = Array.isArray(trade.mistakeTags) 
+      ? trade.mistakeTags.join(" ").toLowerCase() 
+      : String(trade.mistakeTags || "").toLowerCase();
+
+    // Diagnostic Quick Filters
+    if (journalFilter === "WIN" && !(trade.closeReason === "TARGET_HIT" || net > 0)) return false;
+    if (journalFilter === "LOSS" && !(trade.closeReason === "STOP_LOSS_HIT" || net < 0)) return false;
+    if (journalFilter === "BREACH" && !(net < -300 || trade.isRuleBreached === true)) return false;
+    if (journalFilter === "RUNNERS" && !(net >= 400 || (trade.rMultiple && Number(trade.rMultiple) >= 2.0))) return false;
+    if (journalFilter === "BREAKEVEN" && !(Math.abs(net) <= 65 || trade.closeReason === "BREAKEVEN_LOCKED")) return false;
+    if (journalFilter === "CHOP" && !isTradeInMiddayChop(trade)) return false;
+    if (journalFilter === "TILT" && !(trade.followedPlan === false || (m && m !== "none" && !m.includes("plan followed")))) return false;
+
+    // Alphanumeric Multi-Field Search
+    if (searchQuery && searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      const matchId = String(trade.id || "").toLowerCase().includes(q);
+      const matchSymbol = String(trade.symbol || "").toLowerCase().includes(q);
       const matchStrategy = tradeStrat.toLowerCase().includes(q);
-      const matchLesson = trade.lessonsLearned?.toLowerCase().includes(q);
-      const matchCatalyst = trade.catalyst?.toLowerCase().includes(q);
-      if (!matchSymbol && !matchStrategy && !matchLesson && !matchCatalyst) return false;
+      const matchLesson = String(trade.lessonsLearned || "").toLowerCase().includes(q);
+      const matchCatalyst = String(trade.catalyst || trade.entryReason || "").toLowerCase().includes(q);
+      const matchNotes = String(trade.notes || trade.executionDetails || "").toLowerCase().includes(q);
+      const matchMistake = m.includes(q);
+
+      if (!matchId && !matchSymbol && !matchStrategy && !matchLesson && !matchCatalyst && !matchNotes && !matchMistake) {
+        return false;
+      }
     }
+
     return true;
   });
 }

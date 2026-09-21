@@ -16,10 +16,40 @@ export function SvgReferenceLines({
   netZeroPrice,
   netZeroY,
   entryPrice,
-  isMobile
+  isMobile,
+  entryPoint,
+  exitPoint
 }) {
   return (
     <g className="reference-lines-group">
+      {/* ⚡ Execution Window Highlight Zone (in Day, Week, Month views) */}
+      {flightScope !== 'scalp' && entryPoint && exitPoint && (
+        <g className="execution-window-highlight pointer-events-none transition-all duration-300">
+          <defs>
+            <linearGradient id="execWindowGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#06b6d4" stopOpacity="0.14" />
+              <stop offset="100%" stopColor="#06b6d4" stopOpacity="0.02" />
+            </linearGradient>
+          </defs>
+          <rect
+            x={Math.min(entryPoint.x, exitPoint.x)}
+            y={padding.top}
+            width={Math.max(16, Math.abs(exitPoint.x - entryPoint.x))}
+            height={graphHeight}
+            fill="url(#execWindowGrad)"
+            stroke="rgba(6, 182, 212, 0.3)"
+            strokeDasharray="3 3"
+            strokeWidth="1"
+            rx="4"
+          />
+          <g transform={`translate(${Math.min(entryPoint.x, exitPoint.x) + 4}, ${padding.top + 14})`}>
+            <text fill="#22d3ee" fontSize="8.5" fontFamily="monospace" fontWeight="bold" opacity="0.9">
+              ⚡ TRADE WINDOW
+            </text>
+          </g>
+        </g>
+      )}
+
       <SvgGridAndRiskZones
         padding={padding}
         graphWidth={graphWidth}

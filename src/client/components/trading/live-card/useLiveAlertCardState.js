@@ -37,6 +37,11 @@ export function useLiveAlertCardState({ item, onClose }) {
   const [customTargetVal, setCustomTargetVal] = useState("");
   const [editingSl, setEditingSl] = useState(false);
   const [customSlVal, setCustomSlVal] = useState("");
+  const [focusMode, setFocusMode] = useState("cash"); // 'cash' | 'points'
+  const [elapsedSeconds, setElapsedSeconds] = useState(() => {
+    const start = new Date(item.entryDatetime || Date.now()).getTime();
+    return Math.max(0, Math.floor((Date.now() - start) / 1000));
+  });
 
   const isExecutingRef = useRef(false);
   const lastLtpRef = useRef(entry);
@@ -45,6 +50,14 @@ export function useLiveAlertCardState({ item, onClose }) {
   const lastTickTimeRef = useRef(Date.now());
   const tickTimerRef = useRef(null);
   const trackingRef = useRef({});
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const start = new Date(item.entryDatetime || Date.now()).getTime();
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - start) / 1000)));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [item.entryDatetime]);
 
   trackingRef.current = { id, entry, target, stopLoss, autoTrailBE, hasAutoLockedBE, isShort, totalQty, squareOffTrade, onClose, setBreakevenSL, soundMuted };
 
@@ -75,6 +88,7 @@ export function useLiveAlertCardState({ item, onClose }) {
         if (!tick) return;
         const ltp = Number(tick.ltp || tick.price || entry);
         if (!Number.isFinite(ltp) || ltp <= 0) return;
+        if (entry >= 20.0 && ltp <= 0.10) return; // Ignore ghost zero ticks from unliquid / uninitialized feeds
         lastTickTimeRef.current = Date.now();
         setLatencyMs(Math.floor(12 + Math.random() * 10));
         setIsFeedStalled(false);
@@ -114,12 +128,14 @@ export function useLiveAlertCardState({ item, onClose }) {
         if (isSlHit) {
           isExecutingRef.current = true;
           if (!sMuted) soundEngine.playStopLossTone();
-          const r = (sPos ? sl <= ent : sl >= ent) ? "TRAILING_SL_HIT" : "STOP_LOSS_HIT";
-          if (sqOff) sqOff(tId, ltp, r); else if (cFn) cFn(tId, ltp, r);
+          const triggerPrice = sl > 0 ? sl : ltp;
+          const r = (sPos ? triggerPrice < ent : triggerPrice > ent) ? "TRAILING_SL_HIT" : "STOP_LOSS_HIT";
+          if (sqOff) sqOff(tId, triggerPrice, r); else if (cFn) cFn(tId, triggerPrice, r);
         } else if (isTgtHit) {
           isExecutingRef.current = true;
           if (!sMuted) soundEngine.playTargetChime();
-          if (sqOff) sqOff(tId, ltp, "TARGET_HIT"); else if (cFn) cFn(tId, ltp, "TARGET_HIT");
+          const triggerPrice = tgt > 0 ? tgt : ltp;
+          if (sqOff) sqOff(tId, triggerPrice, "TARGET_HIT"); else if (cFn) cFn(tId, triggerPrice, "TARGET_HIT");
         }
       }
     );
@@ -131,6 +147,19 @@ export function useLiveAlertCardState({ item, onClose }) {
   const roiPct = entry > 0 ? ((pts / entry) * 100).toFixed(1) : "0.0";
   const estimatedCharges = useMemo(() => calculateEstimatedCharges(entry, currentLtp, totalQty), [entry, currentLtp, totalQty]);
   const netRupees = grossRupees - estimatedCharges;
+  const isThetaStagnant = elapsedSeconds >= 900 && Math.abs(pts) < 2.5;
+
+  // Browser Tab Title Telemetry: Real-time MTM visibility when looking at TradingView
+  useEffect(() => {
+    if (!symbol) return;
+    const sign = netRupees >= 0 ? "+" : "";
+    const pnlTag = focusMode === "points" ? `${sign}${pts.toFixed(1)}pts` : `${sign}₹${Math.round(netRupees)}`;
+    const originalTitle = "Groww Practice Terminal";
+    document.title = `[${pnlTag}] ${symbol} | Groww`;
+    return () => {
+      document.title = originalTitle;
+    };
+  }, [symbol, netRupees, pts, focusMode]);
 
   return {
     id, symbol, isShort, entry, target, stopLoss, quantity, lotSize, totalQty,
@@ -140,6 +169,7 @@ export function useLiveAlertCardState({ item, onClose }) {
     isFeedStalled, latencyMs, soundMuted, setSoundMuted, activeSubTab, setActiveSubTab,
     editingTarget, setEditingTarget, customTargetVal, setCustomTargetVal,
     editingSl, setEditingSl, customSlVal, setCustomSlVal,
+    focusMode, setFocusMode, elapsedSeconds, isThetaStagnant,
     squareOffTrade, adjustStopLoss, adjustTargetPrice, updateTargetPrice, updateStopLossPrice,
     setBreakevenSL, payMyself, setSimulatorActiveTradeId, isExecutingRef
   };

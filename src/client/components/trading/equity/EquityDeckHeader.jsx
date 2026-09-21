@@ -1,6 +1,6 @@
 import React from "react";
 import { soundEngine } from "../../../utils/soundEngine";
-import { TrendingUp, ShieldCheck, Activity, Waves, Sparkles } from "lucide-react";
+import { TrendingUp, ShieldCheck, Activity, Waves, Sparkles, BarChart3 } from "lucide-react";
 import clsx from "clsx";
 
 export function EquityDeckHeader({
@@ -122,8 +122,26 @@ export function EquityDeckHeader({
             <Sparkles className="w-3.5 h-3.5 text-purple-400" />
             <span>1,000 Paths</span>
           </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              soundEngine?.playTabSwitchTone?.();
+              setActiveTab("benchmark");
+            }}
+            className={clsx(
+              "px-3 py-1.5 rounded-xl font-bold transition-all text-xs flex items-center gap-1.5 cursor-pointer active:scale-95",
+              activeTab === "benchmark"
+                ? "bg-amber-500/20 text-amber-200 border border-amber-400/40 shadow-[0_0_15px_rgba(245,158,11,0.3)]"
+                : "text-slate-400 hover:text-slate-200 border border-transparent"
+            )}
+          >
+            <BarChart3 className="w-3.5 h-3.5 text-amber-400" />
+            <span>Alpha vs NIFTY</span>
+          </button>
         </div>
       </div>
     </div>
   );
 }
+

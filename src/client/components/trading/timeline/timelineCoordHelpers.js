@@ -5,31 +5,35 @@ export function computeTimelinePoints({
   graphWidth,
   flightScope,
   isShort,
+  entryTime,
   exitTime
 }) {
+  let resolvedEntryIdx = displayCandles.findIndex(c => c.isEntryPoint);
+  if (resolvedEntryIdx === -1) {
+    const inTradeFirst = displayCandles.findIndex(c => c.isInTrade);
+    if (inTradeFirst !== -1) resolvedEntryIdx = inTradeFirst;
+    else if (entryTime) {
+      const entryMs = new Date(entryTime).getTime();
+      resolvedEntryIdx = displayCandles.findIndex(c => Math.abs((c.timestamp || 0) - entryMs) < 60000);
+    }
+  }
+  if (resolvedEntryIdx === -1) resolvedEntryIdx = 0;
+
   let resolvedExitIdx = displayCandles.findIndex(c => c.isExitPoint);
   if (resolvedExitIdx === -1) {
     const postExitFirst = displayCandles.findIndex(c => c.isPostExit);
     if (postExitFirst > 0) resolvedExitIdx = postExitFirst - 1;
+    else if (exitTime) {
+      const exitMs = new Date(exitTime).getTime();
+      resolvedExitIdx = displayCandles.findIndex(c => Math.abs((c.timestamp || 0) - exitMs) < 60000);
+    }
   }
+  if (resolvedExitIdx === -1) resolvedExitIdx = displayCandles.length - 1;
 
-  const useDualZone = flightScope !== 'scalp' && resolvedExitIdx > 0 && resolvedExitIdx < displayCandles.length - 1;
-  const executionWidth = graphWidth * 0.44;
-  const postExitWidth = graphWidth * 0.56;
-
+  const total = Math.max(1, displayCandles.length - 1);
   const pts = displayCandles.map((c, i) => {
     const p = c.close ?? c.price;
-    let x;
-    if (useDualZone) {
-      if (i <= resolvedExitIdx) {
-        x = padding.left + (i / resolvedExitIdx) * executionWidth;
-      } else {
-        const postRatio = (i - resolvedExitIdx) / ((displayCandles.length - 1) - resolvedExitIdx);
-        x = padding.left + executionWidth + postRatio * postExitWidth;
-      }
-    } else {
-      x = padding.left + (i / (displayCandles.length - 1 || 1)) * graphWidth;
-    }
+    const x = padding.left + (i / total) * graphWidth;
     const openP = c.open ?? p;
     return {
       ...c,
@@ -47,9 +51,16 @@ export function computeTimelinePoints({
     };
   });
 
-  let peak = pts[0];
-  let trough = pts[0];
-  pts.forEach((pt) => {
+  const entryPoint = pts[resolvedEntryIdx] || pts[0];
+  const exitPoint = pts[resolvedExitIdx] || pts[pts.length - 1];
+
+  // Calculate peak and trough across active trade window (or full set if trade window is short)
+  const tradePts = pts.filter((p, idx) => idx >= resolvedEntryIdx && idx <= resolvedExitIdx);
+  const targetPtsForExcursion = tradePts.length >= 2 ? tradePts : pts;
+
+  let peak = targetPtsForExcursion[0] || pts[0];
+  let trough = targetPtsForExcursion[0] || pts[0];
+  targetPtsForExcursion.forEach((pt) => {
     const h = pt.high ?? pt.close;
     const l = pt.low ?? pt.close;
     if (!isShort) {
@@ -61,10 +72,5 @@ export function computeTimelinePoints({
     }
   });
 
-  const exitPoint = (resolvedExitIdx !== -1 && pts[resolvedExitIdx]) || pts.find(p => p.isExitPoint) || pts.find(p => {
-    const exitMs = new Date(exitTime || Date.now()).getTime();
-    return Math.abs(p.timestamp - exitMs) < 60000;
-  }) || pts[Math.min(pts.length - 1, 16)];
-
-  return { pts, peak, trough, exitPoint };
+  return { pts, peak, trough, entryPoint, exitPoint };
 }

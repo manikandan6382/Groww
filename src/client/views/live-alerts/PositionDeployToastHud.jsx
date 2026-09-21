@@ -1,9 +1,45 @@
 import React from "react";
 import { resolveIndexLotSize } from "../../stores/useTradingStore";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, ShieldAlert } from "lucide-react";
 
 export function PositionDeployToastHud({ deployToast, onDismiss }) {
   if (!deployToast) return null;
+
+  if (deployToast.error) {
+    return (
+      <div className="fixed bottom-4 inset-x-4 sm:inset-x-auto sm:right-6 sm:bottom-6 z-50 animate-in slide-in-from-bottom-5 duration-300">
+        <div className="p-4 sm:p-5 rounded-3xl bg-[#160b14]/95 border border-rose-500/40 shadow-[0_20px_50px_rgba(244,63,94,0.3)] backdrop-blur-2xl max-w-sm sm:max-w-md w-full space-y-3 relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-rose-500/15 rounded-full blur-2xl pointer-events-none -mr-8 -mt-8" />
+
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-rose-400 animate-ping shrink-0" />
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-500/20 flex items-center gap-1 shrink-0">
+                <ShieldAlert className="w-3 h-3" />
+                Trade Blocked
+              </span>
+              <strong className="text-white font-mono text-xs font-bold truncate">{deployToast.symbol}</strong>
+            </div>
+            <button 
+              type="button" 
+              onClick={onDismiss} 
+              className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition cursor-pointer shrink-0"
+            >
+              ✕
+            </button>
+          </div>
+
+          <div className="py-2.5 px-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs font-mono text-rose-200 leading-relaxed">
+            {deployToast.message || "Order rejected by risk management guard."}
+          </div>
+
+          <div className="w-full bg-white/5 h-1 rounded-full overflow-hidden">
+            <div className="bg-gradient-to-r from-rose-500 to-amber-500 h-full rounded-full animate-pulse" style={{ width: "100%" }} />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed bottom-4 inset-x-4 sm:inset-x-auto sm:right-6 sm:bottom-6 z-50 animate-in slide-in-from-bottom-5 duration-300">

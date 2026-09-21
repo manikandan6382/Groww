@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useTransition } from "react";
 import { useTradingStore } from "../../../stores/useTradingStore";
 import { soundEngine } from "../../../utils/soundEngine";
 import { runMonteCarloSimulation } from "./monteCarloEngine";
@@ -14,17 +14,37 @@ const HEIGHT = 240;
 const PADDING = { top: 20, right: 0, bottom: 0, left: 0 };
 
 export function useEquityCurveData() {
-  const { journalTrades, journalRange } = useTradingStore();
-  const [selectedId, setSelectedId] = useState(null);
+  const { journalTrades, journalRange, selectedTradeId, setSelectedTradeId } = useTradingStore();
+  const [selectedId, setSelectedId] = useState(selectedTradeId || null);
   const [scrubIndex, setScrubIndex] = useState(null);
+
+  const handleSelectId = (id) => {
+    setSelectedId(id);
+    setSelectedTradeId?.(id);
+  };
+
+  useEffect(() => {
+    if (selectedTradeId !== undefined && selectedTradeId !== selectedId) {
+      setSelectedId(selectedTradeId);
+    }
+  }, [selectedTradeId]);
   const [activeTab, setActiveTab] = useState("growth");
   const [accountingMode, setAccountingMode] = useState("NET");
   const [showGuide, setShowGuide] = useState(false);
   const [reelFilter, setReelFilter] = useState("all");
   const [reelSort, setReelSort] = useState("newest");
   const [reelPage, setReelPage] = useState(1);
+  const [mcHorizon, setMcHorizon] = useState(50);
+  const [isPendingMc, startMcTransition] = useTransition();
   const lastAudioTickRef = useRef(0);
   const svgRef = useRef(null);
+
+  const updateMcHorizon = (h) => {
+    startMcTransition(() => {
+      setMcHorizon(h);
+    });
+  };
+
 
   const playScrubAudio = () => {
     const now = Date.now();
@@ -46,7 +66,8 @@ export function useEquityCurveData() {
     setReelPage(1);
   }, [reelFilter, reelSort, journalRange]);
 
-  const monteCarlo = useMemo(() => runMonteCarloSimulation(activeTrades, BASE_CAPITAL, 50, 1000), [activeTrades]);
+  const monteCarlo = useMemo(() => runMonteCarloSimulation(activeTrades, BASE_CAPITAL, mcHorizon, 1000), [activeTrades, mcHorizon]);
+
   const allCapitals = metrics.equityPoints.map((p) => p.capital);
   const minTradeCap = Math.min(...allCapitals);
   const maxTradeCap = Math.max(...metrics.equityPoints.map((p) => p.hwm));
@@ -98,7 +119,7 @@ export function useEquityCurveData() {
     PADDING,
     activeTrades,
     selectedId,
-    setSelectedId,
+    setSelectedId: handleSelectId,
     scrubIndex,
     setScrubIndex,
     activeTab,
@@ -121,7 +142,11 @@ export function useEquityCurveData() {
     totalPages,
     currentPage,
     monteCarlo,
+    mcHorizon,
+    setMcHorizon: updateMcHorizon,
+    isPendingMc,
     maxDDPct,
+
     ...paths,
     activePoint,
     activePointIndex,

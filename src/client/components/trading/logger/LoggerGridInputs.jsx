@@ -22,6 +22,11 @@ export function LoggerGridInputs({
   notes,
   setNotes,
   onOpenTopic,
+  plannedRiskCash,
+  isRiskBreached,
+  plannedTargetCash,
+  plannedRR,
+  autoPegRisk,
 }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
@@ -40,6 +45,7 @@ export function LoggerGridInputs({
       />
 
       <LoggerRiskInputs
+        entryPrice={entryPrice}
         stopLoss={stopLoss}
         setStopLoss={setStopLoss}
         targetPrice={targetPrice}
@@ -49,9 +55,15 @@ export function LoggerGridInputs({
         notes={notes}
         setNotes={setNotes}
         onOpenTopic={onOpenTopic}
+        plannedRiskCash={plannedRiskCash}
+        isRiskBreached={isRiskBreached}
+        plannedTargetCash={plannedTargetCash}
+        plannedRR={plannedRR}
+        autoPegRisk={autoPegRisk}
       />
     </div>
   );
 }
 
 export default LoggerGridInputs;
+

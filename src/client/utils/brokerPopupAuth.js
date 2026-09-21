@@ -1,4 +1,6 @@
 import { soundEngine } from "./soundEngine";
+import { useTradingStore } from "../stores/useTradingStore";
+import { checkTokenStatus } from "../hooks/feed/feedApiSync";
 
 /**
  * Open a dedicated popup window (separate tab/window) for broker OAuth authentication.
@@ -12,8 +14,17 @@ export function openBrokerAuthPopup(broker = "upstox", onSuccess) {
   soundEngine?.playTabSwitchTone?.();
 
   const isUpstox = broker.toLowerCase() === "upstox";
+  const brokerKey = isUpstox ? "upstox" : "kite";
   const loginUrl = isUpstox ? "/upstox/login" : "/kite/login";
   const windowName = isUpstox ? "UpstoxOAuthPopup" : "KiteOAuthPopup";
+
+  // Prevent duplicate clicks while already authenticating
+  const currentAuth = useTradingStore.getState().authenticatingBroker;
+  if (currentAuth === brokerKey) {
+    return null;
+  }
+
+  useTradingStore.getState().setAuthenticatingBroker(brokerKey);
 
   const width = 600;
   const height = 740;
@@ -28,6 +39,7 @@ export function openBrokerAuthPopup(broker = "upstox", onSuccess) {
 
   if (!popup || popup.closed || typeof popup.closed === "undefined") {
     console.warn(`[brokerPopupAuth] Popup window blocked by browser for ${broker}.`);
+    useTradingStore.getState().setAuthenticatingBroker(null);
     window.dispatchEvent(
       new CustomEvent("portfoliox:popup-blocked", {
         detail: { broker, loginUrl }
@@ -45,6 +57,20 @@ export function openBrokerAuthPopup(broker = "upstox", onSuccess) {
 
   popup.focus?.();
 
+  // Monitor popup close (e.g. user manually dismisses the tab)
+  const closeCheckInterval = setInterval(() => {
+    try {
+      if (popup.closed) {
+        clearInterval(closeCheckInterval);
+        if (useTradingStore.getState().authenticatingBroker === brokerKey) {
+          useTradingStore.getState().setAuthenticatingBroker(null);
+        }
+      }
+    } catch {
+      clearInterval(closeCheckInterval);
+    }
+  }, 1000);
+
   // Set up one-time message listener for cross-window handshake
   const messageHandler = (event) => {
     // Strict Origin Verification: only accept messages from exact same origin
@@ -58,14 +84,24 @@ export function openBrokerAuthPopup(broker = "upstox", onSuccess) {
       (!isUpstox && (data.type === "KITE_AUTH_SUCCESS" || data.type === "BROKER_AUTH_SUCCESS"));
 
     if (isMatch) {
+      clearInterval(closeCheckInterval);
       window.removeEventListener("message", messageHandler);
+      useTradingStore.getState().setAuthenticatingBroker(null);
       soundEngine?.playOrderSuccess?.() || soundEngine?.playTargetChime?.();
+
+      // Immediate store status update
+      if (isUpstox) {
+        useTradingStore.getState().setBrokerStatus({ upstoxConnected: true, upstoxExpired: false });
+      } else {
+        useTradingStore.getState().setBrokerStatus({ kiteConnected: true, kiteExpired: false });
+      }
+      checkTokenStatus(useTradingStore.getState().setBrokerStatus).catch(() => {});
 
       if (typeof onSuccess === "function") {
         onSuccess(data);
       } else {
         // Default behavior: trigger full broker status refresh & event notification
-        window.dispatchEvent(new CustomEvent("portfoliox:broker-connected", { detail: { broker } }));
+        window.dispatchEvent(new CustomEvent("portfoliox:broker-connected", { detail: { broker: brokerKey } }));
       }
     }
   };
@@ -74,7 +110,11 @@ export function openBrokerAuthPopup(broker = "upstox", onSuccess) {
 
   // Auto clean-up listener after 5 minutes if no response
   setTimeout(() => {
+    clearInterval(closeCheckInterval);
     window.removeEventListener("message", messageHandler);
+    if (useTradingStore.getState().authenticatingBroker === brokerKey) {
+      useTradingStore.getState().setAuthenticatingBroker(null);
+    }
   }, 300000);
 
   return popup;

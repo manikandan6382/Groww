@@ -5,6 +5,7 @@ import { PortfolioValuationHeader } from "./PortfolioValuationHeader";
 import { PortfolioTimeframeSwitcher } from "./PortfolioTimeframeSwitcher";
 import { PortfolioNavSplineChart } from "./PortfolioNavSplineChart";
 import { PortfolioTelemetryStrip } from "./PortfolioTelemetryStrip";
+import { StatementUploadModal } from "./StatementUploadModal";
 
 export function PortfolioHeroBento({
   holdings = [],
@@ -15,8 +16,11 @@ export function PortfolioHeroBento({
   totalPnlPct = "0.00",
   dayPnl = 0,
   dayPnlPct = "0.00",
+  isExpired = false,
+  isKiteOffline = false,
 }) {
   const bento = usePortfolioBentoData({
+    holdings,
     margins,
     totalCurrentValue,
     totalInvested,
@@ -40,6 +44,21 @@ export function PortfolioHeroBento({
         hoverIndex={bento.hoverIndex}
         activeTf={bento.activeTf}
         navPoints={bento.navPoints}
+        investedPoints={bento.investedPoints}
+        benchmarkPoints={bento.benchmarkPoints}
+        showBenchmark={bento.showBenchmark}
+        navDates={bento.navDates}
+        depository={bento.depository}
+        onToggleDepository={bento.setDepository}
+        hasCustomLedger={bento.hasCustomLedger}
+        customLedgerCount={bento.customLedgerCount}
+        onOpenStatementModal={() => bento.setStatementModalOpen(true)}
+        isExpired={isExpired}
+        isKiteOffline={isKiteOffline}
+        currency={bento.currency}
+        onToggleCurrency={bento.toggleCurrency}
+        currencySymbol={bento.currencySymbol}
+        fxRate={bento.fxRate}
       />
 
       {/* 🌟 2. Apple Glass Segmented Timeframe Switcher */}
@@ -55,7 +74,23 @@ export function PortfolioHeroBento({
         paddingY={bento.paddingY}
         splinePath={bento.splinePath}
         splineAreaPath={bento.splineAreaPath}
+        alphaAreaPath={bento.alphaAreaPath}
+        investedPath={bento.investedPath}
+        benchmarkPath={bento.benchmarkPath}
+        showBenchmark={bento.showBenchmark}
+        onToggleBenchmark={bento.toggleBenchmark}
+        highWaterMark={bento.highWaterMark}
+        athY={bento.athY}
+        currencySymbol={bento.currencySymbol}
+        fxRate={bento.fxRate}
+        priceLevels={bento.priceLevels}
+        dateMilestones={bento.dateMilestones}
         navPoints={bento.navPoints}
+        investedPoints={bento.investedPoints}
+        benchmarkPoints={bento.benchmarkPoints}
+        navDates={bento.navDates}
+        activeTf={bento.activeTf}
+        isAllView={bento.isAllView}
         getX={bento.getX}
         getY={bento.getY}
         hoverIndex={bento.hoverIndex}
@@ -71,6 +106,12 @@ export function PortfolioHeroBento({
         marginShare={bento.marginShare}
         totalPnl={totalPnl}
         totalPnlPct={totalPnlPct}
+        cagr={bento.timeframeMetrics?.cagr}
+        cagrLabel={bento.timeframeMetrics?.cagrLabel}
+        xirr={bento.xirrMetrics?.formatted}
+        institutionalRisk={bento.institutionalRisk}
+        currencySymbol={bento.currencySymbol}
+        fxRate={bento.fxRate}
       />
 
       {/* Universal React Portal Calendar Modal */}
@@ -80,6 +121,16 @@ export function PortfolioHeroBento({
         startDate={bento.customStart}
         endDate={bento.customEnd}
         onApplyRange={bento.handleApplyCustomRange}
+      />
+
+      {/* Tradebook & Statement Importer Modal */}
+      <StatementUploadModal
+        isOpen={bento.isStatementModalOpen}
+        onClose={() => bento.setStatementModalOpen(false)}
+        hasCustomLedger={bento.hasCustomLedger}
+        customLedgerCount={bento.customLedgerCount}
+        onStatementLoaded={bento.reloadPortfolioHistory}
+        onStatementReset={bento.reloadPortfolioHistory}
       />
     </div>
   );

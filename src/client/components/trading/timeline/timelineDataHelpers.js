@@ -8,7 +8,9 @@ export function buildTimelineQueryParams({
   targetPrice,
   stopLoss,
   entryTime,
-  exitTime
+  exitTime,
+  fromTime,
+  toTime
 }) {
   const params = new URLSearchParams({
     symbol,
@@ -23,8 +25,14 @@ export function buildTimelineQueryParams({
   }
   if (targetPrice) params.set('targetPrice', String(targetPrice));
   if (stopLoss) params.set('stopLoss', String(stopLoss));
-  if (entryTime) params.set('from', entryTime);
-  if (exitTime) params.set('to', exitTime);
+
+  const resolvedFrom = fromTime ? new Date(fromTime).toISOString() : entryTime;
+  const resolvedTo = toTime ? new Date(toTime).toISOString() : exitTime;
+  if (resolvedFrom) params.set('from', resolvedFrom);
+  if (resolvedTo) params.set('to', resolvedTo);
+  if (entryTime) params.set('tradeEntryTime', entryTime);
+  if (exitTime) params.set('tradeExitTime', exitTime);
+
   if (trade?.tokenKey) params.set('tokenKey', trade.tokenKey);
   if (trade?.expiryDate || trade?.expiry) params.set('expiryDate', trade.expiryDate || trade.expiry);
   if (trade?.strikePrice) params.set('strikePrice', String(trade.strikePrice));

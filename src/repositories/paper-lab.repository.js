@@ -1,7 +1,7 @@
 import { getDb } from "../db/connection.js";
 import { getRangeWindow } from "../services/trading/trade-calculator.js";
 import { createTrade, getTradeById, listTrades } from "./trades.repository.js";
-import { calculateFrictionAndCharges, getTrigger } from "./paper-friction.js";
+import { calculateFrictionAndCharges, calculateEntrySlippage, getTrigger } from "./paper-friction.js";
 import {
   getPaperAccount,
   refreshPaperCapital,
@@ -13,7 +13,7 @@ import {
   toLocalDateTimeInput,
 } from "./paper-account.js";
 
-export { calculateFrictionAndCharges };
+export { calculateFrictionAndCharges, calculateEntrySlippage };
 
 export function getPaperLab({ range = "all", from, to } = {}) {
   const db = getDb();

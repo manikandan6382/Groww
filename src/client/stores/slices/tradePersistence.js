@@ -79,3 +79,122 @@ export function broadcastTradeAction(action, payload = {}) {
     tradeBroadcastChannel?.postMessage({ action, payload, timestamp: Date.now() });
   } catch {}
 }
+
+const OUTBOX_STORAGE_KEY = "portfoliox_trade_outbox_queue";
+
+export function getTradeOutbox() {
+  try {
+    const raw = typeof localStorage !== "undefined" ? localStorage.getItem(OUTBOX_STORAGE_KEY) : null;
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function queueTradeInOutbox(trade) {
+  if (!trade || !trade.symbol) return;
+  try {
+    const queue = getTradeOutbox();
+    const tradeKey = trade.idempotencyKey || `journal_${trade.id || Date.now()}`;
+    const exists = queue.some((item) => (item.idempotencyKey || `journal_${item.id}`) === tradeKey);
+    if (!exists) {
+      queue.push({ ...trade, idempotencyKey: tradeKey });
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(OUTBOX_STORAGE_KEY, JSON.stringify(queue.slice(-50)));
+      }
+    }
+  } catch {}
+}
+
+export function removeFromTradeOutbox(tradeKey) {
+  try {
+    const queue = getTradeOutbox();
+    const filtered = queue.filter((item) => (item.idempotencyKey || `journal_${item.id}`) !== tradeKey);
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(OUTBOX_STORAGE_KEY, JSON.stringify(filtered));
+    }
+  } catch {}
+}
+
+export async function persistTradeToBackend(trade) {
+  if (!trade || !trade.symbol) return null;
+  const tradeKey = trade.idempotencyKey || `journal_${trade.id || Date.now()}`;
+  try {
+    const symbolStr = String(trade.symbol).trim();
+    const isOption = trade.instrumentType === "OPTION" || symbolStr.includes("CE") || symbolStr.includes("PE");
+    const hasExit = trade.exitPrice != null && trade.exitPrice !== "" && Number(trade.exitPrice) > 0;
+    const entryDate = trade.entryDatetime || new Date().toISOString();
+    const exitDate = hasExit ? (trade.exitDatetime || new Date().toISOString()) : null;
+
+    const payload = {
+      idempotencyKey: tradeKey,
+      symbol: symbolStr,
+      instrumentType: isOption ? "OPTION" : (trade.instrumentType || "STOCK"),
+      optionType: trade.optionType || (symbolStr.includes("PE") ? "PUT" : (symbolStr.includes("CE") ? "CALL" : null)),
+      direction: trade.direction || "LONG",
+      tradeType: trade.tradeType || "INTRADAY",
+      tradeMode: trade.tradeMode || "PAPER",
+      status: hasExit ? "CLOSED" : (trade.status || "OPEN"),
+      entryDatetime: entryDate,
+      exitDatetime: exitDate,
+      entryPrice: Math.max(0.01, Number(trade.entryPrice || 0)),
+      exitPrice: hasExit ? Number(trade.exitPrice) : null,
+      targetPrice: trade.targetPrice ? Number(trade.targetPrice) : null,
+      stopLoss: trade.stopLoss ? Number(trade.stopLoss) : null,
+      quantity: Math.max(1, Number(trade.quantity || 1)),
+      lotSize: Math.max(1, Number(trade.lotSize || 65)),
+      charges: Number(trade.taxesAndCharges || trade.charges || 55.20),
+      strategyTags: trade.strategyTags || trade.strategyTag || "Manual Journal Scalp",
+      mistakeTags: trade.mistakeTags || "None",
+      followedPlan: trade.followedPlan ?? true,
+      journal: {
+        entryReason: trade.catalyst || trade.entryReason || "Technical chart breakout pattern with volume confirmation.",
+        personalNotes: trade.executionDetails || trade.personalNotes || "Executed trade as per predefined trade plan.",
+        emotionBefore: trade.mindsetEmotion || "Disciplined",
+        emotionAfter: hasExit ? (trade.mindsetEmotion || "Patient") : "",
+        lessonsLearned: trade.lessonsLearned || "Followed execution rules with zero hesitation.",
+        confidenceScore: Math.min(10, Math.max(1, Number(trade.confidenceScore || 8)))
+      }
+    };
+
+    const res = await fetch("/api/trades", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    if (res.ok) {
+      removeFromTradeOutbox(tradeKey);
+      const data = await res.json();
+      return data?.item || data;
+    } else {
+      queueTradeInOutbox(trade);
+    }
+  } catch (err) {
+    // Network offline / connection failed; queue in outbox for automatic recovery
+    queueTradeInOutbox(trade);
+  }
+  return null;
+}
+
+export async function flushTradeOutbox() {
+  const queue = getTradeOutbox();
+  if (!queue.length) return;
+  for (const trade of queue) {
+    try {
+      await persistTradeToBackend(trade);
+    } catch {
+      // Continue next item
+    }
+  }
+}
+
+export async function persistTradesBatchToBackend(trades) {
+  if (!Array.isArray(trades) || trades.length === 0) return;
+  const chunkSize = 5;
+  for (let i = 0; i < trades.length; i += chunkSize) {
+    const chunk = trades.slice(i, i + chunkSize);
+    await Promise.allSettled(chunk.map((t) => persistTradeToBackend(t)));
+  }
+}
+

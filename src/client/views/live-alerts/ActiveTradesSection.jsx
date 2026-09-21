@@ -10,6 +10,19 @@ export function ActiveTradesSection({
   onCloseTrade,
   onAutoDeploy
 }) {
+  React.useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.shiftKey && e.key === "Escape") {
+        if (openAlerts.length > 0 && typeof onSquareOffAll === "function") {
+          e.preventDefault();
+          onSquareOffAll();
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [openAlerts.length, onSquareOffAll]);
+
   return (
     <div
       id="active-practice-trades"
@@ -19,6 +32,7 @@ export function ActiveTradesSection({
       <div className="absolute top-0 left-1/3 w-80 h-80 bg-cyan-500/[0.03] rounded-full blur-3xl pointer-events-none" />
 
       <ActiveTradesDockHeader
+        openAlerts={openAlerts}
         openAlertsCount={openAlerts.length}
         activeTradesViewMode={activeTradesViewMode}
         setActiveTradesViewMode={setActiveTradesViewMode}

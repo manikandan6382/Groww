@@ -5,7 +5,10 @@ import { evaluateExecutionDiscipline } from './timelineDisciplineHelpers';
 export function useTimelineDiagnostics({
   trade,
   allPoints = [],
+  entryPoint,
   peakPoint,
+  troughPoint,
+  exitPoint,
   flightScope,
   currentActivePoint
 }) {
@@ -90,6 +93,18 @@ export function useTimelineDiagnostics({
     const counterfactualNet = Number((counterfactualGross - charges).toFixed(2));
     const counterfactualAlpha = Number((counterfactualNet - Number(trade?.netPnl || 0)).toFixed(2));
 
+    let snapMilestone = null;
+    const ptIdx = currentActivePoint.index ?? 0;
+    if (currentActivePoint.isEntryPoint || (entryPoint && ptIdx === entryPoint.index)) {
+      snapMilestone = 'ENTRY';
+    } else if (peakPoint && ptIdx === peakPoint.index) {
+      snapMilestone = 'PEAK';
+    } else if (troughPoint && ptIdx === troughPoint.index) {
+      snapMilestone = 'TROUGH';
+    } else if (currentActivePoint.isExitPoint || (exitPoint && ptIdx === exitPoint.index)) {
+      snapMilestone = 'EXIT';
+    }
+
     return {
       currentP: Number.isFinite(currentP) ? currentP : entryPrice,
       ptsDelta: Number.isFinite(ptsDelta) ? Number(ptsDelta.toFixed(2)) : 0,
@@ -102,9 +117,10 @@ export function useTimelineDiagnostics({
       timeStr: formatTimelineLabel(currentActivePoint.time || currentActivePoint.timestamp, isMultiDay),
       isPostExit: Boolean(currentActivePoint.isPostExit),
       counterfactualNet, counterfactualAlpha,
-      index: currentActivePoint.index ?? 0
+      index: ptIdx,
+      snapMilestone
     };
-  }, [currentActivePoint, entryPrice, targetPrice, stopLoss, netZeroPrice, isShort, totalQty, charges, trade?.netPnl, peakPrice, troughPrice, isMultiDay]);
+  }, [currentActivePoint, entryPrice, targetPrice, stopLoss, netZeroPrice, isShort, totalQty, charges, trade?.netPnl, peakPrice, troughPrice, isMultiDay, entryPoint, peakPoint, troughPoint, exitPoint]);
 
   const stallPoint = useMemo(() => {
     if (!peakPoint || !allPoints.length || allPoints.length < 6) return null;

@@ -32,6 +32,12 @@ export function CockpitDeck({ logic, isValidSL, isValidTarget }) {
         isVaultRunning={logic.vault.isVaultRunning}
         vaultFormattedTime={logic.vault.vaultFormattedTime}
         on1ClickAutoDeploy={() => logic.handleExecute()}
+        isDeploying={logic.isDeploying}
+        lots={logic.lots}
+        totalQty={logic.totalQty}
+        tiltSecondsRemaining={logic.tiltSecondsRemaining}
+        strategyMode={logic.strategyMode}
+        onToggleSpreadMode={() => logic.setStrategyMode(logic.strategyMode === "SPREAD" ? "OUTRIGHT" : "SPREAD")}
       />
 
       <QuotaVaultAlertBar
@@ -56,6 +62,7 @@ export function CockpitDeck({ logic, isValidSL, isValidTarget }) {
         isLiveStreaming={logic.isLiveStreaming}
         onSetIsLiveStreaming={logic.setIsLiveStreaming}
         liveContractTick={logic.liveContractTick}
+        liveMarkPrice={logic.liveMarkPrice}
         isValidSL={isValidSL}
         isValidTarget={isValidTarget}
         rrRatio={logic.rrRatio}
@@ -63,6 +70,7 @@ export function CockpitDeck({ logic, isValidSL, isValidTarget }) {
       />
 
       <PassarelliGreeksDeck
+        activeGreeks={logic.activeGreeks}
         activeDelta={logic.activeDelta}
         ivRegime={logic.ivRegime}
         isSpreadMode={logic.strategyMode === "SPREAD"}
@@ -76,18 +84,25 @@ export function CockpitDeck({ logic, isValidSL, isValidTarget }) {
         strikePrice={logic.strikePrice}
         optionType={logic.optionType}
         activeDelta={logic.activeDelta}
+        activeGreeks={logic.activeGreeks}
         entryPrice={logic.entryPrice}
         stopLoss={logic.stopLoss}
+        targetPrice={logic.targetPrice}
         rrRatio={logic.rrRatio}
         frictionMetrics={logic.frictionMetrics}
         rewardAmount={logic.rewardAmount}
+        riskAmount={logic.riskAmount}
         netEntryPrice={logic.netEntryPrice}
         totalQty={logic.totalQty}
         copilotState={logic.copilotState}
-        testingMode={false}
-        dailyQuotaBypass={false}
+        currentAsset={logic.currentAsset}
+        testingMode={logic.testingMode}
+        dailyQuotaBypass={logic.dailyQuotaBypass}
         todayTradesCount={logic.todayTradesCount}
         dailyQuotaLimit={logic.dailyQuotaLimit}
+        todayRealizedLoss={logic.todayRealizedLoss}
+        isDailyLossBreached={logic.isDailyLossBreached}
+        tiltSecondsRemaining={logic.tiltSecondsRemaining}
       />
     </div>
   );

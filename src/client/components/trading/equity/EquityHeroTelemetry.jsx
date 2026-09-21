@@ -1,5 +1,5 @@
 import React from "react";
-import { TrendingUp, Waves, Crown, ShieldCheck } from "lucide-react";
+import { TrendingUp, Waves, Crown, ShieldCheck, ShieldAlert, Scale } from "lucide-react";
 import clsx from "clsx";
 
 export function EquityHeroTelemetry({
@@ -14,8 +14,14 @@ export function EquityHeroTelemetry({
   maxDrawdown,
   retentionPct,
   winRate,
-  totalCharges
+  totalCharges,
+  calmarRatio = "0.00",
+  ulcerIndex = "0.00",
+  recoveryFactor = "1.00",
+  breachCount = 0,
+  profitFactor = "1.00"
 }) {
+
   return (
     <>
       {/* Ambient Studio Lighting Highlights */}
@@ -97,10 +103,10 @@ export function EquityHeroTelemetry({
         </div>
       </div>
 
-      {/* 4 Plain-English Apple Glass Telemetry Cards Below */}
-      <div className="p-4 sm:p-6 grid grid-cols-2 lg:grid-cols-4 gap-3 border-t border-white/[0.07] bg-white/[0.01]">
+      {/* 5 Institutional Apple Glass Telemetry Cards Below */}
+      <div className="p-4 sm:p-6 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 border-t border-white/[0.07] bg-white/[0.01]">
         <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.06]">
-          <span className="text-[11px] font-medium text-slate-400 block mb-1">Starting Capital</span>
+          <span className="text-[11px] font-medium text-slate-400 block mb-1">Starting Base</span>
           <div className="text-lg font-bold text-white font-sans">₹1,00,000.00</div>
           <span className="text-[10px] text-slate-400 block mt-0.5">1.00L Base Foundation</span>
         </div>
@@ -111,7 +117,7 @@ export function EquityHeroTelemetry({
             <Crown className="w-3.5 h-3.5 text-amber-400" />
           </div>
           <div className="text-lg font-bold text-cyan-300 font-sans">₹{peakCapital.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</div>
-          <span className="text-[10px] text-slate-400 block mt-0.5">Highest Vault Value</span>
+          <span className="text-[10px] text-slate-400 block mt-0.5">Highest Historical Ceiling</span>
         </div>
 
         <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-rose-500/20">
@@ -120,18 +126,42 @@ export function EquityHeroTelemetry({
             <Waves className="w-3.5 h-3.5 text-rose-400" />
           </div>
           <div className="text-lg font-bold text-rose-400 font-sans">-₹{maxDrawdown.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</div>
-          <span className="text-[10px] text-slate-400 block mt-0.5">Max Pullback from ATH</span>
+          <span className="text-[10px] text-slate-400 block mt-0.5">Max DD · Ulcer Index: {ulcerIndex}</span>
         </div>
 
-        <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-emerald-500/20">
+        <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-purple-500/20">
           <div className="flex items-center justify-between mb-1">
-            <span className="text-[11px] font-medium text-slate-400">Alpha Retention</span>
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="text-[11px] font-medium text-slate-400">Calmar &amp; Recovery</span>
+            <Scale className="w-3.5 h-3.5 text-purple-400" />
           </div>
-          <div className="text-lg font-bold text-emerald-300 font-sans">{retentionPct}% Retained</div>
-          <span className="text-[10px] text-slate-400 block mt-0.5">{winRate}% Win Rate · ₹{totalCharges.toFixed(0)} Drag</span>
+          <div className="text-lg font-bold text-purple-300 font-sans">{calmarRatio} Calmar</div>
+          <span className="text-[10px] text-slate-400 block mt-0.5">{recoveryFactor} Recov Factor · PF {profitFactor}</span>
+        </div>
+
+        <div className={clsx(
+          "p-3.5 rounded-2xl bg-white/[0.02] border col-span-2 md:col-span-1",
+          breachCount > 0 ? "border-amber-500/30 bg-amber-500/[0.02]" : "border-emerald-500/20"
+        )}>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[11px] font-medium text-slate-400">Capital Shield</span>
+            {breachCount > 0 ? (
+              <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+            ) : (
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+            )}
+          </div>
+          <div className={clsx(
+            "text-lg font-bold font-sans",
+            breachCount > 0 ? "text-amber-300" : "text-emerald-300"
+          )}>
+            {breachCount > 0 ? `${breachCount} Breaches` : "100% Compliant"}
+          </div>
+          <span className="text-[10px] text-slate-400 block mt-0.5">
+            {breachCount > 0 ? "⚠️ Loss >₹300 detected" : `₹250 Peg · ${retentionPct}% Retained`}
+          </span>
         </div>
       </div>
+
     </>
   );
 }

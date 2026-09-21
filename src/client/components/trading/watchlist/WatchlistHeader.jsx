@@ -1,5 +1,5 @@
 import React from "react";
-import { Zap, Radio, LayoutGrid, ListFilter } from "lucide-react";
+import { Zap, Radio, LayoutGrid, ListFilter, TrendingUp, DollarSign } from "lucide-react";
 import clsx from "clsx";
 import { soundEngine } from "../../../utils/soundEngine";
 
@@ -10,6 +10,8 @@ export const WatchlistHeader = React.memo(function WatchlistHeader({
   setSortBy,
   filteredCount,
   totalCount,
+  currencySymbol = "₹",
+  currency = "INR",
 }) {
   return (
     <div className="relative flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-white/[0.08] pb-5">
@@ -23,20 +25,22 @@ export const WatchlistHeader = React.memo(function WatchlistHeader({
             <Radio className="w-3 h-3 animate-pulse text-emerald-400" />
             NSE / BSE Realtime Tick Stream
           </span>
-          <span className="text-[10px] font-mono text-slate-400 px-2.5 py-0.5 rounded-full bg-white/[0.04] border border-white/10">
-            Avg Spread: 0.01%
+          <span className="text-[10px] font-mono text-slate-300 px-2.5 py-0.5 rounded-full bg-white/[0.04] border border-white/10 flex items-center gap-1">
+            <DollarSign className="w-3 h-3 text-cyan-400" />
+            <span>{currencySymbol} {currency}</span>
           </span>
         </div>
 
-        <h2 className="text-lg sm:text-xl font-black text-white tracking-tight">
-          Market Watchlist &amp; Liquidity Radar
+        <h2 className="text-lg sm:text-xl font-black text-white tracking-tight flex items-center gap-2">
+          <span>Market Watchlist &amp; Liquidity Radar</span>
         </h2>
         <p className="text-xs text-slate-300">
-          Real-time institutional liquidity, order depth velocity, and precision execution desk.
+          Institutional volume tracking, 52-Week range proximity, order depth velocity, and 1-click execution desk.
         </p>
       </div>
 
       <div className="flex items-center gap-3 flex-wrap self-start lg:self-auto">
+        {/* View Switcher: Cards vs Matrix */}
         <div className="flex items-center p-1 rounded-2xl bg-black/50 border border-white/10 backdrop-blur-2xl shadow-inner">
           <button
             type="button"
@@ -74,6 +78,7 @@ export const WatchlistHeader = React.memo(function WatchlistHeader({
           </button>
         </div>
 
+        {/* Sort selector */}
         <div className="relative">
           <select
             value={sortBy}
@@ -81,9 +86,11 @@ export const WatchlistHeader = React.memo(function WatchlistHeader({
             className="bg-black/50 border border-white/10 text-xs font-mono text-slate-300 rounded-xl px-3 py-1.5 focus:outline-none focus:border-white/30 cursor-pointer"
           >
             <option value="default">Default Order</option>
-            <option value="volume">Highest Liquidity</option>
-            <option value="gainers">Top Gainers (%)</option>
-            <option value="dips">Top Dips (%)</option>
+            <option value="rvol">⚡ Highest RVOL Multiplier</option>
+            <option value="gainers">▲ Top Gainers (%)</option>
+            <option value="dips">▼ Top Dips (%)</option>
+            <option value="price_high">Price: High to Low</option>
+            <option value="price_low">Price: Low to High</option>
           </select>
         </div>
 

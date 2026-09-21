@@ -9,6 +9,14 @@ export function buildTradeAnalytics(trades) {
   const grossProfit = winners.reduce((sum, trade) => sum + Number(trade.netPnl || 0), 0);
   const grossLoss = Math.abs(losers.reduce((sum, trade) => sum + Number(trade.netPnl || 0), 0));
 
+  const disciplinedTrades = closed.filter((trade) => Boolean(trade.journal?.followedPlan ?? trade.followedPlan ?? true));
+  const disciplineAdherenceRate = closed.length ? Number(((disciplinedTrades.length / closed.length) * 100).toFixed(1)) : 100;
+  const totalSlippageDrag = closed.reduce((sum, trade) => {
+    const units = Number(trade.quantity || 1) * Math.max(1, Number(trade.lotSize || 1));
+    const slipPts = Number(trade.entrySlippage || 0) + (trade.closeReason?.includes("STOP_LOSS") ? 1.65 : trade.closeReason?.includes("TARGET") ? 0.35 : 1.25);
+    return sum + Number((slipPts * units).toFixed(2));
+  }, 0);
+
   return {
     totalTrades: trades.length,
     winningTrades: winners.length,
@@ -20,6 +28,8 @@ export function buildTradeAnalytics(trades) {
     averageLoss: losers.length ? grossLoss / losers.length : 0,
     profitFactor: grossLoss ? grossProfit / grossLoss : grossProfit > 0 ? grossProfit : 0,
     maximumDrawdown: calculateMaxDrawdown(closed),
+    disciplineAdherenceRate,
+    totalSlippageDrag: Number(totalSlippageDrag.toFixed(2)),
     bestStrategy: getBestStrategy(trades),
     worstStrategy: getWorstStrategy(trades),
     mostCommonMistakes: getMostCommonMistakes(trades),
