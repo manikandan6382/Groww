@@ -3,7 +3,7 @@ import { INDEX_ASSETS } from "../constants";
 
 export function useOrderPadState() {
   const [activeAsset, setActiveAsset] = useState(INDEX_ASSETS[0]);
-  const [optionType, setOptionType] = useState("PUT");
+  const [optionType, setOptionType] = useState(INDEX_ASSETS[0]?.defaultOption || "CALL");
   const [strike, setStrike] = useState(INDEX_ASSETS[0].defaultStrike);
   const [entryPrice, setEntryPrice] = useState(INDEX_ASSETS[0].defaultEntry.toFixed(2));
   const [stopLoss, setStopLoss] = useState(INDEX_ASSETS[0].defaultSL.toFixed(2));

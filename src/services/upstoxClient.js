@@ -20,15 +20,26 @@ export class UpstoxClient extends EventEmitter {
     this.reconnectMs = RECONNECT_MS;
     this.socket = null;
     this.connected = this.connecting = this.shouldRun = this.polling = false;
+    this.connectionState = "DISCONNECTED";
     this.reconnectTimer = this.pollTimer = null;
     this.pollMs = Number(options.pollMs || LTP_POLL_MS);
     this.lastPollAt = null;
     this.lastError = "";
+    this.requestedSubscriptions = new Set();
     this.pendingSubscriptions = new Set();
-    this.activeSubscriptions = new Set();
+    this.sentSubscriptions = new Set();
+    this.observedSubscriptions = new Set();
+    this.activeSubscriptions = this.sentSubscriptions;
     this.instrumentCache = null;
     this.instrumentCacheAt = 0;
     watchSessionFile(this);
+
+    this.on("tick", (tick) => {
+      const key = tick?.key || tick?.token;
+      if (key && this.observedSubscriptions) {
+        this.observedSubscriptions.add(key);
+      }
+    });
   }
 
   isConfigured() {
@@ -48,15 +59,25 @@ export class UpstoxClient extends EventEmitter {
   }
 
   getStatus() {
+    const reqSubs = Array.from(this.requestedSubscriptions || []);
+    const pendSubs = Array.from(this.pendingSubscriptions || []);
+    const sentSubs = Array.from(this.sentSubscriptions || this.activeSubscriptions || []);
+    const obsSubs = Array.from(this.observedSubscriptions || []);
     return {
       configured: this.isConfigured(),
       connected: this.connected || Boolean(this.pollTimer),
       websocketConnected: this.connected,
       connecting: this.connecting,
+      connectionState: this.connectionState || (this.connected ? "CONNECTED" : (this.connecting ? "CONNECTING" : "DISCONNECTED")),
       polling: Boolean(this.pollTimer),
       lastPollAt: this.lastPollAt,
       lastError: this.lastError,
-      subscriptions: Array.from(new Set([...this.pendingSubscriptions, ...this.activeSubscriptions])),
+      subscriptions: reqSubs.length ? reqSubs : Array.from(new Set([...pendSubs, ...sentSubs])),
+      requestedSubscriptions: reqSubs,
+      pendingSubscriptions: pendSubs,
+      sentSubscriptions: sentSubs,
+      observedSubscriptions: obsSubs,
+      activeSubscriptions: sentSubs,
       provider: "Upstox",
     };
   }
@@ -68,7 +89,7 @@ export class UpstoxClient extends EventEmitter {
       return;
     }
     this.startPolling();
-    if (process.env.UPSTOX_ENABLE_WS === "1") this.connect();
+    if (process.env.UPSTOX_ENABLE_WS !== "0") this.connect();
   }
 
   stop() {
@@ -81,6 +102,12 @@ export class UpstoxClient extends EventEmitter {
       try { this.socket.close(); } catch {}
     }
     this.socket = null;
+    if (this.requestedSubscriptions && this.requestedSubscriptions.size > 0) {
+      this.pendingSubscriptions = new Set(this.requestedSubscriptions);
+    }
+    this.sentSubscriptions?.clear();
+    this.activeSubscriptions?.clear();
+    this.observedSubscriptions?.clear();
   }
 
   connect() {
@@ -90,20 +117,30 @@ export class UpstoxClient extends EventEmitter {
   subscribe(key) {
     const normalized = String(key || "").trim().toUpperCase();
     if (!normalized) return;
-    this.pendingSubscriptions.add(normalized);
-    if (!this.shouldRun) this.start();
+    this.requestedSubscriptions.add(normalized);
+    if (!this.sentSubscriptions.has(normalized)) {
+      this.pendingSubscriptions.add(normalized);
+    }
+    if (!this.shouldRun) {
+      this.start();
+    } else if (process.env.UPSTOX_ENABLE_WS !== "0" && !this.connected && !this.connecting) {
+      this.connect();
+    }
     this.flushSubscriptions();
   }
 
   unsubscribe(key) {
     const normalized = String(key || "").trim().toUpperCase();
     if (!normalized) return;
+    this.requestedSubscriptions.delete(normalized);
     this.pendingSubscriptions.delete(normalized);
-    if (this.connected && this.activeSubscriptions.has(normalized)) {
+    if (this.connected && this.sentSubscriptions.has(normalized)) {
       this.sendJson({ guid: `unsub-${Date.now()}`, method: "unsub", data: { instrumentKeys: [normalized] } });
     }
+    this.sentSubscriptions.delete(normalized);
     this.activeSubscriptions.delete(normalized);
-    if (!this.pendingSubscriptions.size && !this.activeSubscriptions.size) this.stopPolling();
+    this.observedSubscriptions.delete(normalized);
+    if (!this.requestedSubscriptions.size) this.stopPolling();
   }
 
   async resolveOptionToken(trade) {
@@ -115,7 +152,7 @@ export class UpstoxClient extends EventEmitter {
   }
 
   flushSubscriptions() {
-    flushUpstoxSubscriptions(this);
+    return flushUpstoxSubscriptions(this);
   }
 
   startPolling() {

@@ -1,11 +1,15 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useLivePriceStore } from "../../../stores/useLivePriceStore";
-import { useTradingStore, resolveIndexLotSize } from "../../../stores/useTradingStore";
+import { useTradingStore, resolveIndexLotSize, resolveLiveTickPrice, isMarketOpenHours } from "../../../stores/useTradingStore";
 import { soundEngine } from "../../../utils/soundEngine";
 import { parseFiniteNumber, calculateEstimatedCharges } from "./liveCardHelpers";
 
 export function useLiveAlertCardState({ item, onClose }) {
   const { squareOffTrade, adjustStopLoss, adjustTargetPrice, updateTargetPrice, updateStopLossPrice, setBreakevenSL, payMyself, setSimulatorActiveTradeId } = useTradingStore();
+  const focusMode = useTradingStore((s) => s.focusMode || "cash");
+  const setFocusMode = useTradingStore((s) => s.setFocusMode);
+  const isGlobalLiquidating = useTradingStore((s) => s.isGlobalLiquidating || false);
+
   const id = item.id;
   const symbol = String(item.symbol || item.tradingsymbol || "NIFTY 24500 CE");
   const rawEntry = parseFiniteNumber(item.entryPrice ?? item.entry_price, 0);
@@ -30,6 +34,8 @@ export function useLiveAlertCardState({ item, onClose }) {
   const [isScaling, setIsScaling] = useState(false);
   const [showInfoSheet, setShowInfoSheet] = useState(false);
   const [isFeedStalled, setIsFeedStalled] = useState(false);
+  const [isStaleOffline, setIsStaleOffline] = useState(false);
+  const [isMarketOpen, setIsMarketOpen] = useState(() => isMarketOpenHours());
   const [latencyMs, setLatencyMs] = useState(18);
   const [soundMuted, setSoundMuted] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState("steppers");
@@ -37,7 +43,6 @@ export function useLiveAlertCardState({ item, onClose }) {
   const [customTargetVal, setCustomTargetVal] = useState("");
   const [editingSl, setEditingSl] = useState(false);
   const [customSlVal, setCustomSlVal] = useState("");
-  const [focusMode, setFocusMode] = useState("cash"); // 'cash' | 'points'
   const [elapsedSeconds, setElapsedSeconds] = useState(() => {
     const start = new Date(item.entryDatetime || Date.now()).getTime();
     return Math.max(0, Math.floor((Date.now() - start) / 1000));
@@ -62,7 +67,13 @@ export function useLiveAlertCardState({ item, onClose }) {
   trackingRef.current = { id, entry, target, stopLoss, autoTrailBE, hasAutoLockedBE, isShort, totalQty, squareOffTrade, onClose, setBreakevenSL, soundMuted };
 
   useEffect(() => {
-    const hb = setInterval(() => { setIsFeedStalled(Date.now() - lastTickTimeRef.current > 3500); }, 1000);
+    const hb = setInterval(() => {
+      const open = isMarketOpenHours();
+      setIsMarketOpen(open);
+      const elapsed = Date.now() - lastTickTimeRef.current;
+      setIsFeedStalled(elapsed > 3500);
+      setIsStaleOffline(open && elapsed > 5000);
+    }, 1000);
     return () => {
       clearInterval(hb);
       if (tickTimerRef.current) clearTimeout(tickTimerRef.current);
@@ -70,25 +81,33 @@ export function useLiveAlertCardState({ item, onClose }) {
     };
   }, []);
 
+  // Initial Price Mounting Invariant:
+  // Scoped to [id, symbol] ONLY. Never re-trigger on every 5s polling cycle, and never wipe tick history
   useEffect(() => {
-    const existing = (item.serverId && useLivePriceStore.getState().ticks?.[item.serverId]) || useLivePriceStore.getState().ticks?.[id] || useLivePriceStore.getState().ticks?.[symbol];
-    if (existing?.ltp) {
-      const p = Number(existing.ltp);
-      lastLtpRef.current = p;
-      setCurrentLtp(p);
-      setTickHistory([p]);
+    const p = resolveLiveTickPrice(useLivePriceStore.getState().ticks, item);
+    if (p > 0) {
+      if (lastLtpRef.current === entry || lastLtpRef.current === 0) {
+        lastLtpRef.current = p;
+        setCurrentLtp(p);
+        setTickHistory((prev) => (prev.length <= 1 ? [p] : prev));
+      }
     }
-  }, [id, item.serverId, symbol]);
+  }, [id, symbol]);
 
   useEffect(() => {
-    if (!id && !item.serverId) return;
+    if (!id && !item.serverId && !symbol) return;
     return useLivePriceStore.subscribe(
-      (state) => (item.serverId && state.ticks?.[item.serverId]) || state.ticks?.[id] || state.ticks?.[symbol],
-      (tick) => {
-        if (!tick) return;
-        const ltp = Number(tick.ltp || tick.price || entry);
-        if (!Number.isFinite(ltp) || ltp <= 0) return;
+      (state) => resolveLiveTickPrice(state.ticks, item),
+      (ltp) => {
+        if (!ltp || !Number.isFinite(ltp) || ltp <= 0) return;
         if (entry >= 20.0 && ltp <= 0.10) return; // Ignore ghost zero ticks from unliquid / uninitialized feeds
+        
+        // Anti-Flicker Monotonicity Invariant:
+        // Never snap back to static entryPrice if real-time market price has already moved away from entry
+        if (ltp === entry && lastLtpRef.current !== entry && lastLtpRef.current > 0) {
+          return;
+        }
+
         lastTickTimeRef.current = Date.now();
         setLatencyMs(Math.floor(12 + Math.random() * 10));
         setIsFeedStalled(false);
@@ -111,32 +130,11 @@ export function useLiveAlertCardState({ item, onClose }) {
           });
         }
 
-        const { id: tId, entry: ent, target: tgt, stopLoss: sl, autoTrailBE: aBE, hasAutoLockedBE: lBE, isShort: sPos, squareOffTrade: sqOff, onClose: cFn, setBreakevenSL: sBESL, soundMuted: sMuted } = trackingRef.current;
-        const ptsDelta = sPos ? (ent - ltp) : (ltp - ent);
-        const tgtSpan = Math.abs(tgt - ent);
-        if (aBE && !lBE && tgtSpan > 2.0 && ptsDelta >= tgtSpan * 0.45) {
-          if (sPos ? sl > ent : sl < ent) {
-            sBESL(tId, ltp);
-            setHasAutoLockedBE(true);
-            if (!sMuted) soundEngine.playBreakevenTone();
-          }
-        }
-
-        if (isExecutingRef.current) return;
-        const isSlHit = sPos ? (sl > 0 && ltp >= sl) : (sl > 0 && ltp <= sl);
-        const isTgtHit = sPos ? (tgt > 0 && ltp <= tgt) : (tgt > 0 && ltp >= tgt);
-        if (isSlHit) {
-          isExecutingRef.current = true;
-          if (!sMuted) soundEngine.playStopLossTone();
-          const triggerPrice = sl > 0 ? sl : ltp;
-          const r = (sPos ? triggerPrice < ent : triggerPrice > ent) ? "TRAILING_SL_HIT" : "STOP_LOSS_HIT";
-          if (sqOff) sqOff(tId, triggerPrice, r); else if (cFn) cFn(tId, triggerPrice, r);
-        } else if (isTgtHit) {
-          isExecutingRef.current = true;
-          if (!sMuted) soundEngine.playTargetChime();
-          const triggerPrice = tgt > 0 ? tgt : ltp;
-          if (sqOff) sqOff(tId, triggerPrice, "TARGET_HIT"); else if (cFn) cFn(tId, triggerPrice, "TARGET_HIT");
-        }
+        // STAGE 1 & STAGE 4 ARCHITECTURE INVARIANT:
+        // The .NET 8 RMS backend is the sole authoritative execution authority.
+        // The client card is strictly a presentation and telemetry layer.
+        // It does NOT independently execute STOP_LOSS, TARGET, HARD_CAP, or BREAKEVEN exits.
+        // Authoritative exits are evaluated server-side and received via SSE / WebSocket.
       }
     );
   }, [id, item.serverId, symbol, entry]);
@@ -166,11 +164,11 @@ export function useLiveAlertCardState({ item, onClose }) {
     currentLtp, tickHistory, tickDirection, isGain, pts, grossRupees, netRupees, roiPct,
     estimatedCharges, autoTrailBE, setAutoTrailBE, hasAutoLockedBE,
     isClosing, setIsClosing, isScaling, setIsScaling, showInfoSheet, setShowInfoSheet,
-    isFeedStalled, latencyMs, soundMuted, setSoundMuted, activeSubTab, setActiveSubTab,
+    isFeedStalled, isStaleOffline, isMarketOpen, latencyMs, soundMuted, setSoundMuted, activeSubTab, setActiveSubTab,
     editingTarget, setEditingTarget, customTargetVal, setCustomTargetVal,
     editingSl, setEditingSl, customSlVal, setCustomSlVal,
     focusMode, setFocusMode, elapsedSeconds, isThetaStagnant,
     squareOffTrade, adjustStopLoss, adjustTargetPrice, updateTargetPrice, updateStopLossPrice,
-    setBreakevenSL, payMyself, setSimulatorActiveTradeId, isExecutingRef
+    setBreakevenSL, payMyself, setSimulatorActiveTradeId, isExecutingRef, isGlobalLiquidating
   };
 }

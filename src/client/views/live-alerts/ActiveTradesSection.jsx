@@ -7,8 +7,7 @@ export function ActiveTradesSection({
   activeTradesViewMode,
   setActiveTradesViewMode,
   onSquareOffAll,
-  onCloseTrade,
-  onAutoDeploy
+  onCloseTrade
 }) {
   React.useEffect(() => {
     const handleKeyDown = (e) => {
@@ -43,7 +42,6 @@ export function ActiveTradesSection({
         openAlerts={openAlerts}
         activeTradesViewMode={activeTradesViewMode}
         onCloseTrade={onCloseTrade}
-        onAutoDeploy={onAutoDeploy}
       />
     </div>
   );

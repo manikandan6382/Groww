@@ -13,6 +13,8 @@ import {
   toLocalDateTimeInput,
 } from "./paper-account.js";
 
+import { getOperationByTradeId, recordOperationStage, STAGES, RECONCILIATION_STATES } from "../services/engine/operationJournal.js";
+
 export { calculateFrictionAndCharges, calculateEntrySlippage };
 
 export function getPaperLab({ range = "all", from, to } = {}) {
@@ -42,7 +44,7 @@ export function createPaperTrade(input = {}) {
   return getTradeById(trade.id);
 }
 
-export function markPaperTrade(id, { price, reason = "MARK_ONLY" } = {}) {
+export function markPaperTrade(id, { price, reason = "MARK_ONLY", exactFill = false } = {}) {
   const db = getDb();
   const trade = getTradeById(id);
   assertPaperTrade(trade);
@@ -64,7 +66,7 @@ export function markPaperTrade(id, { price, reason = "MARK_ONLY" } = {}) {
     `).run(markPrice, now, trade.id);
 
     if (trigger.shouldClose) {
-      closePaperTradeInTransaction(db, trade, markPrice, trigger.closeReason, now);
+      closePaperTradeInTransaction(db, trade, markPrice, trigger.closeReason, now, { exactFill });
     }
     refreshPaperCapital(db);
     db.exec("COMMIT;");
@@ -80,7 +82,7 @@ export function markPaperTrade(id, { price, reason = "MARK_ONLY" } = {}) {
   };
 }
 
-export function closePaperTrade(id, { price, reason = "MANUAL_EXIT" } = {}) {
+export function closePaperTrade(id, { price, reason = "MANUAL_EXIT", exactFill = false } = {}) {
   const db = getDb();
   const trade = getTradeById(id);
   assertPaperTrade(trade);
@@ -95,9 +97,17 @@ export function closePaperTrade(id, { price, reason = "MANUAL_EXIT" } = {}) {
 
   db.exec("BEGIN;");
   try {
-    closePaperTradeInTransaction(db, trade, exitPrice, reason, toLocalDateTimeInput(new Date()));
+    closePaperTradeInTransaction(db, trade, exitPrice, reason, toLocalDateTimeInput(new Date()), { exactFill });
     refreshPaperCapital(db);
     db.exec("COMMIT;");
+    try {
+      const op = getOperationByTradeId(id, db);
+      if (op) {
+        recordOperationStage(op.operation_id, STAGES.FINAL_SETTLEMENT_COMMITTED, {
+          reconciliationState: RECONCILIATION_STATES.COMPLETED,
+        }, db);
+      }
+    } catch {}
   } catch (error) {
     db.exec("ROLLBACK;");
     throw error;

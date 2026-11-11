@@ -47,6 +47,14 @@ export function SettledTradeForensicDrawer({
   const lotSize = Number(trade.lotSize || 65);
   const totalQty = Number(trade.totalQty || (rawQty >= lotSize ? rawQty : rawQty * lotSize) || 65);
 
+  const slPrice = Number(trade.stopLoss || 0);
+  const exitPrice = Number(trade.exitPrice || 0);
+  const isSlTrade = trade.closeReason?.includes("STOP_LOSS") || trade.closeReason?.includes("HARD_CAP");
+  const exitSlippagePts = (isSlTrade && slPrice > 0 && exitPrice > 0)
+    ? Number(Math.max(0, trade.direction === "SHORT" ? exitPrice - slPrice : slPrice - exitPrice).toFixed(2))
+    : 0;
+  const exitSlippageRupees = Number((exitSlippagePts * totalQty).toFixed(2));
+
   const unharvestedPts = Math.max(0, Number((excursion.mfePts - (trade.exitPrice > trade.entryPrice ? trade.exitPrice - trade.entryPrice : 0)).toFixed(2)));
   const unharvestedRupees = Math.round(unharvestedPts * totalQty);
 
@@ -70,6 +78,16 @@ export function SettledTradeForensicDrawer({
           </span>
           <span className="text-slate-400 font-mono text-[11px]">
             {trade.symbol} · {totalQty} Qty ({trade.lots || Math.round(totalQty / lotSize)} Lots)
+          </span>
+          <span className={clsx(
+            "text-[10px] font-mono font-bold px-2 py-0.5 rounded border shadow-sm",
+            (trade.executionAttribution || "").includes("NSE") || trade.closeReason?.includes("TARGET")
+              ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+              : (trade.executionAttribution || "").includes("RMS") || trade.closeReason?.includes("SL") || trade.closeReason?.includes("HARD_CAP")
+              ? "bg-cyan-500/15 text-cyan-300 border-cyan-500/30"
+              : "bg-slate-500/15 text-slate-300 border-slate-500/30"
+          )}>
+            {trade.executionAttribution || (trade.closeReason?.includes("TARGET") ? "⚡ NSE RESTING LIMIT" : "🛡️ RMS ALGO MLO")}
           </span>
           {isRuleBreached ? (
             <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold text-rose-300 bg-rose-500/20 px-2 py-0.5 rounded border border-rose-500/40">
@@ -143,6 +161,14 @@ export function SettledTradeForensicDrawer({
                 {excursion.entrySlippageRupees > 0 && ` (₹${excursion.entrySlippageRupees})`}
               </span>
             </div>
+            {isSlTrade && (
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400 font-sans">Exit Slippage:</span>
+                <span className={clsx("font-bold", exitSlippagePts > 0 ? "text-rose-400" : "text-emerald-400")}>
+                  {exitSlippagePts > 0 ? `-${exitSlippagePts} pts (-₹${exitSlippageRupees})` : "0.00 pts (Clean fill)"}
+                </span>
+              </div>
+            )}
             <div className="flex items-center justify-between text-xs">
               <span className="text-slate-400 font-sans">Duration:</span>
               <span className="text-cyan-300 flex items-center gap-1">
@@ -160,7 +186,16 @@ export function SettledTradeForensicDrawer({
               <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
               <span>MFE / MAE Excursion</span>
             </span>
-            <span className="text-[10px] text-slate-500">Run-up vs Drawdown</span>
+            <span className={clsx(
+              "text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border",
+              excursion.dataQuality === "OBSERVED"
+                ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                : excursion.dataQuality === "PARTIAL"
+                ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                : "bg-slate-500/15 text-slate-400 border-slate-500/30"
+            )}>
+              {excursion.dataQuality || "UNAVAILABLE"}
+            </span>
           </div>
 
           <div className="space-y-2">
@@ -168,36 +203,48 @@ export function SettledTradeForensicDrawer({
               <div className="flex items-center justify-between text-[11px] mb-1">
                 <span className="text-emerald-400 font-bold font-sans">MFE (Peak):</span>
                 <span className="text-emerald-300 font-bold">
-                  +{excursion.mfePts} pts (+₹{excursion.mfeRupees})
+                  {excursion.isAvailable ? `+${excursion.mfePts} pts (+₹${excursion.mfeRupees})` : "—"}
                 </span>
               </div>
-              <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-emerald-500 transition-all rounded-full" 
-                  style={{ width: `${Math.min(100, excursion.targetPctReached)}%` }} 
-                />
-              </div>
-              <span className="text-[9px] text-slate-500 block mt-0.5">
-                {excursion.targetPctReached}% of ₹500 target
-              </span>
+              {excursion.isAvailable ? (
+                <>
+                  <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-emerald-500 transition-all rounded-full" 
+                      style={{ width: `${Math.min(100, excursion.targetPctReached)}%` }} 
+                    />
+                  </div>
+                  <span className="text-[9px] text-slate-500 block mt-0.5">
+                    {excursion.targetPctReached}% of ₹500 target{excursion.isPartial ? " (Partial Extrema)" : ""}
+                  </span>
+                </>
+              ) : (
+                <span className="text-[9px] text-slate-500 block mt-0.5">No recorded tick history (Unavailable)</span>
+              )}
             </div>
 
             <div>
               <div className="flex items-center justify-between text-[11px] mb-1">
                 <span className="text-rose-400 font-bold font-sans">MAE (Drawdown):</span>
                 <span className="text-rose-300 font-bold">
-                  -{excursion.maePts} pts (-₹{excursion.maeRupees})
+                  {excursion.isAvailable ? `-${excursion.maePts} pts (-₹${excursion.maeRupees})` : "—"}
                 </span>
               </div>
-              <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-rose-500 transition-all rounded-full" 
-                  style={{ width: `${Math.min(100, excursion.slPctDrawnDown)}%` }} 
-                />
-              </div>
-              <span className="text-[9px] text-slate-500 block mt-0.5">
-                {excursion.slPctDrawnDown}% of ₹250 SL risk
-              </span>
+              {excursion.isAvailable ? (
+                <>
+                  <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-rose-500 transition-all rounded-full" 
+                      style={{ width: `${Math.min(100, excursion.slPctDrawnDown)}%` }} 
+                    />
+                  </div>
+                  <span className="text-[9px] text-slate-500 block mt-0.5">
+                    {excursion.slPctDrawnDown}% of ₹250 SL risk{excursion.isPartial ? " (Partial Extrema)" : ""}
+                  </span>
+                </>
+              ) : (
+                <span className="text-[9px] text-slate-500 block mt-0.5">No recorded tick history (Unavailable)</span>
+              )}
             </div>
 
             {unharvestedRupees > 50 && (
@@ -215,31 +262,57 @@ export function SettledTradeForensicDrawer({
               <Receipt className="w-3.5 h-3.5 text-cyan-400" />
               <span>Statutory Friction</span>
             </span>
-            <span className="text-[10px] text-slate-500">Real Upstox Rates</span>
+            <span className="text-[10px] text-slate-500">{charges != null ? "Authoritative Persisted" : "Incomplete"}</span>
           </div>
 
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-400 font-sans">Gross Realized:</span>
-              <span className={clsx("font-bold", gross >= 0 ? "text-emerald-300" : "text-rose-300")}>
-                {gross >= 0 ? "+" : ""}₹{gross.toFixed(2)}
-              </span>
+          {charges != null ? (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400 font-sans">Gross Realized:</span>
+                <span className={clsx("font-bold", gross >= 0 ? "text-emerald-300" : "text-rose-300")}>
+                  {gross >= 0 ? "+" : ""}₹{gross.toFixed(2)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400 font-sans">Flat Brokerage:</span>
+                <span className="text-slate-300">₹40.00 (Buy+Sell)</span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400 font-sans">STT + Turnover + GST:</span>
+                <span className="text-slate-300">₹{Math.max(0, charges - 40).toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between text-xs pt-1 border-t border-white/5">
+                <span className="text-slate-400 font-sans">Net P&amp;L:</span>
+                <strong className={clsx("font-black", net >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                  {net >= 0 ? "+" : ""}₹{net.toFixed(2)}
+                </strong>
+              </div>
             </div>
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-400 font-sans">Flat Brokerage:</span>
-              <span className="text-slate-300">₹40.00 (Buy+Sell)</span>
+          ) : (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400 font-sans">Gross Realized:</span>
+                <span className={clsx("font-bold", gross >= 0 ? "text-emerald-300" : "text-rose-300")}>
+                  {gross >= 0 ? "+" : ""}₹{gross.toFixed(2)}
+                </span>
+              </div>
+              <div className="text-[10px] text-amber-300 bg-amber-500/10 p-2 rounded-xl border border-amber-500/20 font-sans">
+                Authoritative charges not persisted in database. Incomplete financial record.
+              </div>
             </div>
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-400 font-sans">STT + Turnover + GST:</span>
-              <span className="text-slate-300">₹{Math.max(0, charges - 40).toFixed(2)}</span>
+          )}
+            <div className="flex items-center justify-between text-[11px] pt-1 border-t border-white/5 text-slate-400">
+              <span className="font-sans">Planned Net Risk:</span>
+              <span className="text-slate-300">₹{plannedRiskRupees}</span>
             </div>
-            <div className="flex items-center justify-between text-xs pt-1 border-t border-white/5">
-              <span className="text-slate-400 font-sans">Net P&amp;L:</span>
-              <strong className={clsx("font-black", net >= 0 ? "text-emerald-400" : "text-rose-400")}>
-                {net >= 0 ? "+" : ""}₹{net.toFixed(2)}
-              </strong>
-            </div>
-          </div>
+            {isRuleBreached && (
+              <div className="text-[10px] text-rose-300 bg-rose-500/10 p-2 rounded-xl border border-rose-500/20 font-sans space-y-0.5 mt-1">
+                <div className="font-bold text-rose-200">⚠️ Risk Excursion Anatomy:</div>
+                <div className="text-[9px] text-rose-300/90 font-mono">
+                  Slippage: -₹{exitSlippageRupees.toFixed(0)} · Fees: -₹{charges != null ? charges.toFixed(0) : "—"}
+                </div>
+              </div>
+            )}
         </div>
 
         {/* Card 4: Invariant Audit & Mistake Tag Editor */}

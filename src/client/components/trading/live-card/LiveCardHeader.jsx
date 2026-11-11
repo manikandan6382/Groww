@@ -11,6 +11,8 @@ export const LiveCardHeader = ({
   strategyTag,
   latencyMs,
   isFeedStalled,
+  isStaleOffline = false,
+  isMarketOpen = true,
   soundMuted,
   setSoundMuted,
   setShowInfoSheet,
@@ -42,7 +44,7 @@ export const LiveCardHeader = ({
               <span>FREE ROLL • ZERO RISK</span>
             </span>
           )}
-          {isLiveBroker && (
+          {isLiveBroker && isMarketOpen && (
             <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
               LIVE
             </span>
@@ -72,7 +74,17 @@ export const LiveCardHeader = ({
 
       <div className="flex items-center gap-2">
         <div className="flex items-center gap-1 px-2 py-1 rounded bg-black/40 border border-white/5 text-[10px] font-mono">
-          {isFeedStalled ? (
+          {!isMarketOpen ? (
+            <span className="text-slate-400 flex items-center gap-1 font-bold">
+              <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+              <span>MARKET CLOSED</span>
+            </span>
+          ) : isStaleOffline ? (
+            <span className="text-rose-400 flex items-center gap-1 font-bold animate-pulse">
+              <AlertTriangle className="w-3 h-3 text-rose-400" />
+              <span>STALE / OFFLINE</span>
+            </span>
+          ) : isFeedStalled ? (
             <span className="text-amber-400 flex items-center gap-1">
               <AlertTriangle className="w-3 h-3 animate-pulse" />
               <span>FEED STALLED</span>

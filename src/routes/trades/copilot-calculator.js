@@ -1,4 +1,5 @@
 import { calculateGreeks } from "../../services/greeksEngine.js";
+import { calculateStatutoryCharges } from "../../client/stores/slices/tradeHelpers.js";
 
 export function getMarketTimingRegime(now = new Date()) {
   const istMinsTotal = (now.getUTCHours() * 60 + now.getUTCMinutes() + 330) % 1440;
@@ -36,7 +37,7 @@ export function computeCopilotRiskMath({ symbol, optionLtp, liveGreeks }) {
   const riskRupees = Number((slDistance * lotSize).toFixed(2));
   const rewardRupees = Number((t2Distance * lotSize).toFixed(2));
 
-  const estimatedFriction = Number((55.20 + (optionLtp * lotSize * 0.001)).toFixed(2));
+  const estimatedFriction = calculateStatutoryCharges(optionLtp, optionLtp, lotSize, "LONG");
   const slippageDrag = Number((0.5 * lotSize).toFixed(2));
   const netRiskRupees = Number((riskRupees + estimatedFriction + slippageDrag).toFixed(2));
   const netRewardRupees = Number((rewardRupees - estimatedFriction - slippageDrag).toFixed(2));

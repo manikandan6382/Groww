@@ -3,9 +3,11 @@ import { Clock, Lock, AlertTriangle, RefreshCw, Sparkles, ShieldCheck, Zap, Shie
 import clsx from "clsx";
 import { soundEngine } from "../../../../utils/soundEngine";
 import { isIndianMarketOpenHours } from "../../../../utils/dateUtils";
+import { useTradingStore } from "../../../../stores/useTradingStore";
 
 export function CockpitCommandBar({
   copilotState,
+  canonicalPlan,
   optionType,
   underlying,
   strikePrice,
@@ -29,9 +31,15 @@ export function CockpitCommandBar({
   totalQty = 65,
   tiltSecondsRemaining = 0,
   strategyMode = "OUTRIGHT",
-  onToggleSpreadMode
+  onToggleSpreadMode,
+  testingMode = false
 }) {
   const isMarketHours = isIndianMarketOpenHours();
+  const brokerStatus = useTradingStore((s) => s.brokerStatus);
+  const testingRestrictionMode = useTradingStore((s) => s.testingRestrictionMode);
+  const isUnrestricted = Boolean(testingMode && testingRestrictionMode === "UNRESTRICTED");
+  const isMarketHoliday = Boolean(brokerStatus?.marketHoliday);
+  const holidayName = brokerStatus?.holidayName || "Market Holiday";
 
   return (
     <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -164,20 +172,29 @@ export function CockpitCommandBar({
         <button
           type="button"
           onClick={on1ClickAutoDeploy}
-          disabled={tiltSecondsRemaining > 0 || isDailyCapReached || !copilotState.canDeploy || !isValidSL || !isValidTarget || isDeploying}
+          disabled={isDeploying || (!isUnrestricted && isMarketHoliday) || (tiltSecondsRemaining > 0 && !isUnrestricted) || (!isUnrestricted && isDailyCapReached) || !copilotState.canDeploy || (!isUnrestricted && !canonicalPlan?.isCompliant) || !canonicalPlan?.isStopLossValid || !canonicalPlan?.isTargetValid}
           className={clsx(
             "w-full sm:w-auto px-5 py-2.5 rounded-xl text-xs font-bold font-mono transition-all flex items-center justify-center gap-2 shrink-0 active:scale-95 shadow-lg cursor-pointer",
-            tiltSecondsRemaining > 0
+            (isMarketHoliday && !isUnrestricted)
+              ? "bg-amber-950/60 text-amber-300/90 border border-amber-500/40 cursor-not-allowed opacity-90 shadow-[0_0_20px_rgba(245,158,11,0.2)]"
+              : (tiltSecondsRemaining > 0 && !isUnrestricted)
               ? "bg-rose-950/60 text-rose-300/80 border border-rose-500/40 cursor-not-allowed opacity-90 shadow-[0_0_20px_rgba(244,63,94,0.15)]"
               : isDeploying
               ? "opacity-75 cursor-wait"
-              : isDailyCapReached || !isValidSL || !isValidTarget
-              ? "bg-amber-950/60 text-amber-300/80 border border-amber-500/30 cursor-not-allowed opacity-80"
+              : (!canonicalPlan?.isStopLossValid || !canonicalPlan?.isTargetValid)
+              ? "bg-rose-950/60 text-rose-300/90 border border-rose-500/40 cursor-not-allowed opacity-90"
+              : ((isDailyCapReached || !canonicalPlan?.isCompliant) && !isUnrestricted)
+              ? "bg-rose-950/60 text-rose-300/90 border border-rose-500/40 cursor-not-allowed opacity-90"
               : copilotState.buttonClass
           )}
-          title={tiltSecondsRemaining > 0 ? `Anti-Tilt cooling active (${tiltSecondsRemaining}s)` : copilotState.canDeploy ? "Instant 1-Click Execution anchored to pre-flight risk gate (Ctrl+Enter)" : "Regime locked"}
+          title={isMarketHoliday ? `Market closed for ${holidayName}` : tiltSecondsRemaining > 0 ? `Anti-Tilt cooling active (${tiltSecondsRemaining}s)` : canonicalPlan?.isCompliant ? "Instant 1-Click Execution anchored to pre-flight risk gate (Ctrl+Enter)" : "Deployment locked: Invariant check failed"}
         >
-          {tiltSecondsRemaining > 0 ? (
+          {(isMarketHoliday && !isUnrestricted) ? (
+            <>
+              <ShieldX className="w-4 h-4 text-amber-400" />
+              <span>Market Closed: {holidayName}</span>
+            </>
+          ) : (tiltSecondsRemaining > 0 && !isUnrestricted) ? (
             <>
               <ShieldX className="w-4 h-4 text-rose-400 animate-pulse" />
               <span>Anti-Tilt Shield ({tiltSecondsRemaining}s)</span>
@@ -187,29 +204,39 @@ export function CockpitCommandBar({
               <RefreshCw className="w-4 h-4 animate-spin text-black" />
               <span>Arming Order...</span>
             </>
-          ) : isVaultRunning ? (
+          ) : isVaultRunning && !testingMode && activeQuotaMode !== "UNLIMITED_TESTING" ? (
             <>
               <Clock className="w-4 h-4 animate-spin text-cyan-300" />
               <span>Vault Active ({vaultFormattedTime})</span>
             </>
-          ) : isDailyCapReached ? (
+          ) : (isDailyCapReached && !isUnrestricted) ? (
             <>
               <Lock className="w-4 h-4 text-amber-400" />
               <span>Daily Quota Reached</span>
             </>
-          ) : !isValidSL ? (
+          ) : !canonicalPlan?.isStopLossValid ? (
             <>
-              <AlertTriangle className="w-4 h-4 text-amber-400" />
+              <AlertTriangle className="w-4 h-4 text-rose-400" />
               <span>Inverted Stop Loss</span>
             </>
-          ) : !isValidTarget ? (
+          ) : !canonicalPlan?.isTargetValid ? (
             <>
-              <AlertTriangle className="w-4 h-4 text-amber-400" />
+              <AlertTriangle className="w-4 h-4 text-rose-400" />
               <span>Inverted Target</span>
+            </>
+          ) : (!canonicalPlan?.isRiskCeilingSatisfied && !isUnrestricted) ? (
+            <>
+              <ShieldX className="w-4 h-4 text-rose-400" />
+              <span>Risk ₹{canonicalPlan?.modelledNetRisk.toFixed(0)} &gt; ₹300 Cap</span>
+            </>
+          ) : (!canonicalPlan?.isRewardToRiskSatisfied && !isUnrestricted) ? (
+            <>
+              <ShieldX className="w-4 h-4 text-rose-400" />
+              <span>R:R 1:{canonicalPlan?.netRewardToRiskRatio.toFixed(2)} &lt; 2:1 Min</span>
             </>
           ) : (
             <>
-              <span>{copilotState.buttonText}</span>
+              <span>{copilotState.buttonText || (testingMode ? "⚡ DEPLOY TESTING TRADE" : "⚡ DEPLOY TRADE")}</span>
               <kbd className="hidden sm:inline-block ml-1 px-1.5 py-0.5 text-[9px] font-mono rounded bg-black/25 border border-black/20 text-black font-extrabold tracking-tight">
                 ⌘↵
               </kbd>
@@ -218,10 +245,25 @@ export function CockpitCommandBar({
         </button>
 
         <div className="flex items-center gap-2 font-mono text-[10px] text-slate-400 text-right">
-          <ShieldCheck className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-          <span className="text-slate-300 font-semibold">{lots} Lot ({totalQty} Qty) · Risk Cap ₹260</span>
-          <span>·</span>
-          <span className="text-cyan-300 font-medium">1:2.00 Validated</span>
+          {canonicalPlan?.isCompliant ? (
+            <>
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span className="text-slate-300 font-semibold">{lots} Lot ({totalQty} Qty) · Net Risk ₹{canonicalPlan.modelledNetRisk.toFixed(0)}</span>
+              <span>·</span>
+              <span className="text-emerald-300 font-medium">1:{canonicalPlan.netRewardToRiskRatio.toFixed(2)} Net Validated</span>
+            </>
+          ) : (
+            <>
+              <ShieldX className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+              <span className="text-rose-300 font-semibold">
+                {canonicalPlan ? `Net Risk ₹${canonicalPlan.modelledNetRisk.toFixed(0)} (${canonicalPlan.isRiskCeilingSatisfied ? "OK" : "> ₹300"})` : `${lots} Lot`}
+              </span>
+              <span>·</span>
+              <span className="text-rose-300 font-medium">
+                {canonicalPlan ? `1:${canonicalPlan.netRewardToRiskRatio.toFixed(2)} Net (${canonicalPlan.isRewardToRiskSatisfied ? "OK" : "< 2:1"})` : "Non-Compliant"}
+              </span>
+            </>
+          )}
         </div>
       </div>
     </div>

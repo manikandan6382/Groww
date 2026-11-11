@@ -6,17 +6,20 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "server": "node src/web-server.js",
+    "server": "dotnet run --project server-dotnet/TradingSystem.Api",
     "client": "vite src/client --port 3003",
-    "dev": "concurrently -n \"BACKEND,FRONTEND\" -c \"blue,cyan\" \"node -e \\\"process.env.PORT='3004'; import('./src/web-server.js')\\\"\" \"vite src/client\"",
+    "dev": "concurrently --restart-tries -1 --restart-after 1000 -n \"DOTNET,NODE,FRONTEND\" -c \"magenta,green,cyan\" \"dotnet run --project server-dotnet/TradingSystem.Api\" \"node src/web-server.js\" \"vite src/client\"",
+    "build:backend": "dotnet build server-dotnet",
+    "test:backend": "dotnet test server-dotnet",
     "audit:scope": "node scripts/audit-bindings.mjs",
     "predev": "node scripts/audit-bindings.mjs",
     "prebuild": "node scripts/audit-bindings.mjs",
     "build": "vite build src/client",
-    "dashboard": "npm run build && node src/web-server.js",
+    "dashboard": "npm run build && dotnet run --project server-dotnet/TradingSystem.Api",
     "smoke": "node scripts/smoke.js",
     "token:refresh": "node scripts/upstox-token-refresh.js",
-    "backup": "node scripts/backup-database.js"
+    "backup": "node scripts/backup-database.js",
+    "test:e2e": "playwright test"
   },
   "engines": {
     "node": ">=24"
@@ -26,12 +29,15 @@
     "framer-motion": "^11.18.2",
     "lightweight-charts": "^5.2.1",
     "lucide-react": "^0.475.0",
+    "protobufjs": "^8.8.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tailwind-merge": "^3.0.1",
+    "ws": "^8.22.0",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
     "concurrently": "^9.1.2",

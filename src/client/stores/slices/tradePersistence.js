@@ -10,6 +10,25 @@ export function debounceNetworkSync(key, fn, delay = 300) {
   networkDebounceTimers.set(key, timer);
 }
 
+let deploySyncLockUntil = 0;
+export function lockDeploySync(durationMs = 1500) {
+  deploySyncLockUntil = Date.now() + durationMs;
+}
+export function isDeploySyncLocked() {
+  return Date.now() < deploySyncLockUntil;
+}
+
+let openAlertsStorageTimer = null;
+export function debounceOpenAlertsStorage(alerts, delay = 250) {
+  if (typeof localStorage === "undefined") return;
+  if (openAlertsStorageTimer) clearTimeout(openAlertsStorageTimer);
+  openAlertsStorageTimer = setTimeout(() => {
+    try {
+      localStorage.setItem("portfoliox_open_alerts", JSON.stringify(alerts));
+    } catch {}
+  }, delay);
+}
+
 export const activeSquaringOffIds = new Set();
 
 export const deletedTradeIdSet = new Set((() => {
@@ -58,6 +77,50 @@ export async function commitTradeDeletionToBackend(id) {
 export const tradeIdMap = new Map();
 export const pendingPartialCloseQueue = new Map();
 
+export const closedTradeTombstones = new Map((() => {
+  try {
+    const raw = typeof localStorage !== "undefined" ? localStorage.getItem("portfoliox_closed_tombstones") : null;
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+})());
+
+export function recordTradeTombstone(id, revision = 1) {
+  if (id === undefined || id === null) return;
+  const sId = String(id);
+  const existing = closedTradeTombstones.get(sId);
+  const nextRev = Math.max(Number(revision) || 1, (existing?.revision || 0) + 1);
+  closedTradeTombstones.set(sId, { revision: nextRev, closedAt: Date.now() });
+  try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem("portfoliox_closed_tombstones", JSON.stringify([...closedTradeTombstones.entries()]));
+    }
+  } catch {}
+}
+
+export function removeTradeTombstone(id) {
+  if (id === undefined || id === null) return;
+  const sId = String(id);
+  if (closedTradeTombstones.has(sId)) {
+    closedTradeTombstones.delete(sId);
+    try {
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem("portfoliox_closed_tombstones", JSON.stringify([...closedTradeTombstones.entries()]));
+      }
+    } catch {}
+  }
+}
+
+export function isTradeTombstoned(id, revision = 0) {
+  if (id === undefined || id === null) return false;
+  const sId = String(id);
+  const tombstone = closedTradeTombstones.get(sId);
+  if (!tombstone) return false;
+  if (!revision || Number(revision) <= tombstone.revision) return true;
+  return false;
+}
+
 export function flushPendingPartialClose(localId, serverId) {
   if (pendingPartialCloseQueue.has(localId)) {
     const payload = pendingPartialCloseQueue.get(localId);
@@ -85,7 +148,16 @@ const OUTBOX_STORAGE_KEY = "portfoliox_trade_outbox_queue";
 export function getTradeOutbox() {
   try {
     const raw = typeof localStorage !== "undefined" ? localStorage.getItem(OUTBOX_STORAGE_KEY) : null;
-    return raw ? JSON.parse(raw) : [];
+    const items = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(items)) return [];
+    const sanitized = items.filter((item) => {
+      if (deletedTradeIdSet.has(String(item.id))) return false;
+      return true;
+    });
+    if (sanitized.length !== items.length && typeof localStorage !== "undefined") {
+      localStorage.setItem(OUTBOX_STORAGE_KEY, JSON.stringify(sanitized));
+    }
+    return sanitized;
   } catch {
     return [];
   }
@@ -93,6 +165,7 @@ export function getTradeOutbox() {
 
 export function queueTradeInOutbox(trade) {
   if (!trade || !trade.symbol) return;
+  if (deletedTradeIdSet.has(String(trade.id))) return;
   try {
     const queue = getTradeOutbox();
     const tradeKey = trade.idempotencyKey || `journal_${trade.id || Date.now()}`;
@@ -144,8 +217,8 @@ export async function persistTradeToBackend(trade) {
       quantity: Math.max(1, Number(trade.quantity || 1)),
       lotSize: Math.max(1, Number(trade.lotSize || 65)),
       charges: Number(trade.taxesAndCharges || trade.charges || 55.20),
-      strategyTags: trade.strategyTags || trade.strategyTag || "Manual Journal Scalp",
-      mistakeTags: trade.mistakeTags || "None",
+      strategyTags: Array.isArray(trade.strategyTags) ? trade.strategyTags : (trade.strategyTags ? [trade.strategyTags] : (trade.strategyTag ? [trade.strategyTag] : ["Manual Journal Scalp"])),
+      mistakeTags: Array.isArray(trade.mistakeTags) ? trade.mistakeTags : (trade.mistakeTags && trade.mistakeTags !== "None" ? [trade.mistakeTags] : []),
       followedPlan: trade.followedPlan ?? true,
       journal: {
         entryReason: trade.catalyst || trade.entryReason || "Technical chart breakout pattern with volume confirmation.",
@@ -197,4 +270,3 @@ export async function persistTradesBatchToBackend(trades) {
     await Promise.allSettled(chunk.map((t) => persistTradeToBackend(t)));
   }
 }
-

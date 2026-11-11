@@ -1,8 +1,19 @@
 import React from "react";
-import { Zap, SlidersHorizontal } from "lucide-react";
+import { Zap, SlidersHorizontal, FlaskConical, ShieldCheck } from "lucide-react";
 import clsx from "clsx";
+import { useTradingStore } from "../../../../stores/useTradingStore";
+import { soundEngine } from "../../../../utils/soundEngine";
 
 export function OrderPadHeader({ copilotRegime, onSetCopilotRegime }) {
+  const testingMode = useTradingStore((s) => s.testingMode);
+  const testingRestrictionMode = useTradingStore((s) => s.testingRestrictionMode);
+  const toggleTestingMode = useTradingStore((s) => s.toggleTestingMode);
+
+  const handleToggleTesting = () => {
+    soundEngine?.playTabSwitchTone?.();
+    toggleTestingMode();
+  };
+
   return (
     <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-white/10">
       <div className="flex items-center gap-2 flex-wrap">
@@ -13,6 +24,37 @@ export function OrderPadHeader({ copilotRegime, onSetCopilotRegime }) {
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
           Live Upstox Market Ticks
         </span>
+
+        {/* 🧪 High-Visibility Testing Mode Toggle Pill */}
+        <button
+          type="button"
+          onClick={handleToggleTesting}
+          className={clsx(
+            "px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold transition flex items-center gap-1.5 cursor-pointer active:scale-95 shadow-sm border",
+            testingMode
+              ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/50 shadow-[0_0_12px_rgba(6,182,212,0.3)] animate-pulse"
+              : "bg-white/5 hover:bg-white/10 text-slate-400 border-white/10"
+          )}
+          title={
+            testingMode
+              ? (testingRestrictionMode === "UNRESTRICTED"
+                  ? "Testing Mode (Unrestricted Sandbox): Zero restrictions! Free to deploy any SL/TP/Lots."
+                  : "Testing Mode (Like Real): Strict ₹300 ceiling and 2:1 R:R enforced for practice.")
+              : "Click to enable Testing Mode for sandbox practice."
+          }
+        >
+          {testingMode ? (
+            <>
+              <FlaskConical className={clsx("w-3 h-3", testingRestrictionMode === "UNRESTRICTED" ? "text-purple-400" : "text-cyan-400")} />
+              <span>{testingRestrictionMode === "UNRESTRICTED" ? "🧪 SANDBOX (UNRESTRICTED)" : "🛡️ PRACTICE (LIKE REAL)"}</span>
+            </>
+          ) : (
+            <>
+              <ShieldCheck className="w-3 h-3 text-emerald-400" />
+              <span>🛡️ LIVE DISCIPLINE (₹250/₹300 CAP)</span>
+            </>
+          )}
+        </button>
       </div>
 
       {/* Dynamic Copilot Regime Simulator Pills */}

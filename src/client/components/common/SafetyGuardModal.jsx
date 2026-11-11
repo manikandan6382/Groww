@@ -1,36 +1,36 @@
 import React from "react";
 import { useTradingStore } from "../../stores/useTradingStore";
+import { useSessionTelemetry } from "../../hooks/useSessionTelemetry";
 import { ShieldCheck, ShieldAlert, X, AlertTriangle, CheckCircle2, Lock, Scale, Zap } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { getLocalDateKey } from "../../utils/dateUtils";
 
 export function SafetyGuardModal() {
-  const { isSafetyGuardModalOpen, setSafetyGuardModalOpen, journalTrades } = useTradingStore();
+  const { isSafetyGuardModalOpen, setSafetyGuardModalOpen } = useTradingStore();
+  const { todayClosed: todayTrades, todayTradesCount: todayTradeCount } = useSessionTelemetry();
 
   if (!isSafetyGuardModalOpen) return null;
-
-  const todayKey = getLocalDateKey();
-  const todayTrades = (journalTrades || []).filter((t) => {
-    const dateStr = t.exitDatetime || t.entryDatetime || "";
-    return dateStr.startsWith(todayKey);
-  });
 
   const losses = todayTrades.filter((t) => Number(t.netPnl || 0) < 0);
   const todayTotalLoss = Math.abs(losses.reduce((acc, t) => acc + Number(t.netPnl || 0), 0));
   const runway = Math.max(0, 750 - todayTotalLoss);
   const stopsRemaining = Math.max(0, Math.floor(runway / 250));
   const isLossCapBreached = todayTotalLoss >= 750;
-  const todayTradeCount = todayTrades.length;
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+      <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-md">
         <motion.div
-          initial={{ opacity: 0, scale: 0.95, y: 15 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.95, y: 15 }}
-          className="w-full max-w-lg p-6 rounded-3xl bg-[#121424]/98 border border-white/10 shadow-[0_25px_60px_rgba(0,0,0,0.9),inset_0_1px_0_rgba(255,255,255,0.08)] space-y-5 text-slate-100 backdrop-blur-2xl"
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 30 }}
+          className="w-full max-w-lg p-5 sm:p-6 rounded-t-3xl sm:rounded-3xl bg-[#121424]/98 border-t sm:border border-white/10 shadow-[0_25px_60px_rgba(0,0,0,0.9),inset_0_1px_0_rgba(255,255,255,0.08)] space-y-4 sm:space-y-5 text-slate-100 backdrop-blur-2xl max-h-[90vh] overflow-y-auto scrollbar-none"
+          style={{ paddingBottom: "max(24px, env(safe-area-inset-bottom))" }}
         >
+          {/* iOS Drag Grabber on Mobile */}
+          <div className="sm:hidden -mt-2 mb-2 flex justify-center cursor-grab active:cursor-grabbing">
+            <div className="w-12 h-1.5 rounded-full bg-white/25 shadow-sm" />
+          </div>
+
           {/* Header */}
           <div className="flex items-center justify-between pb-3 border-b border-white/10">
             <div className="flex items-center gap-3">

@@ -67,6 +67,7 @@ export async function ensureSubscription(engine, trade, { force = false } = {}) 
       tokenKey,
       status: "subscribed",
       isPracticeFallback,
+      subscribedAtMs: existing?.subscribedAtMs || Date.now(),
     });
     if (!engine.tokenToTradeIds.has(tokenKey)) engine.tokenToTradeIds.set(tokenKey, new Set());
     engine.tokenToTradeIds.get(tokenKey).add(id);

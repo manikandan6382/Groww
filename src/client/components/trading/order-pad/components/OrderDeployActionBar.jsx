@@ -16,9 +16,18 @@ export function OrderDeployActionBar({
   isVaultRunning,
   vaultFormattedTime,
   copilotState,
-  entryPrice
+  entryPrice,
+  frictionMetrics,
+  canonicalPlan,
+  testingMode: propTestingMode,
+  onDeploy
 }) {
   const tiltLockoutUntil = useTradingStore((s) => s.tiltLockoutUntil || 0);
+  const brokerStatus = useTradingStore((s) => s.brokerStatus);
+  const storeTestingMode = useTradingStore((s) => s.testingMode);
+  const testingRestrictionMode = useTradingStore((s) => s.testingRestrictionMode);
+  const isMarketHoliday = Boolean(brokerStatus?.marketHoliday);
+  const holidayName = brokerStatus?.holidayName || "Market Holiday";
   const [secondsRemaining, setSecondsRemaining] = React.useState(0);
 
   React.useEffect(() => {
@@ -36,42 +45,86 @@ export function OrderDeployActionBar({
     const interval = setInterval(update, 1000);
     return () => clearInterval(interval);
   }, [tiltLockoutUntil]);
-  const isRiskExceeded = riskAmount > 300;
+
+  const testingMode = Boolean(propTestingMode ?? storeTestingMode);
+  const isUnrestricted = Boolean(testingMode && testingRestrictionMode === "UNRESTRICTED");
+  const isUpstoxLive = Boolean(brokerStatus?.upstoxConnected && !brokerStatus?.upstoxExpired);
+  const estimatedFriction = Number(frictionMetrics?.estimatedFriction || 55.20);
+  const plannedNetRisk = canonicalPlan ? canonicalPlan.modelledNetRisk : (riskAmount > 0 ? Number((riskAmount + estimatedFriction).toFixed(2)) : 0);
+  const isRiskExceeded = canonicalPlan ? !canonicalPlan.isRiskCeilingSatisfied : (riskAmount > 300.50 || plannedNetRisk > 300.00);
 
   return (
     <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10 space-y-3">
+      {/* Cockpit Execution Environment Strip */}
+      <div className="flex items-center justify-between px-1 pb-1 border-b border-white/5 text-[11px]">
+        <div className="flex items-center gap-2">
+          <span className="text-slate-400 font-medium">Execution Gateway:</span>
+          {isUpstoxLive ? (
+            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md font-mono text-[10px] font-bold bg-amber-500/15 border border-amber-500/30 text-amber-300">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+              LIVE BROKER MARGIN (UPSTOX API)
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md font-mono text-[10px] font-bold bg-cyan-500/10 border border-cyan-500/30 text-cyan-300">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+              PAPER LAB SIMULATION • VIRTUAL MARGIN
+            </span>
+          )}
+        </div>
+        <span className="font-mono text-[10px] text-slate-500 hidden sm:inline-block">
+          .NET 8 RMS • LATENCY &lt;1ms
+        </span>
+      </div>
+
       {/* Institutional Pre-Trade Telemetry Safeguard */}
       <div className="flex items-center justify-between px-1 text-[11px]">
         <span className="text-slate-400 font-medium">Pre-Trade Risk Engine:</span>
-        {isRiskExceeded ? (
+        {testingMode ? (
+          <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-mono text-[10px] font-bold bg-cyan-500/15 border border-cyan-500/40 text-cyan-300">
+            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+            TESTING MODE UNRESTRICTED • ₹{plannedNetRisk > 0 ? plannedNetRisk.toFixed(0) : "250"} Net (SL/TP Unlocked)
+          </span>
+        ) : isRiskExceeded ? (
           <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-mono text-[10px] font-bold bg-rose-500/15 border border-rose-500/40 text-rose-300 animate-pulse">
             <ShieldX className="w-3 h-3 text-rose-400" />
-            INVARIANT BREACH: ₹{riskAmount.toFixed(0)} &gt; ₹300 HARD CAP
+            RISK CEILING BREACH: ₹{plannedNetRisk.toFixed(0)} Net (&gt; ₹300 Max Cap)
+          </span>
+        ) : !canonicalPlan?.isRewardToRiskSatisfied ? (
+          <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-mono text-[10px] font-bold bg-amber-500/15 border border-amber-500/40 text-amber-300">
+            <ShieldX className="w-3 h-3 text-amber-400" />
+            R:R DEFICIT: 1:{canonicalPlan?.netRewardToRiskRatio.toFixed(2)} Net (&lt; 2:1 Min)
           </span>
         ) : (
           <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-mono text-[10px] font-bold bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            ACTIVE RMS SAFEGUARD • ₹{riskAmount > 0 ? riskAmount.toFixed(0) : "250"} RISK PASSED
+            RMS INVARIANT PASS • ₹{plannedNetRisk > 0 ? plannedNetRisk.toFixed(0) : "250"} Net (Target ₹250 / Cap ₹300)
           </span>
         )}
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
         <div>
-          <span className="text-slate-400 text-[10px] block">Capital Outlay (₹10k Budget)</span>
-          <div className={clsx("font-mono tabular-nums font-bold text-sm flex items-baseline gap-1", capitalOutlay > 10000 ? "text-amber-400" : "text-white")}>
+          <span className="text-slate-400 text-[10px] block">
+            {testingMode ? "Capital Outlay" : "Capital Outlay (₹10k Budget)"}
+          </span>
+          <div className={clsx("font-mono tabular-nums font-bold text-sm flex items-baseline gap-1", !testingMode && capitalOutlay > 10000 ? "text-amber-400" : "text-white")}>
             <RollingTicker value={capitalOutlay} prefix="₹" decimalPlaces={2} />
-            <span className={clsx("text-[9px] px-1 py-0.5 rounded font-mono tabular-nums font-bold", capitalOutlay > 10000 ? "bg-amber-500/20 text-amber-300 border border-amber-500/40" : "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30")}>
-              {((capitalOutlay / 10000) * 100).toFixed(0)}%
-            </span>
+            {!testingMode && (
+              <span className={clsx("text-[9px] px-1 py-0.5 rounded font-mono tabular-nums font-bold", capitalOutlay > 10000 ? "bg-amber-500/20 text-amber-300 border border-amber-500/40" : "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30")}>
+                {((capitalOutlay / 10000) * 100).toFixed(0)}%
+              </span>
+            )}
           </div>
         </div>
 
         <div>
-          <span className="text-slate-400 text-[10px] block">Max Risk</span>
+          <span className="text-slate-400 text-[10px] block">Planned Net Risk</span>
           <div className={clsx("font-mono tabular-nums font-bold text-sm flex items-center gap-1", isRiskExceeded ? "text-rose-400 animate-pulse" : "text-rose-400")}>
-            <RollingTicker value={riskAmount} prefix="₹" decimalPlaces={2} className="text-rose-400" />
-            {isRiskExceeded && <span className="text-[9px] px-1 rounded bg-rose-500/20 border border-rose-500/40 text-rose-300 font-bold">&gt;₹300</span>}
+            <RollingTicker value={plannedNetRisk > 0 ? plannedNetRisk : riskAmount} prefix="₹" decimalPlaces={2} className="text-rose-400" />
+            <span className="text-[9px] px-1 py-0.2 rounded bg-white/10 text-slate-300 font-mono" title={`Base SL: ₹${canonicalPlan ? canonicalPlan.grossRiskRupees.toFixed(0) : riskAmount.toFixed(0)} + Slippage & Taxes: ~₹${canonicalPlan ? (canonicalPlan.modelledNetRisk - canonicalPlan.grossRiskRupees).toFixed(0) : estimatedFriction.toFixed(0)}`}>
+              Net
+            </span>
+            {isRiskExceeded && <span className="text-[9px] px-1 rounded bg-rose-500/20 border border-rose-500/40 text-rose-300 font-bold">&gt;₹300 Net</span>}
           </div>
         </div>
 
@@ -106,7 +159,7 @@ export function OrderDeployActionBar({
         </span>
       </div>
 
-      {capitalOutlay > 10000 && (
+      {!testingMode && capitalOutlay > 10000 && (
         <div className="p-2.5 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs flex items-center gap-2">
           <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
           <span>
@@ -116,54 +169,70 @@ export function OrderDeployActionBar({
       )}
 
       <button
-        type="submit"
-        disabled={isDailyCapReached || !isValidSL || !isValidTarget || isDeploying || secondsRemaining > 0 || isRiskExceeded}
+        type="button"
+        data-testid="order-deploy-btn"
+        onClick={(e) => { e.preventDefault(); onDeploy?.(); }}
+        disabled={isDeploying || (!isUnrestricted && isMarketHoliday) || (!isUnrestricted && isDailyCapReached) || !canonicalPlan?.isCompliant || (!isValidSL || !isValidTarget) || (secondsRemaining > 0 && !isUnrestricted)}
         className={clsx(
           "w-full py-3.5 rounded-xl font-black text-sm transition flex items-center justify-center gap-2 cursor-pointer shadow-lg",
-          secondsRemaining > 0
+          (isMarketHoliday && !isUnrestricted)
+            ? "bg-amber-950/70 text-amber-300 border border-amber-500/50 cursor-not-allowed opacity-90 shadow-[0_0_25px_rgba(245,158,11,0.2)]"
+            : (secondsRemaining > 0 && !isUnrestricted)
             ? "bg-rose-950/60 text-rose-300/80 border border-rose-500/40 cursor-not-allowed opacity-90 shadow-[0_0_20px_rgba(244,63,94,0.15)]"
-            : isRiskExceeded
+            : (!isValidSL || !isValidTarget)
             ? "bg-rose-950/70 text-rose-300 border border-rose-500/50 cursor-not-allowed opacity-90 shadow-[0_0_25px_rgba(244,63,94,0.25)]"
-            : isDailyCapReached || !isValidSL || !isValidTarget
+            : (!canonicalPlan?.isCompliant && !isUnrestricted)
+            ? "bg-rose-950/70 text-rose-300 border border-rose-500/50 cursor-not-allowed opacity-90 shadow-[0_0_25px_rgba(244,63,94,0.25)]"
+            : (isDailyCapReached && !isUnrestricted)
             ? "bg-amber-950/60 text-amber-300/80 border border-amber-500/30 cursor-not-allowed opacity-80"
             : copilotState.ctaClass,
           isDeploying && "opacity-75 cursor-wait"
         )}
       >
-        {secondsRemaining > 0 ? (
+        {(isMarketHoliday && !isUnrestricted) ? (
+          <>
+            <ShieldX className="w-4 h-4 text-amber-400" />
+            <span>Market Closed: {holidayName} (Trading Disabled)</span>
+          </>
+        ) : (secondsRemaining > 0 && !isUnrestricted) ? (
           <>
             <ShieldX className="w-4 h-4 text-rose-400 animate-pulse" />
             <span>Anti-Tilt Shield Active ({secondsRemaining}s) — Take a Breather</span>
           </>
-        ) : isRiskExceeded ? (
+        ) : (!isValidSL || !isValidTarget) ? (
           <>
             <ShieldX className="w-4 h-4 text-rose-400" />
-            <span>Risk Invariant Breached: ₹{riskAmount.toFixed(0)} Exceeds ₹300 Cap (Adjust SL)</span>
+            <span>Invalid Order: {!isValidSL ? "Stop Loss must be BELOW entry" : "Target must be ABOVE entry"}</span>
+          </>
+        ) : (!canonicalPlan?.isRiskCeilingSatisfied && !isUnrestricted) ? (
+          <>
+            <ShieldX className="w-4 h-4 text-rose-400" />
+            <span>Capital Risk Breached: ₹{canonicalPlan?.modelledNetRisk.toFixed(0)} Net (&gt; ₹300 Cap)</span>
+          </>
+        ) : (!canonicalPlan?.isRewardToRiskSatisfied && !isUnrestricted) ? (
+          <>
+            <ShieldX className="w-4 h-4 text-rose-400" />
+            <span>Reward-to-Risk Rejected: 1:{canonicalPlan?.netRewardToRiskRatio.toFixed(2)} Net (&lt; 2:1 Min)</span>
+          </>
+        ) : (!canonicalPlan?.isStopLossValid || !canonicalPlan?.isTargetValid) ? (
+          <>
+            <ShieldX className="w-4 h-4 text-rose-400" />
+            <span>Invalid Order Parameters (Stop Loss or Target Inverted)</span>
           </>
         ) : isDeploying ? (
           <>
             <RefreshCw className="w-4 h-4 animate-spin text-black" />
             <span>Arming Order...</span>
           </>
-        ) : isVaultRunning ? (
+        ) : isVaultRunning && !testingMode ? (
           <>
             <Clock className="w-4 h-4 text-cyan-300 animate-spin" />
             <span>Cooling Vault Active ({vaultFormattedTime}) — Take a Breather</span>
           </>
-        ) : isDailyCapReached ? (
+        ) : (isDailyCapReached && !isUnrestricted) ? (
           <>
             <Lock className="w-4 h-4 text-amber-400" />
             <span>Daily 3-Trade Quota Locked (Start 15m Vault to Unlock)</span>
-          </>
-        ) : !isValidSL ? (
-          <>
-            <AlertTriangle className="w-4 h-4 text-rose-400" />
-            <span>Inverted Stop Loss (Must be strictly &lt; ₹{Number(entryPrice).toFixed(1)})</span>
-          </>
-        ) : !isValidTarget ? (
-          <>
-            <AlertTriangle className="w-4 h-4 text-amber-400" />
-            <span>Inverted Target (Must be strictly &gt; ₹{Number(entryPrice).toFixed(1)})</span>
           </>
         ) : (
           <>

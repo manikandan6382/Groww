@@ -110,5 +110,23 @@ export const createPreferencesSlice = (set, get) => ({
   orderPadPreFill: null,
   setOrderPadPreFill: (data) => set({ orderPadPreFill: data }),
 
+  // Psychological Focus Mode: 'cash' (₹) | 'points' (Objective pts edge)
+  focusMode: (() => {
+    try {
+      return localStorage.getItem("portfolio-focus-mode") || "cash";
+    } catch {
+      return "cash";
+    }
+  })(),
+  setFocusMode: (mode) => {
+    set({ focusMode: mode });
+    try { localStorage.setItem("portfolio-focus-mode", mode); } catch {}
+  },
+  toggleFocusMode: () => {
+    const next = get().focusMode === "cash" ? "points" : "cash";
+    set({ focusMode: next });
+    try { localStorage.setItem("portfolio-focus-mode", next); } catch {}
+  },
+
   startingCapital: 100000.0,
 });

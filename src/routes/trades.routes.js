@@ -6,10 +6,12 @@ import { handleTradeCandlesRoutes } from "./trades/trade-candles-routes.js";
 import { handleCopilotRoutes } from "./trades/copilot-routes.js";
 import { handlePaperOrdersRoutes } from "./trades/paper-orders-routes.js";
 import { handlePaperManageRoutes } from "./trades/paper-manage-routes.js";
+import { handleScannerRoutes } from "./trades/scanner-routes.js";
 import { handleJournalRoutes } from "./trades/journal-routes.js";
 
 export async function handleTradingRequest(req, res, url) {
   if (await handleJournalRoutes(req, res, url)) return true;
+  if (await handleScannerRoutes(req, res, url)) return true;
   if (await handleUpstoxTokenRoutes(req, res, url)) return true;
   if (await handleMarketIndicesRoutes(req, res, url)) return true;
   if (await handleMarketOptionsRoutes(req, res, url)) return true;

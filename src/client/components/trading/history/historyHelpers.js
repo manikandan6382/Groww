@@ -1,4 +1,5 @@
 import { resolveIndexLotSize } from "../../../stores/useTradingStore";
+import { calculateStatutoryCharges } from "../../../stores/slices/tradeHelpers.js";
 
 export function resolveUnderlying(trade) {
   const sym = String(trade.underlyingSymbol || trade.symbol || "").toUpperCase();
@@ -21,11 +22,12 @@ export function calculateLiveMetrics(trade, currentLtp) {
   const lotSize = Number(trade.lotSize || resolveIndexLotSize(trade.symbol) || 65);
   const qty = Number(trade.quantity || 1) * lotSize;
   const isShort = trade.direction === "SHORT";
-  const grossPnl = (currentLtp - Number(trade.entryPrice || 0)) * (isShort ? -1 : 1) * qty;
-  const grossPts = (currentLtp - Number(trade.entryPrice || 0)) * (isShort ? -1 : 1);
-  const friction = 55.20;
+  const entry = Number(trade.entryPrice || 0);
+  const grossPnl = (currentLtp - entry) * (isShort ? -1 : 1) * qty;
+  const grossPts = (currentLtp - entry) * (isShort ? -1 : 1);
+  const friction = calculateStatutoryCharges(entry, currentLtp, qty, trade.direction || "LONG");
   const netPnl = grossPnl - friction;
-  const capital = Number(trade.entryPrice || 0) * qty;
+  const capital = entry * qty;
   const returnPct = capital > 0 ? (netPnl / capital) * 100 : 0;
   return { grossPnl, grossPts, friction, netPnl, returnPct };
 }

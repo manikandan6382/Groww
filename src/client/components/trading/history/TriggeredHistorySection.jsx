@@ -74,20 +74,20 @@ export const TriggeredHistorySection = React.memo(function TriggeredHistorySecti
   }, []);
 
   const handleSelectAllVisible = useCallback(() => {
-    if (selectedTradeIds.size === visibleAlerts.length && visibleAlerts.length > 0) {
+    if (selectedTradeIds.size === filteredAlerts.length && filteredAlerts.length > 0) {
       setSelectedTradeIds(new Set());
     } else {
-      setSelectedTradeIds(new Set(visibleAlerts.map((t) => t.id)));
+      setSelectedTradeIds(new Set(filteredAlerts.map((t) => t.id)));
     }
-  }, [selectedTradeIds.size, visibleAlerts]);
+  }, [selectedTradeIds.size, filteredAlerts]);
 
   const handleDeleteSelected = useCallback(() => {
-    const toDelete = visibleAlerts.filter((t) => selectedTradeIds.has(t.id));
+    const toDelete = filteredAlerts.filter((t) => selectedTradeIds.has(t.id));
     if (toDelete.length === 0) return;
     soundEngine.playDeleteTone();
     deleteJournalTradesWithUndo(toDelete);
     setSelectedTradeIds(new Set());
-  }, [deleteJournalTradesWithUndo, selectedTradeIds, visibleAlerts]);
+  }, [deleteJournalTradesWithUndo, selectedTradeIds, filteredAlerts]);
 
   const handlePromoteToJournal = useCallback((trade) => {
     soundEngine.playSuccessTone();
@@ -210,10 +210,10 @@ export const TriggeredHistorySection = React.memo(function TriggeredHistorySecti
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="fixed inset-0 z-[100] bg-black/85 backdrop-blur-2xl p-4 flex items-center justify-center overflow-y-auto"
+              className="fixed inset-0 z-[100] bg-black/85 backdrop-blur-2xl p-2 sm:p-4 md:p-6 flex items-start sm:items-center justify-center overflow-y-auto"
               onClick={(e) => { if (e.target === e.currentTarget) setActiveTimelineTrade(null); }}
             >
-              <div className="w-full max-w-6xl max-h-[94vh] rounded-[32px] bg-[#060813]/95 border border-white/15 backdrop-blur-3xl overflow-hidden p-6">
+              <div className="w-full max-w-6xl max-h-[92vh] rounded-[24px] sm:rounded-[32px] bg-[#060813]/95 border border-white/15 backdrop-blur-3xl overflow-y-auto overflow-x-hidden p-4 sm:p-6 shadow-2xl my-auto custom-scrollbar">
                 <TradeMarketJourneyTimeline trade={activeTimelineTrade} onClose={() => setActiveTimelineTrade(null)} isModalView={true} />
               </div>
             </motion.div>

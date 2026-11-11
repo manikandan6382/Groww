@@ -4,7 +4,7 @@ import { ExternalLink, Loader2 } from "lucide-react";
 import { openBrokerAuthPopup } from "../../../utils/brokerPopupAuth";
 import { useTradingStore } from "../../../stores/useTradingStore";
 
-export function SidebarBrokerHub({ brokerStatus }) {
+export function SidebarBrokerHub({ brokerStatus, isPinned = true }) {
   const authenticatingBroker = useTradingStore((s) => s.authenticatingBroker);
 
   const isKiteLive = Boolean(brokerStatus?.kiteConnected && !brokerStatus?.kiteExpired);
@@ -14,6 +14,53 @@ export function SidebarBrokerHub({ brokerStatus }) {
   const isAllLive = isKiteLive && isUpstoxLive;
   const isAnyLive = isKiteLive || isUpstoxLive;
   const isAnyExpired = isKiteExpired || isUpstoxExpired;
+
+  if (!isPinned) {
+    return (
+      <div 
+        className="p-2 rounded-2xl bg-[var(--card)] border border-[var(--line)] flex flex-col items-center gap-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] relative group"
+      >
+        <button
+          type="button"
+          onClick={() => openBrokerAuthPopup("kite")}
+          className="w-7 h-7 rounded-xl bg-orange-500/20 hover:bg-orange-500/30 border border-orange-500/30 flex items-center justify-center font-black text-orange-400 text-[10px] relative transition-transform active:scale-95 cursor-pointer shadow-sm"
+        >
+          <span>K</span>
+          <span className={clsx(
+            "absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full border border-black",
+            isKiteLive ? "bg-emerald-400 animate-pulse" : isKiteExpired ? "bg-amber-400 animate-ping" : "bg-orange-400"
+          )} />
+        </button>
+
+        <button
+          type="button"
+          onClick={() => openBrokerAuthPopup("upstox")}
+          className="w-7 h-7 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/30 flex items-center justify-center font-black text-purple-400 text-[10px] relative transition-transform active:scale-95 cursor-pointer shadow-sm"
+        >
+          <span>U</span>
+          <span className={clsx(
+            "absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full border border-black",
+            isUpstoxLive ? "bg-emerald-400 animate-pulse" : isUpstoxExpired ? "bg-rose-400 animate-ping" : "bg-amber-400"
+          )} />
+        </button>
+
+        {/* 🌟 Instant Floating Apple Vision Pro Glass Tooltip */}
+        <div className="absolute left-full ml-3 px-3 py-2 rounded-2xl bg-[#0d111a]/95 border border-white/15 shadow-[0_12px_32px_rgba(0,0,0,0.8)] backdrop-blur-2xl opacity-0 group-hover:opacity-100 transition-all duration-200 pointer-events-none whitespace-nowrap z-[60] flex flex-col gap-1 -translate-x-1 group-hover:translate-x-0 text-left font-mono">
+          <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Dual Broker Hub</span>
+          <div className="flex items-center gap-2 text-[10px]">
+            <span className={clsx("font-bold", isKiteLive ? "text-emerald-400" : isKiteExpired ? "text-amber-400" : "text-slate-400")}>
+              Zerodha: {isKiteLive ? "Active" : isKiteExpired ? "Expired" : "Offline"}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 text-[10px]">
+            <span className={clsx("font-bold", isUpstoxLive ? "text-emerald-400" : isUpstoxExpired ? "text-rose-400" : "text-slate-400")}>
+              Upstox: {isUpstoxLive ? "Feed Live" : isUpstoxExpired ? "Expired" : "Offline"}
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-2.5 rounded-2xl bg-[var(--card)] border border-[var(--line)] space-y-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">

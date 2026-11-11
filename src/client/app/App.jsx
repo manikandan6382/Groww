@@ -9,6 +9,7 @@ import { UndoTradeToast } from "./UndoTradeToast";
 import { BrokerNoticeToast } from "./BrokerNoticeToast";
 import { useAppShortcuts } from "./useAppShortcuts";
 import { useAppBootstrap } from "./useAppBootstrap";
+import { useSessionTelemetry } from "../hooks/useSessionTelemetry";
 
 // 🚀 Dynamic Route Code-Splitting with safeLazy
 const DashboardView = safeLazy(() => import("../views/DashboardView").then((m) => ({ default: m.DashboardView })));
@@ -24,6 +25,19 @@ export function App() {
 
   const [brokerNotice, setBrokerNotice] = useAppBootstrap();
   useAppShortcuts();
+
+  const { sessionNetPnl, todayTradesCount } = useSessionTelemetry();
+
+  // ⚡ Dynamic Peripheral Vision Tab Title HUD
+  React.useEffect(() => {
+    if (todayTradesCount === 0) {
+      document.title = "PortfolioX (₹0.00) · 0/3 Trades";
+      return;
+    }
+    const sign = sessionNetPnl >= 0 ? "+" : "-";
+    const icon = sessionNetPnl >= 0 ? "🟢" : "🔴";
+    document.title = `PortfolioX (${sign}₹${Math.abs(sessionNetPnl).toFixed(2)} ${icon}) · ${todayTradesCount}/3 Trades`;
+  }, [sessionNetPnl, todayTradesCount]);
 
   function renderView() {
     switch (activeView) {
@@ -45,9 +59,9 @@ export function App() {
       <ViewErrorBoundary fallbackTitle="View Temporarily Unavailable">
         <motion.div
           key={activeView}
-          initial={{ opacity: 0, y: 6 }}
+          initial={{ opacity: 0, y: 4 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.15, ease: "easeOut" }}
+          transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
           className="w-full"
         >
           <Suspense fallback={<RouteLoadingSkeleton />}>

@@ -17,8 +17,13 @@ export function CustomTradeModalHeader({
 }) {
   return (
     <>
+      {/* iOS Tactile Drag Grabber (Mobile only) */}
+      <div className="sm:hidden pt-2.5 pb-0.5 flex justify-center cursor-grab active:cursor-grabbing bg-white/[0.02]">
+        <div className="w-12 h-1.5 rounded-full bg-white/25 shadow-sm" />
+      </div>
+
       {/* Modal Header */}
-      <div className="p-5 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
+      <div className="p-4 sm:p-5 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-xl bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 flex items-center justify-center font-bold">
             <Plus className="w-4 h-4 stroke-[3]" />

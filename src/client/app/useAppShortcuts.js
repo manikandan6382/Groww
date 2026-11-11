@@ -43,6 +43,15 @@ export function useAppShortcuts() {
         return;
       }
 
+      // Ctrl+B or Cmd+B toggles Sidebar Pin (Collapse / Expand)
+      if ((e.ctrlKey || e.metaKey) && (e.key === "b" || e.key === "B")) {
+        e.preventDefault();
+        const state = useTradingStore.getState();
+        state.toggleSidebarPin();
+        soundEngine.playTabSwitchTone();
+        return;
+      }
+
       // When typing inside inputs or search boxes, don't trigger single-letter hotkeys
       if (isInput || e.ctrlKey || e.metaKey || e.altKey) return;
 

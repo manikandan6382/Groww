@@ -1,4 +1,5 @@
 import { getTradeOutcome } from "../../../utils/tradeNormalizer.js";
+import { calculateStatutoryCharges as calcCanonicalCharges } from "../../../stores/slices/tradeHelpers.js";
 
 export function resolveUnderlying(trade) {
   const sym = String(trade.underlyingSymbol || trade.symbol || "").toUpperCase();
@@ -101,33 +102,19 @@ export function resolveMarketSession(datetimeStr) {
   };
 }
 
-export function calculateStatutoryCharges(trade) {
-  if (trade.taxesAndCharges != null && !isNaN(Number(trade.taxesAndCharges))) {
-    return Number(trade.taxesAndCharges);
-  }
+export function getTradeChargesInfo(trade) {
   if (trade.charges != null && !isNaN(Number(trade.charges))) {
-    return Number(trade.charges);
+    return { charges: Number(trade.charges), chargesAvailable: true };
   }
+  if (trade.taxesAndCharges != null && !isNaN(Number(trade.taxesAndCharges))) {
+    return { charges: Number(trade.taxesAndCharges), chargesAvailable: true };
+  }
+  return { charges: null, chargesAvailable: false };
+}
 
-  const rawQty = Number(trade.quantity || 1);
-  const lotSize = Number(trade.lotSize || 65);
-  const totalQty = Number(trade.totalQty || (rawQty >= lotSize ? rawQty : rawQty * lotSize) || 65);
-  const entryPrice = Number(trade.entryPrice || 100);
-  const exitPrice = Number(trade.exitPrice || entryPrice);
-
-  const buyTurnover = entryPrice * totalQty;
-  const sellTurnover = exitPrice * totalQty;
-  const totalTurnover = buyTurnover + sellTurnover;
-
-  const brokerage = 40.0; // ₹20 buy + ₹20 sell
-  const stt = sellTurnover * 0.001; // 0.1% on sell premium
-  const exchangeFee = totalTurnover * 0.0005; // NSE ~0.05%
-  const gst = (brokerage + exchangeFee) * 0.18; // 18% GST
-  const stampDuty = buyTurnover * 0.00003; // 0.003% buy
-  const sebiCharges = totalTurnover * 0.000001; // ₹10/crore
-
-  const total = brokerage + stt + exchangeFee + gst + stampDuty + sebiCharges;
-  return Number(total.toFixed(2));
+export function calculateStatutoryCharges(trade) {
+  const info = getTradeChargesInfo(trade);
+  return info.charges;
 }
 
 export function calculateTradeRMultiple(trade) {
@@ -160,52 +147,91 @@ export function calculateExcursionMetrics(trade) {
   const exit = Number(trade.exitPrice || entry);
   const rawQty = Number(trade.quantity || 1);
   const lotSize = Number(trade.lotSize || 65);
-  const qty = Number(trade.totalQty || (rawQty >= lotSize ? rawQty : rawQty * lotSize) || 65);
+  const qty = Number(trade.totalQty || (rawQty >= lotSize && rawQty % lotSize === 0 ? rawQty : rawQty * lotSize) || 65);
 
-  let highPrice = entry;
-  let lowPrice = entry;
-
-  if (trade.highSinceEntry && !isNaN(Number(trade.highSinceEntry))) {
-    highPrice = Number(trade.highSinceEntry);
-  } else if (Array.isArray(trade.priceHistory) && trade.priceHistory.length > 0) {
-    const prices = trade.priceHistory.map((p) => (typeof p === "object" ? Number(p.price || p.ltp || entry) : Number(p))).filter((p) => !isNaN(p));
-    if (prices.length > 0) {
-      highPrice = Math.max(...prices, entry, exit);
-      lowPrice = Math.min(...prices, entry, exit);
-    }
-  } else {
-    // Model excursion based on exit, target, and stop loss
-    if (exit >= entry) {
-      highPrice = Math.max(exit, entry + (exit - entry) * 1.15);
-      lowPrice = Math.min(entry, entry - (exit - entry) * 0.25);
-    } else {
-      highPrice = Math.max(entry, entry + (entry - exit) * 0.35);
-      lowPrice = Math.min(exit, entry - (entry - exit));
-    }
-  }
-
-  const mfePts = Math.max(0, highPrice - entry);
-  const maePts = Math.max(0, entry - lowPrice);
-
-  const mfeRupees = Math.round(mfePts * qty);
-  const maeRupees = Math.round(maePts * qty);
-
-  // Benchmarks against ₹500 target and ₹250 risk
-  const targetPctReached = Math.min(200, Math.round((mfeRupees / 500) * 100));
-  const slPctDrawnDown = Math.min(200, Math.round((maeRupees / 250) * 100));
-
-  // Execution slippage estimate
   const signalPrice = Number(trade.signalPrice || trade.triggerPrice || entry);
   const entrySlippagePts = Number((entry - signalPrice).toFixed(2));
   const entrySlippageRupees = Math.round(entrySlippagePts * qty);
 
+  let highPrice = null;
+  let lowPrice = null;
+  let dataQuality = "UNAVAILABLE";
+
+  const tickList = Array.isArray(trade.priceHistory) && trade.priceHistory.length > 0
+    ? trade.priceHistory
+    : (Array.isArray(trade.ticks) && trade.ticks.length > 0 ? trade.ticks : null);
+
+  if (tickList && tickList.length >= 3) {
+    const prices = tickList
+      .map((p) => (typeof p === "object" ? Number(p.price || p.ltp || entry) : Number(p)))
+      .filter((p) => !isNaN(p) && p > 0);
+    if (prices.length >= 3) {
+      highPrice = Math.max(...prices, entry, exit);
+      lowPrice = Math.min(...prices, entry, exit);
+      dataQuality = "OBSERVED";
+    }
+  }
+
+  if (dataQuality === "UNAVAILABLE") {
+    if (trade.highSinceEntry && !isNaN(Number(trade.highSinceEntry))) {
+      highPrice = Number(trade.highSinceEntry);
+      lowPrice = (trade.lowSinceEntry && !isNaN(Number(trade.lowSinceEntry))) ? Number(trade.lowSinceEntry) : entry;
+      dataQuality = "PARTIAL";
+    } else if (tickList && tickList.length > 0) {
+      const prices = tickList
+        .map((p) => (typeof p === "object" ? Number(p.price || p.ltp || entry) : Number(p)))
+        .filter((p) => !isNaN(p) && p > 0);
+      if (prices.length > 0) {
+        highPrice = Math.max(...prices, entry, exit);
+        lowPrice = Math.min(...prices, entry, exit);
+        dataQuality = "PARTIAL";
+      }
+    }
+  }
+
+  // P4.1: If real recorded tick history does NOT exist, do NOT fabricate excursions!
+  if (dataQuality === "UNAVAILABLE") {
+    return {
+      dataQuality: "UNAVAILABLE",
+      isAvailable: false,
+      isObserved: false,
+      isPartial: false,
+      highPrice: null,
+      lowPrice: null,
+      mfePts: null,
+      maePts: null,
+      mfeRupees: null,
+      maeRupees: null,
+      mfeStr: "—",
+      maeStr: "—",
+      targetPctReached: 0,
+      slPctDrawnDown: 0,
+      entrySlippagePts,
+      entrySlippageRupees
+    };
+  }
+
+  const mfePts = Number(Math.max(0, highPrice - entry).toFixed(2));
+  const maePts = Number(Math.max(0, entry - lowPrice).toFixed(2));
+  const mfeRupees = Math.round(mfePts * qty);
+  const maeRupees = Math.round(maePts * qty);
+
+  const targetPctReached = Math.min(200, Math.round((mfeRupees / 500) * 100));
+  const slPctDrawnDown = Math.min(200, Math.round((maeRupees / 250) * 100));
+
   return {
+    dataQuality, // "OBSERVED" | "PARTIAL"
+    isAvailable: true,
+    isObserved: dataQuality === "OBSERVED",
+    isPartial: dataQuality === "PARTIAL",
     highPrice: Number(highPrice.toFixed(2)),
     lowPrice: Number(lowPrice.toFixed(2)),
-    mfePts: Number(mfePts.toFixed(2)),
-    maePts: Number(maePts.toFixed(2)),
+    mfePts,
+    maePts,
     mfeRupees,
     maeRupees,
+    mfeStr: `+${mfePts} pts (+₹${mfeRupees})`,
+    maeStr: `-${maePts} pts (-₹${maeRupees})`,
     targetPctReached,
     slPctDrawnDown,
     entrySlippagePts,
@@ -303,13 +329,18 @@ export function computeRealizedMetrics(filteredAlerts = []) {
   let runnerCount = 0;
   let beCount = 0;
   let middayCount = 0;
+  let incompleteChargesCount = 0;
 
   for (const t of filteredAlerts) {
     const net = Number(t.netPnl || 0);
     const c = calculateStatutoryCharges(t);
-    const g = Number(t.grossPnl ?? (net + c));
+    if (c == null) {
+      incompleteChargesCount++;
+    } else {
+      charges += c;
+    }
+    const g = Number(t.grossPnl ?? (net + (c || 0)));
     realized += net;
-    charges += c;
     gross += g;
 
     if (net > 0) {
@@ -342,6 +373,8 @@ export function computeRealizedMetrics(filteredAlerts = []) {
     totalRealizedPnl: realized,
     totalGrossPnl: gross,
     totalCharges: charges,
+    incompleteChargesCount,
+    hasIncompleteCharges: incompleteChargesCount > 0,
     winCount: wins,
     lossCount: losses,
     winRate,

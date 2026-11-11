@@ -34,8 +34,17 @@ export function refreshPaperCapital(db) {
   return current;
 }
 
-export function closePaperTradeInTransaction(db, trade, exitPrice, closeReason, exitDatetime) {
-  const friction = calculateFrictionAndCharges(trade, exitPrice, closeReason);
+export function closePaperTradeInTransaction(db, trade, exitPrice, closeReason, exitDatetime, options = {}) {
+  const friction = calculateFrictionAndCharges(trade, exitPrice, closeReason, options);
+
+  // Authoritative Settlement Invariant: Stored Net P&L must strictly reconcile with Gross P&L and Statutory Charges
+  const calculatedNet = Number((friction.grossPnl - friction.statutoryCharges).toFixed(2));
+  if (Math.abs(friction.netPnl - calculatedNet) > 0.01) {
+    const error = new Error(`Settlement P&L mismatch: Net P&L ₹${friction.netPnl} does not reconcile with Gross P&L ₹${friction.grossPnl} - Charges ₹${friction.statutoryCharges} (expected ₹${calculatedNet}).`);
+    error.status = 422;
+    throw error;
+  }
+
   db.prepare(`
     UPDATE trades
     SET status = 'CLOSED',

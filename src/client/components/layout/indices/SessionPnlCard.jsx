@@ -8,8 +8,17 @@ export function SessionPnlCard({
   isPrivacyMode,
   sessionNetPnl,
   sessionPnlPct,
-  isSessionPnlPositive
+  isSessionPnlPositive,
+  sessionTradesCount = 0,
+  sessionWins = 0,
+  sessionLosses = 0,
+  sessionWinRate = 0,
+  sparklineData
 }) {
+  const dynamicSparkline = sparklineData && sparklineData.length >= 2 
+    ? sparklineData 
+    : [100000, 100000];
+
   return (
     <div className="p-3.5 rounded-2xl bg-[var(--card)] hover:bg-[var(--card-elevated)] border border-[var(--line)] hover:border-emerald-500/40 transition-all duration-300 backdrop-blur-3xl shadow-[0_12px_36px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.10)] group cursor-default relative overflow-hidden">
       {/* Subtle Ambient Radial Highlight */}
@@ -55,7 +64,7 @@ export function SessionPnlCard({
 
           {/* Compounding Curve */}
           <LuxuryAreaSparkline 
-            data={[100000, 103200, 102800, 106500, 110200, 114850]} 
+            data={dynamicSparkline} 
             isGain={isSessionPnlPositive} 
             width={72} 
             height={26} 
@@ -65,11 +74,19 @@ export function SessionPnlCard({
         {/* Win Rate Bar */}
         <div className="space-y-1 w-full pt-1">
           <div className="flex items-center justify-between text-[8px] font-mono text-slate-400 font-bold leading-none">
-            <span>Win Rate: 78%</span>
-            <span className="text-emerald-400 font-bold">4/5 Closed Positive</span>
+            <span>Win Rate: {sessionTradesCount > 0 ? `${sessionWinRate}%` : "—"}</span>
+            <span className={clsx("font-bold", sessionWins > 0 ? "text-emerald-400" : "text-slate-400")}>
+              {sessionTradesCount > 0 ? `${sessionWins}/${sessionTradesCount} Closed Positive` : "0 Trades Today"}
+            </span>
           </div>
           <div className="relative w-full h-1.5 rounded-full bg-white/[0.06] overflow-hidden border border-white/5">
-            <div className="absolute top-0 bottom-0 left-0 bg-emerald-400 rounded-full w-[78%]" />
+            <div 
+              className={clsx(
+                "absolute top-0 bottom-0 left-0 rounded-full transition-all duration-500",
+                sessionTradesCount > 0 ? (sessionWinRate >= 50 ? "bg-emerald-400" : "bg-rose-400") : "bg-slate-600"
+              )} 
+              style={{ width: `${sessionTradesCount > 0 ? Math.max(sessionWinRate, 4) : 0}%` }} 
+            />
           </div>
         </div>
       </div>

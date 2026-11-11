@@ -19,7 +19,7 @@ export async function checkDotnetHealth() {
   }
 }
 
-export async function validateOrderWithDotnet({ entryPrice, stopLoss, target, quantity }) {
+export async function validateOrderWithDotnet({ entryPrice, stopLoss, target, quantity, testingMode = false }) {
   try {
     const res = await fetch(`${BASE_URL}/orders/validate`, {
       method: "POST",
@@ -28,7 +28,8 @@ export async function validateOrderWithDotnet({ entryPrice, stopLoss, target, qu
         EntryPrice: Number(entryPrice),
         StopLoss: Number(stopLoss),
         Target: Number(target),
-        Quantity: Number(quantity)
+        Quantity: Number(quantity),
+        TestingMode: Boolean(testingMode)
       })
     });
     return await res.json();
@@ -46,7 +47,9 @@ export async function deployOrderWithDotnet({
   quantity,
   price,
   stopLoss,
-  target
+  target,
+  testingMode = false,
+  isUnrestricted = false
 }) {
   const key = generateIdempotencyKey();
   try {
@@ -65,7 +68,9 @@ export async function deployOrderWithDotnet({
         Quantity: Number(quantity),
         Price: Number(price),
         StopLoss: Number(stopLoss),
-        Target: Number(target)
+        Target: Number(target),
+        TestingMode: Boolean(testingMode),
+        IsUnrestricted: Boolean(isUnrestricted)
       })
     });
     return await res.json();

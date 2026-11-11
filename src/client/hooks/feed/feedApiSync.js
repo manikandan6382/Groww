@@ -41,6 +41,16 @@ export async function checkTokenStatus(setBrokerStatus) {
       nextStatus.upstoxConnected = Boolean(!isExpired && (upstoxData.websocketConnected || upstoxData.polling || upstoxData.hasToken));
       nextStatus.upstoxPreMarketReady = Boolean(!isExpired && upstoxData.isPreMarketReady);
       nextStatus.upstoxTokenAgeMinutes = upstoxData.sessionAgeMinutes;
+      if (upstoxData.isTradingDay !== undefined) {
+        nextStatus.isTradingDay = upstoxData.isTradingDay;
+        nextStatus.marketHoliday = Boolean(upstoxData.marketHoliday);
+        nextStatus.holidayName = upstoxData.holidayName;
+      }
+    }
+    if (brokerData?.market) {
+      nextStatus.isTradingDay = brokerData.market.isTradingDay;
+      nextStatus.marketHoliday = Boolean(brokerData.market.marketHoliday);
+      nextStatus.holidayName = brokerData.market.reason || nextStatus.holidayName;
     }
     if (brokerData?.kite) {
       const isKiteExpired = Boolean(brokerData.kite.isExpired ?? brokerData.kite.expired);
@@ -101,11 +111,21 @@ export async function fetchLiveOptionQuotes() {
           }
         }
         for (const trade of openAlerts) {
-          const symQuote = data.quotes[trade.symbol] || (trade.tokenKey && data.quotes[trade.tokenKey]);
+          const sym = trade.symbol || trade.tradingsymbol;
+          const symQuote = (sym && data.quotes[sym]) || (trade.tokenKey && data.quotes[trade.tokenKey]);
           if (symQuote?.ltp > 0) {
-            updates.push({ id: trade.id, ltp: symQuote.ltp, change: symQuote.change || 0 });
+            const ltp = Number(symQuote.ltp);
+            const chg = Number(symQuote.change || 0);
+            if (trade.id) {
+              updates.push({ id: trade.id, ltp, change: chg });
+              updates.push({ id: String(trade.id), ltp, change: chg });
+            }
             if (trade.serverId) {
-              updates.push({ id: trade.serverId, ltp: symQuote.ltp, change: symQuote.change || 0 });
+              updates.push({ id: trade.serverId, ltp, change: chg });
+              updates.push({ id: String(trade.serverId), ltp, change: chg });
+            }
+            if (trade.tokenKey) {
+              updates.push({ id: trade.tokenKey, ltp, change: chg });
             }
           }
         }
@@ -120,15 +140,20 @@ export async function fetchLiveOptionQuotes() {
 // Reconcile open alerts with server status to prevent orphaned cards
 export async function reconcileServerTrades(onSyncClosed) {
   try {
-    const res = await fetch("/api/paper-lab/live-status");
+    const res = await fetch("/api/paper-lab/live-status", { cache: "no-store" });
     if (res.ok) {
       const status = await res.json();
-      const serverActiveIds = new Set((status.activeTrades || []).map((t) => Number(t.id)));
+      const rawActive = Array.isArray(status.activePositions)
+        ? status.activePositions
+        : (Array.isArray(status.activeTradeIds)
+          ? status.activeTradeIds.map((id) => ({ id }))
+          : (Array.isArray(status.activeTrades) ? status.activeTrades : []));
+      const serverActiveIds = new Set(rawActive.map((t) => Number(typeof t === "object" ? t.id : t)).filter(Boolean));
       const openAlerts = useTradingStore.getState().openAlerts || [];
       for (const trade of openAlerts) {
         if (trade.serverId && !serverActiveIds.has(Number(trade.serverId))) {
           const currentLtp = useLivePriceStore.getState().ticks?.[trade.symbol]?.ltp || trade.entryPrice;
-          fetch(`/api/paper-lab/trades/${trade.serverId}`)
+          fetch(`/api/paper-lab/trades/${trade.serverId}`, { cache: "no-store" })
             .then((r) => r.json())
             .then((detail) => {
               if (detail?.trade && detail.trade.status !== "OPEN") {
@@ -143,10 +168,10 @@ export async function reconcileServerTrades(onSyncClosed) {
   } catch {}
 }
 
-// Hydrate closed ledger trades directly from SQLite database
+// Hydrate closed ledger trades directly from paper-lab weekly endpoint
 export async function syncClosedTrades() {
   try {
-    const res = await fetch("/api/paper-lab");
+    const res = await fetch("/api/paper-lab", { cache: "no-store" });
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data.closedTrades) && data.closedTrades.length > 0) {

@@ -5,6 +5,9 @@ import { useTradingStore } from "../../../stores/useTradingStore";
 export function TopbarBrand({ onOpenBrokerModal }) {
   const brokerStatus = useTradingStore((s) => s.brokerStatus);
   const isUpstoxLive = Boolean(brokerStatus?.upstoxConnected && !brokerStatus?.upstoxExpired);
+  const isHoliday = Boolean(brokerStatus?.marketHoliday);
+  const holidayName = brokerStatus?.holidayName || "Market Holiday";
+  const isTradingDay = brokerStatus?.isTradingDay !== false;
 
   return (
     <div className="flex-shrink-0 flex items-center min-w-0">
@@ -22,7 +25,21 @@ export function TopbarBrand({ onOpenBrokerModal }) {
           <span className="text-xs font-black uppercase tracking-widest text-white font-mono leading-none whitespace-nowrap">
             PORTFOLIO<span className="text-cyan-400">X</span>
           </span>
-          {isUpstoxLive ? (
+          {isHoliday ? (
+            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+              <span className="text-[8px] font-mono font-black text-amber-300 tracking-wider leading-none whitespace-nowrap">
+                MARKET CLOSED ({holidayName.toUpperCase()})
+              </span>
+            </div>
+          ) : !isTradingDay ? (
+            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+              <span className="text-[8px] font-mono font-black text-amber-300 tracking-wider leading-none whitespace-nowrap">
+                MARKET CLOSED (WEEKEND)
+              </span>
+            </div>
+          ) : isUpstoxLive ? (
             <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
               <span className="text-[8px] font-mono font-black text-emerald-400 tracking-wider leading-none whitespace-nowrap">

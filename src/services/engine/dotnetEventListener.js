@@ -32,7 +32,7 @@ function handleDotnetEvent(eventId, eventType, rawData) {
   if (eventId && eventId > lastProcessedEventId) {
     lastProcessedEventId = eventId;
   }
-  if (!rawData || !["stop_loss_hit", "target_hit", "trade_mutation"].includes(eventType)) return;
+  if (!rawData || !["stop_loss_hit", "target_hit", "trade_mutation", "breakeven_locked", "stop_loss_updated"].includes(eventType)) return;
   let parsed = null;
   try {
     parsed = JSON.parse(rawData);
@@ -40,7 +40,7 @@ function handleDotnetEvent(eventId, eventType, rawData) {
     return;
   }
 
-  const { tradeId, symbol, ltp, reason } = parsed;
+  const { tradeId, symbol, ltp, reason, action, stopLoss, newStopLoss } = parsed;
   try {
     const db = getDb();
     // Search open paper trades by positionId in notes, or by matching symbol
@@ -64,7 +64,37 @@ function handleDotnetEvent(eventId, eventType, rawData) {
       `).get(symbol, `%${symbol}%`);
     }
 
-    if (trade) {
+    if (!trade) return;
+
+    // Handle Stop-Loss Amendment & Breakeven Lock from .NET
+    if (eventType === "breakeven_locked" || eventType === "stop_loss_updated" || (eventType === "trade_mutation" && action === "stop_loss")) {
+      const slVal = Number(stopLoss || newStopLoss || 0);
+      if (slVal > 0) {
+        db.prepare("UPDATE trades SET stop_loss = ?, updated_at = datetime('now') WHERE id = ?").run(slVal, trade.id);
+        trade.stop_loss = slVal;
+        const item = paperTradeEngine.activeTrades.get(trade.id);
+        if (item) item.trade.stopLoss = slVal;
+        paperTradeEngine.publish("breakeven_locked", {
+          tradeId: trade.id,
+          symbol: trade.symbol,
+          newStopLoss: slVal,
+          stopLoss: slVal,
+          currentLtp: Number(ltp || trade.last_mark_price || trade.entry_price),
+          message: `Breakeven Locked at ₹${slVal.toFixed(2)}`
+        });
+        paperTradeEngine.publish("trade_mutation", {
+          action: "stop_loss",
+          tradeId: trade.id,
+          stopLoss: slVal,
+          isBreakevenLocked: true
+        });
+        console.log(`🛡️ [.NET Bridge] Stop Loss updated for Trade #${trade.id} (${symbol}) to ₹${slVal.toFixed(2)} via .NET RMS`);
+      }
+      return;
+    }
+
+    // Handle Authoritative Square-Off from .NET
+    if (["stop_loss_hit", "target_hit"].includes(eventType) || (eventType === "trade_mutation" && (!action || action === "close"))) {
       const exitPrice = Number(ltp || trade.last_mark_price || trade.entry_price);
       const closeReason = reason || (eventType === "target_hit" ? "TARGET_HIT" : "STOP_LOSS_HIT");
       closePaperTrade(trade.id, { price: exitPrice, reason: closeReason });
@@ -81,6 +111,7 @@ function handleDotnetEvent(eventId, eventType, rawData) {
   } catch (err) {
     console.warn(`⚠️ [.NET Bridge] Failed to process ${eventType}:`, err.message);
   }
+
 }
 
 export function startDotnetEventListener() {

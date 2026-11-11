@@ -13,6 +13,9 @@ export function ContractSizingInputs({
   setStrikePrice,
   entryPrice,
   setEntryPrice,
+  liveMarkPrice,
+  isLiveStreaming,
+  onSyncToLive,
   lots,
   setLots,
   lotSize,
@@ -103,7 +106,6 @@ export function ContractSizingInputs({
                 type="button"
                 onClick={() => {
                   soundEngine?.playTabSwitchTone?.();
-                  handleManualInputFocus?.();
                   setStrikePrice(k);
                 }}
                 className={clsx(
@@ -282,7 +284,19 @@ export function ContractSizingInputs({
         {/* Entry Price */}
         <div className="space-y-1">
           <div className="flex items-center justify-between">
-            <label className="text-slate-400 font-medium">Entry Price (₹)</label>
+            <div className="flex items-center gap-1.5">
+              <label className="text-slate-400 font-medium">Entry Price (₹)</label>
+              {Number(liveMarkPrice) > 0 && Math.abs(Number(liveMarkPrice) - Number(entryPrice)) >= 0.05 && (
+                <button
+                  type="button"
+                  onClick={() => onSyncToLive?.()}
+                  className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 hover:bg-cyan-500/30 transition flex items-center gap-1 cursor-pointer animate-pulse"
+                  title="Snap entry price to live Upstox market tick and resume streaming"
+                >
+                  <span>⚡ Sync LTP (₹{Number(liveMarkPrice).toFixed(2)})</span>
+                </button>
+              )}
+            </div>
             <span
               className="text-[10px] font-mono text-cyan-400 font-bold"
               title={`Total Trade Capital: ₹${Number(entryPrice || 0).toFixed(2)} × ${lots * lotSize} Qty = ₹${(Number(entryPrice || 0) * lots * lotSize).toFixed(2)}`}

@@ -21,8 +21,18 @@ export function SettledTradeTableRow({
 }) {
   const outcome = getTradeOutcome(trade);
   const isGain = outcome.isNetGain;
-  const sym = String(trade.symbol || "");
-  const isCE = trade.optionType === "CALL" || sym.includes("CE");
+  const sym = String(trade.symbol || "").toUpperCase().trim();
+  const isPE = sym.endsWith("PE") || sym.includes(" PE") || trade.optionType === "PUT";
+  const isCE = !isPE && (sym.endsWith("CE") || sym.includes(" CE") || trade.optionType === "CALL");
+
+  const lotSize = Math.max(1, Number(trade.lotSize || 1));
+  const rawQty = Number(trade.quantity || 1);
+  const lots = trade.lots 
+    ? Number(trade.lots) 
+    : (rawQty >= lotSize && rawQty % lotSize === 0) 
+      ? Math.round(rawQty / lotSize) 
+      : Math.max(1, Math.round(rawQty));
+
   const formattedEntryTime = formatLocalDateTime(trade.entryDatetime);
   const formattedExitTime = formatLocalDateTime(trade.exitDatetime || trade.entryDatetime);
   const duration = calculateTradeDuration(trade.entryDatetime, trade.exitDatetime, trade.duration);
@@ -85,7 +95,7 @@ export function SettledTradeTableRow({
               )}
             </div>
             <span className="text-[10px] text-slate-400 font-mono">
-              {trade.lots || Math.round((trade.quantity || 1) / (trade.lotSize || 1))} Lots ({trade.lotSize || 1} Lot Size)
+              {lots} {lots === 1 ? "Lot" : "Lots"} ({lotSize} Lot Size)
             </span>
           </div>
         </div>

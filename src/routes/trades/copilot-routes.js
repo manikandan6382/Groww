@@ -1,10 +1,73 @@
 import { paperTradeEngine } from "../../services/paperTradeEngine.js";
 import { ensurePaperEngineStarted } from "./paper-sse.js";
-import { sendJson } from "./route-helpers.js";
+import { readJsonBody, sendJson } from "./route-helpers.js";
 import { getUpstoxOptionChain, getUpstoxOptionContracts } from "./option-contract-cache.js";
 import { computeCopilotRiskMath, fallbackBlack76Greeks, getMarketTimingRegime } from "./copilot-calculator.js";
 
+let activeCopilotSignal = null;
+
+export function getActiveCopilotSignal() {
+  if (activeCopilotSignal && Date.now() > activeCopilotSignal.expiresAt) {
+    activeCopilotSignal = null;
+  }
+  return activeCopilotSignal;
+}
+
+export function setActiveCopilotSignal(signal) {
+  if (!signal) {
+    activeCopilotSignal = null;
+    return null;
+  }
+  const ttlSeconds = Number(signal.ttlSeconds || 300);
+  const now = Date.now();
+  const optionType = String(signal.optionType || "CALL").toUpperCase();
+  const underlying = String(signal.underlying || "NIFTY").toUpperCase();
+  const strikePrice = Number(signal.strikePrice || 22450);
+  const symbol = signal.symbol || `${underlying} ${strikePrice} ${optionType === "CALL" ? "CE" : "PE"}`;
+
+  activeCopilotSignal = {
+    id: `signal_${now}`,
+    symbol,
+    underlying,
+    optionType,
+    strikePrice,
+    entryPrice: Number(signal.entryPrice || 120),
+    stopLoss: Number(signal.stopLoss || 116),
+    targetPrice: Number(signal.targetPrice || 128),
+    lots: Number(signal.lots || 1),
+    reason: signal.reason || "Quantitative Copilot Setup",
+    createdAt: now,
+    expiresAt: now + (ttlSeconds * 1000),
+    ttlSeconds
+  };
+  return activeCopilotSignal;
+}
+
 export async function handleCopilotRoutes(req, res, url) {
+  if (url.pathname === "/api/copilot/signal") {
+    if (req.method === "GET") {
+      const signal = getActiveCopilotSignal();
+      sendJson(res, { success: true, signal });
+      return true;
+    }
+    if (req.method === "POST") {
+      try {
+        const body = await readJsonBody(req);
+        const signal = setActiveCopilotSignal(body);
+        sendJson(res, { success: true, signal, message: `Copilot signal active for ${signal.symbol}` }, 201);
+        return true;
+      } catch (err) {
+        sendJson(res, { success: false, error: err.message }, 400);
+        return true;
+      }
+    }
+    if (req.method === "DELETE") {
+      activeCopilotSignal = null;
+      sendJson(res, { success: true, message: "Copilot signal cleared" });
+      return true;
+    }
+  }
+
   if (req.method !== "GET" || url.pathname !== "/api/upstox/copilot-audit") return false;
 
   ensurePaperEngineStarted();

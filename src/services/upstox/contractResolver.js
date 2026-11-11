@@ -5,6 +5,21 @@ import {
 } from "./upstoxUtils.js";
 import { findOptionToken } from "./instrumentMatcher.js";
 
+export function extractStrikeFromSymbol(sym) {
+  if (!sym) return 0;
+  const str = String(sym).trim();
+  const nseWeekly = str.match(/[A-Za-z]+\d{2}[A-Za-z](\d{2})(\d{4,5})(?:CE|PE)/i);
+  if (nseWeekly) return Number(nseWeekly[2]);
+  const monthly = str.match(/[A-Za-z]{3}(\d{4,5})(?:CE|PE)/i);
+  if (monthly) return Number(monthly[1]);
+  const preCePe = str.match(/(\d{4,5})\s*(?:CE|PE)/i);
+  if (preCePe) return Number(preCePe[1]);
+  const wordMatch = str.match(/\b(\d{4,6})\b/);
+  if (wordMatch) return Number(wordMatch[1]);
+  const fallback = str.match(/\d{4,6}/);
+  return fallback ? Number(fallback[0]) : 0;
+}
+
 export async function resolveContractToken(client, trade) {
   const manual = getManualToken(trade);
   if (manual) return manual;
@@ -17,8 +32,8 @@ export async function resolveContractToken(client, trade) {
       trade.underlying_symbol ||
       (sym.includes("SENSEX") ? "SENSEX" : sym.includes("BANK") ? "BANKNIFTY" : sym.includes("FIN") ? "FINNIFTY" : "NIFTY")
     ).toUpperCase();
-    const parsedStrike = Number(trade.strikePrice || trade.strike_price || (sym.match(/\b\d{5,6}\b/) || sym.match(/\d+/) || [0])[0]);
-    const strike = parsedStrike || Number((sym.match(/\d+/) || [0])[0]);
+    const parsedStrike = Number(trade.strikePrice || trade.strike_price || 0) || extractStrikeFromSymbol(sym);
+    const strike = parsedStrike;
     const side = toUpstoxSide(trade.optionType || trade.option_type || (sym.includes("PE") ? "PUT" : "CALL"));
     const underlyingKey = underlying.includes("SENSEX") ? "BSE_INDEX|SENSEX" : (underlying.includes("BANK") ? "NSE_INDEX|Nifty Bank" : (underlying.includes("FIN") ? "NSE_INDEX|Nifty Fin Service" : "NSE_INDEX|Nifty 50"));
     

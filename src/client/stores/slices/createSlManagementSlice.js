@@ -1,4 +1,5 @@
 import { debounceNetworkSync, broadcastTradeAction } from "./tradePersistence";
+import { calculateStatutoryCharges } from "./tradeHelpers.js";
 
 export const createSlManagementSlice = (set, get) => ({
   trailStopLoss: (id, newSl) => {
@@ -63,19 +64,24 @@ export const createSlManagementSlice = (set, get) => ({
 
   setBreakevenSL: (id, currentLtp = null) => {
     let finalSl = null;
+    let markPrice = currentLtp;
     const updated = get().openAlerts.map((t) => {
       if (t.id === id) {
+        if (!markPrice && typeof t.lastMarkPrice === "number" && t.lastMarkPrice > 0) {
+          markPrice = t.lastMarkPrice;
+        }
+        const effectiveLtp = markPrice;
         const entry = Number(t.entryPrice || 0);
         const isShort = t.direction === "SHORT";
         const currentTp = Number(t.targetPrice || (isShort ? 0.05 : 999999));
         const units = Number(t.quantity || 1) * Math.max(1, Number(t.lotSize || 65));
-        const estimatedCharges = 55.20 + (entry * units * 0.001);
+        const estimatedCharges = calculateStatutoryCharges(entry, entry, units, t.direction || (isShort ? "SHORT" : "LONG"));
         const frictionPts = Math.max(1.50, Number((estimatedCharges / units + 0.30).toFixed(2)));
         const trueBePrice = isShort ? (entry - frictionPts) : (entry + frictionPts);
         
         // Guard: Cannot lock Breakeven if trade is currently in a loss!
-        if (typeof currentLtp === "number" && currentLtp > 0) {
-          const inLoss = isShort ? (currentLtp >= entry) : (currentLtp <= entry);
+        if (typeof effectiveLtp === "number" && effectiveLtp > 0) {
+          const inLoss = isShort ? (effectiveLtp >= entry) : (effectiveLtp <= entry);
           if (inLoss) {
             console.warn("Cannot lock Breakeven while trade is currently in a loss.");
             return t;
@@ -83,10 +89,10 @@ export const createSlManagementSlice = (set, get) => ({
         }
 
         let targetSl = trueBePrice;
-        if (typeof currentLtp === "number" && currentLtp > 0) {
+        if (typeof effectiveLtp === "number" && effectiveLtp > 0) {
           targetSl = isShort
-            ? Math.max(trueBePrice, Number((currentLtp + 0.30).toFixed(2)))
-            : Math.min(trueBePrice, Number((currentLtp - 0.30).toFixed(2)));
+            ? Math.max(trueBePrice, Number((effectiveLtp + 0.30).toFixed(2)))
+            : Math.min(trueBePrice, Number((effectiveLtp - 0.30).toFixed(2)));
         }
 
         const safeSl = isShort ? Math.max(currentTp + 1.0, targetSl) : Math.min(currentTp - 1.0, targetSl);
@@ -104,7 +110,7 @@ export const createSlManagementSlice = (set, get) => ({
           fetch(`/api/paper-lab/trades/${id}/stop-loss`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ stopLoss: finalSl })
+            body: JSON.stringify({ stopLoss: finalSl, currentPrice: markPrice })
           }).catch(() => {});
         }, 100);
       }
@@ -114,22 +120,27 @@ export const createSlManagementSlice = (set, get) => ({
   updateStopLossPrice: (id, newSl, currentLtp = null) => {
     let finalSl = null;
     let wasClamped = false;
+    let markPrice = currentLtp;
     const rawVal = Number(newSl);
     if (!Number.isFinite(rawVal) || rawVal <= 0) return { finalSl: null, wasClamped: false };
 
     const updated = get().openAlerts.map((t) => {
       if (t.id === id) {
+        if (!markPrice && typeof t.lastMarkPrice === "number" && t.lastMarkPrice > 0) {
+          markPrice = t.lastMarkPrice;
+        }
+        const effectiveLtp = markPrice;
         const isShort = t.direction === "SHORT";
         const currentTp = Number(t.targetPrice || (isShort ? 0.05 : 999999));
         let clampedSl = rawVal;
         if (isShort) {
           let minAllowed = Math.max(currentTp + 1.0, 0.05);
-          if (typeof currentLtp === "number" && currentLtp > 0) minAllowed = Math.max(minAllowed, currentLtp + 0.50);
+          if (typeof effectiveLtp === "number" && effectiveLtp > 0) minAllowed = Math.max(minAllowed, effectiveLtp + 0.50);
           clampedSl = Math.max(minAllowed, Math.max(0.05, rawVal));
           if (rawVal < minAllowed) wasClamped = true;
         } else {
           let maxAllowed = currentTp - 1.0;
-          if (typeof currentLtp === "number" && currentLtp > 0) maxAllowed = Math.min(maxAllowed, Math.max(0.05, currentLtp - 0.50));
+          if (typeof effectiveLtp === "number" && effectiveLtp > 0) maxAllowed = Math.min(maxAllowed, Math.max(0.05, effectiveLtp - 0.50));
           clampedSl = Math.min(maxAllowed, Math.max(0.05, rawVal));
           if (rawVal > maxAllowed) wasClamped = true;
         }
@@ -150,7 +161,7 @@ export const createSlManagementSlice = (set, get) => ({
           fetch(`/api/paper-lab/trades/${id}/stop-loss`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ stopLoss: finalSl })
+            body: JSON.stringify({ stopLoss: finalSl, currentPrice: markPrice })
           }).catch(() => {});
         }, 300);
       }

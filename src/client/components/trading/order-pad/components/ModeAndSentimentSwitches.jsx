@@ -1,5 +1,6 @@
 import React from "react";
 import clsx from "clsx";
+import { useTradingStore } from "../../../../stores/useTradingStore";
 
 export function ModeAndSentimentSwitches({
   feedMode,
@@ -11,6 +12,11 @@ export function ModeAndSentimentSwitches({
   optionType,
   setOptionType
 }) {
+  const testingMode = useTradingStore((s) => s.testingMode);
+  const setTestingMode = useTradingStore((s) => s.setTestingMode);
+  const testingRestrictionMode = useTradingStore((s) => s.testingRestrictionMode);
+  const setTestingRestrictionMode = useTradingStore((s) => s.setTestingRestrictionMode);
+
   return (
     <div className="space-y-4">
       {/* Mode Switches: Feed Mode + Spread Mode + Slippage Guard */}
@@ -18,23 +24,31 @@ export function ModeAndSentimentSwitches({
         <div className="flex rounded-xl bg-white/[0.03] border border-white/5 p-1">
           <button
             type="button"
-            onClick={() => setFeedMode("LIVE")}
+            onClick={() => {
+              setFeedMode("LIVE");
+              setTestingMode(false);
+            }}
             className={clsx(
-              "flex-1 py-1.5 rounded-lg font-bold transition text-center",
-              feedMode === "LIVE" ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30" : "text-slate-400 hover:text-slate-200"
+              "flex-1 py-1.5 rounded-lg font-bold transition text-center cursor-pointer",
+              feedMode === "LIVE" && !testingMode ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30" : "text-slate-400 hover:text-slate-200"
             )}
+            title="Live Discipline Mode: Enforces strict ₹250/₹300 risk ceiling, minimum 2:1 R:R, and Upstox live feed auto-exits."
           >
             🟢 Live Auto-Exit
           </button>
           <button
             type="button"
-            onClick={() => setFeedMode("MANUAL")}
+            onClick={() => {
+              setFeedMode("MANUAL");
+              setTestingMode(true);
+            }}
             className={clsx(
-              "flex-1 py-1.5 rounded-lg font-bold transition text-center",
-              feedMode === "MANUAL" ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30" : "text-slate-400 hover:text-slate-200"
+              "flex-1 py-1.5 rounded-lg font-bold transition text-center cursor-pointer",
+              testingMode || feedMode === "MANUAL" ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30" : "text-slate-400 hover:text-slate-200"
             )}
+            title="Testing / Sandbox Mode: Zero restrictions! Choose whatever Stop Loss, Target, and Lot size without risk ceiling or 2:1 R:R blocks."
           >
-            🎮 Sandbox Mode
+            🎮 Testing / Sandbox
           </button>
         </div>
 
@@ -76,6 +90,47 @@ export function ModeAndSentimentSwitches({
           </span>
         </label>
       </div>
+
+      {/* Testing Mode Restriction Toggle */}
+      {testingMode && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between p-2 rounded-xl bg-purple-500/10 border border-purple-500/30 text-xs gap-2">
+          <div className="flex items-center gap-2 font-mono text-[11px] text-purple-200">
+            <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
+            <span className="font-bold">🧪 Testing Restriction Mode:</span>
+            <span className="text-slate-400">
+              {testingRestrictionMode === "UNRESTRICTED" ? "Free Sandbox (Zero Restrictions)" : "Strict RMS (Like Real)"}
+            </span>
+          </div>
+          <div className="flex rounded-lg bg-black/50 border border-purple-500/40 p-0.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => setTestingRestrictionMode("LIKE_REAL")}
+              className={clsx(
+                "px-2.5 py-1 rounded-md font-bold font-mono text-[10px] transition cursor-pointer flex items-center gap-1",
+                testingRestrictionMode === "LIKE_REAL"
+                  ? "bg-cyan-500/30 text-cyan-200 border border-cyan-500/50 shadow-sm"
+                  : "text-slate-400 hover:text-slate-200"
+              )}
+              title="Like Real: Strictly enforce ₹300 risk ceiling, 2:1 R:R, and calendar gates."
+            >
+              🛡️ Like Real (Strict)
+            </button>
+            <button
+              type="button"
+              onClick={() => setTestingRestrictionMode("UNRESTRICTED")}
+              className={clsx(
+                "px-2.5 py-1 rounded-md font-bold font-mono text-[10px] transition cursor-pointer flex items-center gap-1",
+                testingRestrictionMode === "UNRESTRICTED"
+                  ? "bg-purple-500/40 text-purple-200 border border-purple-500/60 shadow-sm shadow-purple-500/20"
+                  : "text-slate-400 hover:text-slate-200"
+              )}
+              title="No Restrictions: Free sandbox! Custom SL/TP, any lot size, unblocked by ₹300 risk ceiling."
+            >
+              ⚡ No Restrictions
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Step 1: Sentiment Switcher */}
       <div>

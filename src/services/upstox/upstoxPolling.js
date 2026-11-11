@@ -4,7 +4,10 @@ const UPSTOX_LTP_URL = "https://api.upstox.com/v2/market-quote/ltp";
 
 export async function executeLtpPoll(client) {
   if (!client.shouldRun || !client.isConfigured() || client.polling) return;
-  const keys = Array.from(new Set([...client.pendingSubscriptions, ...client.activeSubscriptions])).filter(Boolean);
+  // If WebSocket is actively connected, pause REST polling to avoid competing ticks
+  if (client.connected) return;
+
+  const keys = Array.from(client.requestedSubscriptions || new Set([...(client.pendingSubscriptions || []), ...(client.activeSubscriptions || [])])).filter(Boolean);
   if (!keys.length) return;
 
   client.refreshAccessToken();
@@ -19,8 +22,10 @@ export async function executeLtpPoll(client) {
     if (res.status === 401 || res.status === 403) {
       const message = "Upstox access token expired or rejected. Refresh data/upstox-session.json.";
       client.lastError = message;
+      client.connectionState = "TOKEN_EXPIRED";
+      stopUpstoxPolling(client);
       client.emit("session_expired", { message });
-      client.emit("status", { state: "token_expired", message });
+      client.emit("status", { state: "TOKEN_EXPIRED", message });
       return;
     }
 
@@ -39,19 +44,60 @@ export async function executeLtpPoll(client) {
 }
 
 export function flushUpstoxSubscriptions(client) {
-  const keys = Array.from(client.pendingSubscriptions).filter((k) => !client.activeSubscriptions.has(k));
-  if (!keys.length) return;
-  if (client.connected) {
-    client.sendJson({ guid: `sub-${Date.now()}`, method: "sub", data: { instrumentKeys: keys, mode: "ltpc" } });
+  if (!client.connected) {
+    // Socket not connected; subscriptions stay pending in client.pendingSubscriptions
+    if (client.shouldRun && typeof client.startPolling === "function") {
+      client.startPolling();
+    }
+    client.emit("status", {
+      state: "pending_connect",
+      pending: Array.from(client.pendingSubscriptions || []),
+      subscriptions: Array.from(client.sentSubscriptions || client.activeSubscriptions || [])
+    });
+    return false;
   }
-  keys.forEach((k) => client.activeSubscriptions.add(k));
-  client.startPolling();
-  client.emit("status", { state: "subscribed", subscriptions: Array.from(client.activeSubscriptions) });
+
+  const keys = Array.from(client.pendingSubscriptions || []);
+  if (!keys.length) return true;
+
+  const ok = client.sendJson({
+    guid: `sub-${Date.now()}`,
+    method: "sub",
+    data: { instrumentKeys: keys, mode: "full" }
+  });
+
+  if (ok) {
+    for (const k of keys) {
+      client.pendingSubscriptions?.delete(k);
+      client.sentSubscriptions?.add(k);
+      client.activeSubscriptions?.add(k);
+    }
+    client.connectionState = "SUBSCRIBED";
+    client.emit("status", {
+      state: "SUBSCRIBED",
+      sent: keys,
+      subscriptions: Array.from(client.sentSubscriptions || client.activeSubscriptions || [])
+    });
+    return true;
+  } else {
+    // Send failed; preserve keys in pending queue
+    client.emit("status", {
+      state: "send_failed",
+      pending: keys
+    });
+    return false;
+  }
 }
 
 export function startUpstoxPolling(client) {
   if (!client.shouldRun || !client.isConfigured() || client.pollTimer) return;
-  client.pollTimer = setInterval(() => client.pollLtp(), client.pollMs);
+  if (client.connected) return;
+
+  client.pollTimer = setInterval(() => {
+    if (!client.connected) {
+      client.pollLtp();
+    }
+  }, client.pollMs);
   client.emit("status", { state: "polling", intervalMs: client.pollMs });
   client.pollLtp();
 }

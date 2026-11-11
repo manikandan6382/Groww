@@ -1,10 +1,9 @@
 import React from "react";
 import clsx from "clsx";
 
-export const DedicatedTVTapeBox = ({ history = [100], isGain = true, ltp = 100, entry = 100 }) => {
-  const pointsArray = (!history || history.length < 2) 
-    ? [ltp - 0.40, ltp - 0.25, ltp - 0.10, ltp + 0.15, ltp] 
-    : history;
+export const DedicatedTVTapeBox = ({ history = [], isGain = true, ltp = 100, entry = 100 }) => {
+  const pointsArray = (!history || history.length === 0) ? [ltp] : history;
+  const isStreaming = history && history.length >= 2;
   const rawMin = Math.min(...pointsArray);
   const rawMax = Math.max(...pointsArray);
   const span = Math.max(0.50, rawMax - rawMin);
@@ -20,18 +19,20 @@ export const DedicatedTVTapeBox = ({ history = [100], isGain = true, ltp = 100, 
   const chunkCount = 18;
   const chunkSize = Math.max(1, Math.floor(pointsArray.length / chunkCount));
   const candles = [];
-  for (let i = 0; i < chunkCount; i++) {
-    const startIdx = i * chunkSize;
-    const endIdx = i === chunkCount - 1 ? pointsArray.length : (i + 1) * chunkSize;
-    const slice = pointsArray.slice(startIdx, endIdx);
-    if (slice.length === 0) continue;
-    const open = slice[0];
-    const close = slice[slice.length - 1];
-    const high = Math.max(Math.max(...slice), Math.max(open, close) + 0.05);
-    const low = Math.min(Math.min(...slice), Math.min(open, close) - 0.05);
-    const isBull = close >= open;
-    const volHeight = Math.min(volumeHeight, Math.max(2, (Math.abs(close - open) / span) * volumeHeight * 2.4 + 2));
-    candles.push({ open, close, high, low, isBull, volHeight, idx: i });
+  if (isStreaming) {
+    for (let i = 0; i < chunkCount; i++) {
+      const startIdx = i * chunkSize;
+      const endIdx = i === chunkCount - 1 ? pointsArray.length : (i + 1) * chunkSize;
+      const slice = pointsArray.slice(startIdx, endIdx);
+      if (slice.length === 0) continue;
+      const open = slice[0];
+      const close = slice[slice.length - 1];
+      const high = Math.max(Math.max(...slice), Math.max(open, close) + 0.05);
+      const low = Math.min(Math.min(...slice), Math.min(open, close) - 0.05);
+      const isBull = close >= open;
+      const volHeight = Math.min(volumeHeight, Math.max(2, (Math.abs(close - open) / span) * volumeHeight * 2.4 + 2));
+      candles.push({ open, close, high, low, isBull, volHeight, idx: i });
+    }
   }
 
   const candleWidth = 14;
@@ -45,17 +46,23 @@ export const DedicatedTVTapeBox = ({ history = [100], isGain = true, ltp = 100, 
   const strokeColor = isGain ? tvGreen : tvRed;
 
   const bullCount = candles.filter(c => c.isBull).length;
-  const biasLabel = bullCount >= 11 ? "STRONG BUY FLOW" : bullCount >= 9 ? "BUY IMPULSE" : bullCount <= 6 ? "SELL FLOW" : "BALANCED FLOW";
-  const biasColor = bullCount >= 9 
-    ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" 
-    : bullCount <= 6 
-      ? "text-rose-400 bg-rose-500/10 border-rose-500/20" 
-      : "text-slate-300 bg-white/5 border-white/10";
+  const biasLabel = !isStreaming 
+    ? "NO ACTIVE STREAM"
+    : bullCount >= 11 ? "STRONG BUY FLOW" : bullCount >= 9 ? "BUY IMPULSE" : bullCount <= 6 ? "SELL FLOW" : "BALANCED FLOW";
+  const biasColor = !isStreaming
+    ? "text-slate-400 bg-white/5 border-white/10"
+    : bullCount >= 9 
+      ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" 
+      : bullCount <= 6 
+        ? "text-rose-400 bg-rose-500/10 border-rose-500/20" 
+        : "text-slate-300 bg-white/5 border-white/10";
 
   const recentDeltas = [];
-  for (let i = Math.max(1, pointsArray.length - 5); i < pointsArray.length; i++) {
-    const d = pointsArray[i] - pointsArray[i - 1];
-    recentDeltas.push({ val: pointsArray[i], diff: d, isUp: d >= 0 });
+  if (isStreaming) {
+    for (let i = Math.max(1, pointsArray.length - 5); i < pointsArray.length; i++) {
+      const d = pointsArray[i] - pointsArray[i - 1];
+      recentDeltas.push({ val: pointsArray[i], diff: d, isUp: d >= 0 });
+    }
   }
 
   const entryY = entry >= min && entry <= max ? getY(entry) : null;
@@ -64,11 +71,20 @@ export const DedicatedTVTapeBox = ({ history = [100], isGain = true, ltp = 100, 
     <div className="p-4 sm:p-5 flex flex-col space-y-3 bg-white/[0.015] border-t border-white/[0.06] relative overflow-hidden w-full">
       <div className="flex flex-wrap items-center justify-between gap-2.5">
         <div className="flex items-center gap-2.5">
-          <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/25">
-            <span className="w-2 h-2 rounded-full bg-[#089981] animate-pulse" />
-            <span className="text-[10px] font-mono font-black tracking-wider text-emerald-300 uppercase">TV TAPE · LIVE ORDER FLOW</span>
-          </div>
-          <span className="text-[10px] font-mono text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 px-2 py-0.5 rounded-full hidden sm:inline">1s Tick Stream</span>
+          {isStreaming ? (
+            <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/25">
+              <span className="w-2 h-2 rounded-full bg-[#089981] animate-pulse" />
+              <span className="text-[10px] font-mono font-black tracking-wider text-emerald-300 uppercase">TV TAPE · LIVE ORDER FLOW</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-slate-800/80 border border-slate-700/50">
+              <span className="w-2 h-2 rounded-full bg-slate-500" />
+              <span className="text-[10px] font-mono font-black tracking-wider text-slate-400 uppercase">TV TAPE · NO ACTIVE TICKS</span>
+            </div>
+          )}
+          <span className={clsx("text-[10px] font-mono px-2 py-0.5 rounded-full hidden sm:inline", isStreaming ? "text-cyan-300 bg-cyan-500/10 border border-cyan-500/20" : "text-slate-500 bg-slate-800/40 border border-slate-700/30")}>
+            {isStreaming ? "1s Tick Stream" : "Stream Idle"}
+          </span>
         </div>
 
         <div className="flex items-center gap-2">
@@ -109,7 +125,7 @@ export const DedicatedTVTapeBox = ({ history = [100], isGain = true, ltp = 100, 
           })}
           <line x1={w - 18} y1={lastY} x2={w} y2={lastY} stroke={strokeColor} strokeWidth="1" strokeDasharray="1 2" opacity="0.7" />
           <circle cx={w - 18} cy={lastY} r="3" fill={strokeColor} />
-          <circle cx={w - 18} cy={lastY} r="7" fill="none" stroke={strokeColor} opacity="0.6" className="animate-ping" />
+          {isStreaming && <circle cx={w - 18} cy={lastY} r="7" fill="none" stroke={strokeColor} opacity="0.6" className="animate-ping" />}
         </svg>
       </div>
 
@@ -117,17 +133,21 @@ export const DedicatedTVTapeBox = ({ history = [100], isGain = true, ltp = 100, 
         <div className="flex items-center gap-2">
           <span className="text-white/40 font-bold uppercase text-[9px]">Live Tape Prints:</span>
           <div className="flex items-center gap-1.5 overflow-x-auto">
-            {recentDeltas.map((r, idx) => (
-              <span key={`rd-${idx}`} className={clsx("px-1.5 py-0.5 rounded text-[9px] font-bold border tabular-nums flex items-center gap-0.5", r.isUp ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" : "text-rose-400 bg-rose-500/10 border-rose-500/20")}>
-                <span>₹{r.val.toFixed(2)}</span>
-                <span>{r.isUp ? "▲" : "▼"}</span>
-              </span>
-            ))}
+            {recentDeltas.length > 0 ? (
+              recentDeltas.map((r, idx) => (
+                <span key={`rd-${idx}`} className={clsx("px-1.5 py-0.5 rounded text-[9px] font-bold border tabular-nums flex items-center gap-0.5", r.isUp ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" : "text-rose-400 bg-rose-500/10 border-rose-500/20")}>
+                  <span>₹{r.val.toFixed(2)}</span>
+                  <span>{r.isUp ? "▲" : "▼"}</span>
+                </span>
+              ))
+            ) : (
+              <span className="text-white/30 text-[9px]">No live prints</span>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-3 text-white/40">
-          <span>Ticks: <strong className="text-slate-300">{pointsArray.length}</strong></span>
-          <span>Feed: <strong className="text-emerald-400">Upstox WebSocket</strong></span>
+          <span>Ticks: <strong className="text-slate-300">{history ? history.length : 0}</strong></span>
+          <span>Feed: <strong className={isStreaming ? "text-emerald-400" : "text-amber-400"}>{isStreaming ? "Upstox WebSocket" : "Session Inactive (0 Ticks)"}</strong></span>
         </div>
       </div>
     </div>

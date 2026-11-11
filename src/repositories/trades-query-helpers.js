@@ -117,8 +117,12 @@ export function hydrateTradeRelations(db, trades) {
 }
 
 export function rowToTrade(row) {
+  const lotSize = Math.max(1, Number(row.lotSize || 1));
+  const qty = Number(row.quantity || 1);
+  const lots = (qty >= lotSize && qty % lotSize === 0) ? Math.round(qty / lotSize) : Math.max(1, Math.round(qty));
   return {
     ...row,
+    lots,
     followedPlan: Boolean(row.followedPlan),
     strategyTags: [],
     mistakeTags: [],

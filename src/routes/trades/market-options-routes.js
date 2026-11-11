@@ -3,6 +3,7 @@ import { computeGexProfile } from "../../services/greeksEngine.js";
 import { ensurePaperEngineStarted } from "./paper-sse.js";
 import { readJsonBody, sendJson } from "./route-helpers.js";
 import { getUpstoxOptionContracts, getUpstoxOptionChain } from "./option-contract-cache.js";
+import { extractStrikeFromSymbol } from "../../services/upstox/contractResolver.js";
 
 export async function handleMarketOptionsRoutes(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/market/gex-profile") {
@@ -11,6 +12,23 @@ export async function handleMarketOptionsRoutes(req, res, url) {
     const dte = Number(url.searchParams.get("dte") || 1);
     const profile = computeGexProfile(symbol, spot, [], dte);
     sendJson(res, profile);
+    return true;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/market/subscribe") {
+    ensurePaperEngineStarted();
+    const body = await readJsonBody(req);
+    const key = body.instrumentKey || body.key || body.tokenKey;
+    if (key) {
+      paperTradeEngine.client.subscribe(key);
+      if (body.symbol) {
+        if (!paperTradeEngine.watchedTokens) paperTradeEngine.watchedTokens = new Map();
+        paperTradeEngine.watchedTokens.set(key, { symbol: body.symbol, lastSeenAt: Date.now() });
+      }
+      sendJson(res, { success: true, subscribed: key });
+      return true;
+    }
+    sendJson(res, { success: false, error: "Missing instrumentKey" }, 400);
     return true;
   }
 
@@ -40,7 +58,8 @@ export async function handleMarketOptionsRoutes(req, res, url) {
         const tokenEntries = await Promise.all(
           symbols.map(async (sym) => {
             try {
-              const tokenKey = await client.resolveOptionToken({ symbol: sym });
+              const strikePrice = extractStrikeFromSymbol(sym);
+              const tokenKey = await client.resolveOptionToken({ symbol: sym, strikePrice });
               return { sym, tokenKey };
             } catch {
               return { sym, tokenKey: null };
@@ -49,11 +68,44 @@ export async function handleMarketOptionsRoutes(req, res, url) {
         );
 
         const validEntries = tokenEntries.filter((e) => Boolean(e.tokenKey));
-        if (validEntries.length > 0) {
-          const uniqueKeys = Array.from(new Set(validEntries.map((e) => e.tokenKey)));
-          const qRes = await fetch(`https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(uniqueKeys.join(","))}`, {
+        // Invariant: Register real Upstox token immediately so WebSocket subscribes and streams live market ticks
+        const nowMs = Date.now();
+        for (const { sym, tokenKey } of validEntries) {
+          paperTradeEngine.registerWatchedToken(tokenKey, sym);
+          const cached = paperTradeEngine.quoteStore?.get(tokenKey);
+          const cachedAgeMs = cached ? (nowMs - (cached.receivedAtMs || new Date(cached.receivedAt || 0).getTime())) : Infinity;
+          if (cached && cached.ltp > 0 && cachedAgeMs < 3000) {
+            quotes[sym] = {
+              symbol: sym,
+              tokenKey,
+              ltp: Number(cached.ltp),
+              change: Number(cached.change || 0),
+              open: Number(cached.open || cached.ltp),
+              high: Number(cached.high || cached.ltp),
+              low: Number(cached.low || cached.ltp),
+              close: Number(cached.close || cached.ltp),
+              timestamp: cached.receivedAt || new Date().toISOString()
+            };
+            quotes[tokenKey] = quotes[sym];
+          }
+        }
+
+        const missingKeys = validEntries
+          .filter(e => !quotes[e.sym] || !quotes[e.sym].ltp)
+          .map(e => e.tokenKey);
+
+        if (missingKeys.length > 0) {
+          const uniqueKeys = Array.from(new Set(missingKeys));
+          let qRes = await fetch(`https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(uniqueKeys.join(","))}`, {
             headers: { Accept: "application/json", Authorization: `Bearer ${token}` }
           });
+          if (qRes.status === 429) {
+            // Respect rate limit: Back off and retry once
+            await new Promise(r => setTimeout(r, 400));
+            qRes = await fetch(`https://api.upstox.com/v2/market-quote/quotes?instrument_key=${encodeURIComponent(uniqueKeys.join(","))}`, {
+              headers: { Accept: "application/json", Authorization: `Bearer ${token}` }
+            });
+          }
           if (qRes.ok) {
             const qData = await qRes.json();
             const rawData = qData?.data || {};
@@ -79,7 +131,6 @@ export async function handleMarketOptionsRoutes(req, res, url) {
                 quotes[sym] = quoteObj;
                 quotes[tokenKey] = quoteObj;
 
-                paperTradeEngine.registerWatchedToken(tokenKey, sym);
                 paperTradeEngine.publish("tick", {
                   symbol: sym,
                   tokenKey,
@@ -110,14 +161,16 @@ export async function handleMarketOptionsRoutes(req, res, url) {
       for (const sym of symbols) {
         const uSym = sym.includes("SENSEX") ? "BSE_INDEX|SENSEX" : sym.includes("BANK") ? "NSE_INDEX|Nifty Bank" : "NSE_INDEX|Nifty 50";
         const spot = paperTradeEngine.simulator ? paperTradeEngine.simulator.getCurrentSpot(uSym) : (sym.includes("BANK") ? 57317.75 : 24005.55);
-        const parsedStrike = Number((sym.match(/\b\d{5,6}\b/) || sym.match(/\d+/) || [24000])[0]);
+        const parsedStrike = extractStrikeFromSymbol(sym) || 24000;
         const isCall = sym.includes("CE") || sym.includes("CALL");
         const intrinsic = isCall ? Math.max(0, spot - parsedStrike) : Math.max(0, parsedStrike - spot);
         const extrinsic = Math.max(15, 80 - Math.abs(spot - parsedStrike) * 0.08);
         const ltp = Math.max(0.05, Math.round((intrinsic + extrinsic) * 20) / 20);
+        const matchedEntry = validEntries.find(e => e.sym === sym);
+        const resolvedKey = matchedEntry?.tokenKey || `PRACTICE:${sym}`;
         quotes[sym] = {
           symbol: sym,
-          tokenKey: `PRACTICE:${sym}`,
+          tokenKey: resolvedKey,
           ltp,
           change: 0,
           open: ltp,

@@ -100,6 +100,12 @@ class SoundEngine {
   playOrderReject() {
     this._playTone({ type: "sawtooth", freq: 196, duration: 0.22, gain: 0.12, rampFreq: 140 });
   }
+
+  playRiskBreachKlaxon() {
+    if (this.isMuted()) return;
+    this._playTone({ type: "sawtooth", freq: 440, duration: 0.15, gain: 0.14, rampFreq: 220 });
+    this._playTone({ type: "sawtooth", freq: 330, duration: 0.25, gain: 0.15, delay: 0.12, rampFreq: 165 });
+  }
 }
 
 const rawSoundEngine = new SoundEngine();

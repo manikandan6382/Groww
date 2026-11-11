@@ -9,6 +9,7 @@ const SHORTCUTS = [
   { key: "3", label: "Trading Journal & Stories" },
   { key: "4", label: "US Tech Radar (Alpha Vantage)" },
   { key: "N", label: "Rapid Trade Logger (Focus 12-Col Form)" },
+  { key: "⌘B / Ctrl+B", label: "Toggle Side Navigation (Pin / Collapse)" },
   { key: "⌘K / /", label: "Spotlight Global Ticker Search" },
   { key: "?", label: "Open Keyboard Cheat Sheet" },
   { key: "ESC", label: "Dismiss Modals / Blur Active Focus" },

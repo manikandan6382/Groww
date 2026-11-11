@@ -57,9 +57,9 @@ export function ScoreboardFinancialCards({
   pnlPct = "0.00",
   telemetry = {}
 }) {
-  const lossRunwayRemaining = telemetry.lossRunwayRemaining ?? 300;
+  const lossRunwayRemaining = telemetry.lossRunwayRemaining ?? 600;
   const lossRunwayPct = telemetry.lossRunwayPct ?? 100;
-  const primeTradesRemaining = telemetry.primeTradesRemaining ?? 1;
+  const primeTradesRemaining = telemetry.primeTradesRemaining ?? 2;
   const sparklinePoints = telemetry.sparklinePoints ?? [startingCapital, currentAccountValue];
   const statutoryFrictionTotal = telemetry.statutoryFrictionTotal ?? 0;
   const frictionDragPct = telemetry.frictionDragPct ?? "0.0";
@@ -67,7 +67,7 @@ export function ScoreboardFinancialCards({
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-5">
-      {/* Card 1: Manikandan's Strict ₹300 Daily Loss Runway */}
+      {/* Card 1: Manikandan's Strict ₹600 Daily Loss Runway (2-Bullet Model) */}
       <div className={clsx(
         "p-5 sm:p-6 rounded-2xl backdrop-blur-xl border transition-all duration-300 relative overflow-hidden group shadow-lg",
         lossRunwayPct > 50
@@ -91,7 +91,7 @@ export function ScoreboardFinancialCards({
               : "bg-rose-500/25 text-rose-300 border-rose-500/40 animate-pulse"
           )}>
             <Lock className="w-2.5 h-2.5" />
-            <span>₹300 Hard Cap</span>
+            <span>₹600 (2-Bullet Cap)</span>
           </span>
         </div>
 

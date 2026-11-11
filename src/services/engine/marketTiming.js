@@ -1,9 +1,16 @@
+import { defaultExchangeCalendar } from "./exchangeCalendar.js";
+
 export function isMarketOpenNow(date = new Date()) {
-  const ist = new Date(date.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-  const day = ist.getDay();
-  if (day === 0 || day === 6) return false;
-  const minutes = ist.getHours() * 60 + ist.getMinutes();
-  return minutes >= 9 * 60 + 15 && minutes <= 15 * 60 + 30;
+  const dayCheck = defaultExchangeCalendar.isTradingDay(date);
+  if (!dayCheck.isTradingDay) return false;
+
+  const ist = defaultExchangeCalendar.getIstParts(date);
+  if (!ist) return false;
+
+  const minutes = ist.totalMinutes;
+  const [closeH, closeM] = (dayCheck.sessionHours?.close || "15:40").split(":").map(Number);
+  const [openH, openM] = (dayCheck.sessionHours?.open || "09:15").split(":").map(Number);
+  return minutes >= openH * 60 + openM && minutes <= closeH * 60 + closeM;
 }
 
 export function isSessionExpiredError(error) {

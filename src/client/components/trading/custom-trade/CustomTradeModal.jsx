@@ -21,12 +21,22 @@ export function CustomTradeModal({ isOpen, onClose }) {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xl animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-xl animate-in fade-in duration-200">
       <motion.div
-        initial={{ opacity: 0, scale: 0.95, y: 20 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95, y: 20 }}
-        className="w-full max-w-2xl bg-[#121424]/98 backdrop-blur-3xl border border-white/10 rounded-3xl shadow-[0_24px_60px_rgba(0,0,0,0.85),inset_0_1px_0_rgba(255,255,255,0.08)] overflow-hidden flex flex-col max-h-[90vh]"
+        initial={{ opacity: 0, y: 40 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: 40 }}
+        transition={{ type: "spring", stiffness: 380, damping: 32 }}
+        drag="y"
+        dragConstraints={{ top: 0 }}
+        dragElastic={0.2}
+        onDragEnd={(_e, info) => {
+          if (info.offset.y > 100) {
+            onClose();
+          }
+        }}
+        className="w-full max-w-2xl bg-[#121424]/98 backdrop-blur-3xl border-t sm:border border-white/10 rounded-t-3xl sm:rounded-3xl shadow-[0_24px_60px_rgba(0,0,0,0.85),inset_0_1px_0_rgba(255,255,255,0.08)] overflow-hidden flex flex-col max-h-[92vh] sm:max-h-[90vh]"
+        style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}
       >
         <CustomTradeModalHeader
           activeTab={activeTab}

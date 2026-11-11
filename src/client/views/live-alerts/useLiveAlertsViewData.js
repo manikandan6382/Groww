@@ -84,6 +84,7 @@ export function useLiveAlertsViewData() {
     return () => clearTimeout(timer);
   }, [settlementToast, setSettlementToast]);
 
+
   const telemetry = useMemo(() => {
     return getPortfolioTelemetry
       ? getPortfolioTelemetry(scorecardTimeframe)

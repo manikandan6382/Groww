@@ -11,6 +11,7 @@ export function PreFlightTelemetryGrid({
   totalQty,
   isLiveStreaming,
   onSetIsLiveStreaming,
+  onSyncToLive,
   liveContractTick,
   liveMarkPrice = entryPrice,
   isValidSL,
@@ -78,9 +79,17 @@ export function PreFlightTelemetryGrid({
               <span className="text-[10px] text-rose-400 font-bold animate-pulse">▼</span>
             )}
             {!isLiveStreaming && Math.abs(markDiff) >= 0.05 && (
-              <span className={clsx("text-[9px] font-mono font-bold px-1 rounded", markDiff > 0 ? "text-emerald-400 bg-emerald-500/10" : "text-rose-400 bg-rose-500/10")}>
-                Mark {markDiff > 0 ? "+" : ""}{markDiff.toFixed(1)}
-              </span>
+              <button
+                type="button"
+                onClick={() => (onSyncToLive ? onSyncToLive() : onSetIsLiveStreaming(true))}
+                className={clsx(
+                  "text-[9px] font-mono font-bold px-1.5 py-0.5 rounded transition cursor-pointer active:scale-95",
+                  markDiff > 0 ? "text-emerald-400 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30" : "text-rose-400 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30"
+                )}
+                title="Click to snap entry price to live Upstox tick and resume live streaming"
+              >
+                Snap {markDiff > 0 ? "+" : ""}{markDiff.toFixed(1)}
+              </button>
             )}
           </div>
           <span className="text-[10px] text-slate-400 font-mono">

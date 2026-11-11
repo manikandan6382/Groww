@@ -10,6 +10,10 @@ html, body {
   overscroll-behavior-y: contain;
 }
 
+button, a, input, select, textarea, [role="button"] {
+  touch-action: manipulation;
+}
+
 // Custom Obsidian Scrollbar
 ::-webkit-scrollbar {
   width: 6px;
@@ -71,13 +75,25 @@ html, body {
 // Apple Spatial Studio Spotlight & Safe Areas (Linear / Stripe Grade Atmospheric Specular)
 .apple-spatial-shell {
   min-height: 100dvh;
+  position: relative;
+  isolation: isolate;
+  background-color: var(--bg);
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.apple-spatial-shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
   background-color: var(--bg);
   background-image: var(--app-bg-gradient);
-  background-attachment: fixed;
   background-repeat: no-repeat;
+  background-position: center center;
   background-size: cover;
-  padding-bottom: max(80px, env(safe-area-inset-bottom));
-  padding-top: max(12px, env(safe-area-inset-top));
+  transform: translateZ(0);
+  will-change: transform;
+  pointer-events: none;
   transition: background-color 0.4s cubic-bezier(0.16, 1, 0.3, 1),
               background-image 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 }

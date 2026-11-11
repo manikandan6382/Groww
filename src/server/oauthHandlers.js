@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import crypto from "node:crypto";
+import { defaultExchangeCalendar } from "../services/engine/exchangeCalendar.js";
 import { renderUpstoxCallbackHtml, renderKiteCallbackHtml } from "./htmlTemplates.js";
 import { exchangeKiteRequestToken, exchangeUpstoxCode } from "./oauthExchange.js";
 import { sendJson } from "./staticServer.js";
@@ -74,6 +75,8 @@ export async function sendBrokerStatus(res, sessionFile, upstoxSessionFile) {
     } catch { /* ignore */ }
   }
 
+  const tradingDay = defaultExchangeCalendar.isTradingDay(new Date());
+
   await sendJson(res, {
     kite: {
       connected: kiteConnected,
@@ -89,6 +92,13 @@ export async function sendBrokerStatus(res, sessionFile, upstoxSessionFile) {
       sessionAgeMinutes: upstoxAgeMinutes,
       sessionFileExists: fs.existsSync(upstoxSessionFile),
     },
+    market: {
+      isTradingDay: tradingDay.isTradingDay,
+      marketHoliday: !tradingDay.isTradingDay,
+      status: tradingDay.status,
+      reason: tradingDay.holiday?.description || tradingDay.reason || null,
+      dateStr: tradingDay.dateStr
+    }
   });
 }
 

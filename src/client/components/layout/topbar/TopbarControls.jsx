@@ -16,6 +16,7 @@ export function TopbarControls() {
   const { 
     setRosettaOpen, 
     setCommandPaletteOpen,
+    setMobileQuickHubOpen,
     activeTheme, 
     setTheme, 
     customThemeColors, 
@@ -44,11 +45,11 @@ export function TopbarControls() {
             soundEngine.playTabSwitchTone();
             setCommandPaletteOpen(true);
           }}
-          className="h-9 px-3 rounded-full bg-white/[0.03] hover:bg-white/[0.07] border border-white/10 hover:border-cyan-500/30 text-slate-300 hover:text-white transition-all text-xs active:scale-95 shadow-sm cursor-pointer flex items-center gap-2 flex-shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]"
+          className="h-8 sm:h-9 px-2.5 sm:px-3 rounded-full bg-white/[0.03] hover:bg-white/[0.07] border border-white/10 hover:border-cyan-500/30 text-slate-300 hover:text-white transition-all text-xs active:scale-95 shadow-sm cursor-pointer flex items-center gap-1.5 sm:gap-2 flex-shrink-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]"
         >
           <Search className="w-3.5 h-3.5 text-cyan-400" />
           <span className="hidden sm:inline font-bold tracking-tight text-slate-300">Spotlight</span>
-          <kbd className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-white/10 text-slate-300 font-bold border border-white/10 shadow-inner">
+          <kbd className="hidden sm:inline-block text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-white/10 text-slate-300 font-bold border border-white/10 shadow-inner">
             ⌘K
           </kbd>
         </button>
@@ -75,8 +76,8 @@ export function TopbarControls() {
         </div>
       </div>
 
-      {/* Unified Spatial Control Capsule */}
-      <div className="h-9 flex items-center gap-1 p-1 rounded-full bg-white/[0.03] border border-white/10 backdrop-blur-3xl shadow-inner flex-shrink-0">
+      {/* Unified Spatial Control Capsule (Desktop only; on mobile accessible via Quick Hub Sheet) */}
+      <div className="hidden sm:flex h-9 items-center gap-1 p-1 rounded-full bg-white/[0.03] border border-white/10 backdrop-blur-3xl shadow-inner flex-shrink-0">
         {/* Spatial Audio Sound FX Toggle */}
         <div className="relative group">
           <button
@@ -127,8 +128,15 @@ export function TopbarControls() {
         />
       </div>
 
-      {/* User Profile Avatar with Luxury Obsidian Rim */}
-      <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-cyan-500 via-sky-400 to-indigo-600 p-0.5 flex items-center justify-center shadow-md cursor-pointer hover:scale-105 transition-transform flex-shrink-0" title="Manikandan (Pro Trader Desk)">
+      {/* User Profile Avatar with Luxury Obsidian Rim (Opens Mobile Quick Hub on Mobile) */}
+      <div 
+        onClick={() => {
+          soundEngine.playTabSwitchTone();
+          setMobileQuickHubOpen(true);
+        }}
+        className="w-8 sm:w-9 h-8 sm:h-9 rounded-full bg-gradient-to-tr from-cyan-500 via-sky-400 to-indigo-600 p-0.5 flex items-center justify-center shadow-md cursor-pointer hover:scale-105 active:scale-95 transition-transform flex-shrink-0" 
+        title="Manikandan (Pro Trader Desk) — Open Quick Hub"
+      >
         <div className="w-full h-full bg-[var(--bg)] rounded-full flex items-center justify-center font-black text-white text-xs">
           M
         </div>

@@ -62,7 +62,6 @@ export async function flushDotnetTicks() {
       headers: { "Content-Type": "application/json" },
       body: payload,
       signal: controller.signal,
-      dispatcher: httpAgent,
     });
     clearTimeout(timeout);
 

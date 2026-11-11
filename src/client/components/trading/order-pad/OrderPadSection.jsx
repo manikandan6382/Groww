@@ -99,6 +99,9 @@ export const OrderPadSection = React.memo(function OrderPadSection() {
           setStrikePrice={logic.setStrikePrice}
           entryPrice={logic.entryPrice}
           setEntryPrice={logic.setEntryPrice}
+          liveMarkPrice={logic.liveMarkPrice}
+          isLiveStreaming={logic.isLiveStreaming}
+          onSyncToLive={logic.handleSyncToLive}
           lots={logic.lots}
           setLots={logic.setLots}
           lotSize={logic.lotSize}
@@ -184,6 +187,10 @@ export const OrderPadSection = React.memo(function OrderPadSection() {
           vaultFormattedTime={logic.vault.vaultFormattedTime}
           copilotState={logic.copilotState}
           entryPrice={logic.entryPrice}
+          frictionMetrics={logic.frictionMetrics}
+          canonicalPlan={logic.canonicalPlan}
+          testingMode={logic.testingMode}
+          onDeploy={() => logic.handleExecute()}
         />
       </form>
     </div>

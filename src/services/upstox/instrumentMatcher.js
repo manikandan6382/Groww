@@ -6,19 +6,34 @@ import {
 } from "./upstoxUtils.js";
 
 export function findOptionToken(instruments, trade) {
-  const underlying = String(trade.underlyingSymbol || "").trim().toUpperCase();
-  const strike = Number(trade.strikePrice || 0);
-  const side = toUpstoxSide(trade.optionType);
-  const tradeExpiryKeys = expiryKeys(trade.expiryDate);
+  const sym = String(trade.symbol || trade.tradingsymbol || "").trim().toUpperCase();
+  const underlying = String(
+    trade.underlyingSymbol ||
+    trade.underlying_symbol ||
+    (sym.includes("SENSEX") ? "SENSEX" : sym.includes("BANK") ? "BANKNIFTY" : sym.includes("FIN") ? "FINNIFTY" : "NIFTY")
+  ).toUpperCase();
+  const strike = Number(trade.strikePrice || trade.strike_price || 0) || Number((sym.match(/\b\d{4,6}\b/) || [])[0] || 0);
+  const side = toUpstoxSide(trade.optionType || trade.option_type || (sym.includes("PE") ? "PUT" : "CALL"));
+  const tradeExpiryKeys = expiryKeys(trade.expiryDate || trade.expiry);
 
   if (!underlying || !strike || !side) return null;
 
+  const nowMs = Date.now();
   const candidates = (Array.isArray(instruments) ? instruments : []).filter((item) => {
     const text = instrumentText(item);
-    return optionSide(item) === side && text.includes(underlying) && matchesStrike(item, strike);
+    const expMs = Number(item.expiry || 0);
+    const notExpired = expMs === 0 || expMs >= nowMs - 86400000;
+    return optionSide(item) === side && text.includes(underlying) && matchesStrike(item, strike) && notExpired;
   });
 
   if (!candidates.length) return null;
+
+  candidates.sort((a, b) => {
+    const aExp = Number(a.expiry || 0);
+    const bExp = Number(b.expiry || 0);
+    if (aExp && bExp) return aExp - bExp;
+    return 0;
+  });
 
   if (tradeExpiryKeys.length) {
     const match = candidates.find((item) => {

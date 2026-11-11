@@ -2,6 +2,8 @@ import React from "react";
 import clsx from "clsx";
 import { Zap, ShieldCheck, AlertCircle } from "lucide-react";
 import { soundEngine } from "../../../../utils/soundEngine";
+import { calculateStatutoryCharges } from "../../../../stores/slices/tradeHelpers.js";
+import { useTradingStore } from "../../../../stores/useTradingStore";
 
 export function TargetCalibrationProtect({
   entryPrice,
@@ -13,6 +15,7 @@ export function TargetCalibrationProtect({
   totalQty = 65,
   underlying = "NIFTY"
 }) {
+  const testingMode = useTradingStore((s) => s.testingMode);
   const qty = Number(totalQty) > 0 ? Number(totalQty) : 65;
   const numEntry = Number(entryPrice) || 0;
   const numSL = Number(stopLoss) || 0;
@@ -23,15 +26,19 @@ export function TargetCalibrationProtect({
   const currentRiskRupees = slDiff * qty;
   const currentRewardRupees = tpDiff * qty;
 
-  // Statutory friction offset (~₹55.20) ensures net take-home is strictly ₹500
-  const frictionRupees = 55.20;
+  // Canonical statutory friction calculation
+  const frictionRupees = numEntry > 0
+    ? calculateStatutoryCharges(numEntry, numEntry, qty, "LONG")
+    : calculateStatutoryCharges(100, 100, qty, "LONG");
   const frictionPts = Number((frictionRupees / qty).toFixed(1));
 
-  // Friction-Absorbed Net Risk Tiers:
-  // Gross loss is calibrated so Gross + Friction (~₹55.20) lands strictly at ₹200, ₹250, or ₹300 Net Loss!
-  const gross200 = Math.max(80, 200 - frictionRupees); // ~₹145 gross -> ₹200 net
-  const gross250 = Math.max(100, 250 - frictionRupees); // ~₹195 gross -> ₹250 net
-  const gross300 = Math.max(120, 300 - frictionRupees); // ~₹245 gross -> ₹300 net
+  // Friction & Adverse Slippage-Absorbed Net Risk Tiers:
+  // Gross loss is calibrated so Gross + 0.50pt Slippage + Friction lands strictly at ₹200, ₹250, or ₹300 Net Loss!
+  const slippageAllowanceRupees = 0.50 * qty;
+  const totalDeductions = frictionRupees + slippageAllowanceRupees;
+  const gross200 = Math.max(50, 200 - totalDeductions);
+  const gross250 = Math.max(70, 250 - totalDeductions);
+  const gross300 = Math.max(90, 300 - totalDeductions);
 
   const ptsNet200 = Number(Math.max(0.5, gross200 / qty).toFixed(1));
   const ptsNet250 = Number(Math.max(0.5, gross250 / qty).toFixed(1));
@@ -51,7 +58,7 @@ export function TargetCalibrationProtect({
     { multiplier: 2.5, pts: Number((baseSlPts * 2.5 + frictionPts).toFixed(1)), label: `1:2.5 Net (+${(baseSlPts * 2.5 + frictionPts).toFixed(1)}pt)` }
   ];
 
-  // 1-Click Master Lock: Instantly snaps SL to Net ₹250 risk (Gross ~₹195) and Target to True Net 1:2.00 (₹500 net reward after ₹55.20 friction)
+  // 1-Click Master Lock: Instantly snaps SL to Net ₹250 risk and Target to True Net 1:2.00 (₹500 net reward after canonical friction)
   const handleLockInvariant = () => {
     if (numEntry <= 0) return;
     handleManualInputFocus();
@@ -63,17 +70,17 @@ export function TargetCalibrationProtect({
   };
 
   const netRiskRupees = currentRiskRupees > 0 ? currentRiskRupees + frictionRupees : 0;
-  const isRiskCompliant = netRiskRupees >= 180 && netRiskRupees <= 315;
-  const isRiskExceeded = netRiskRupees > 315;
+  const isRiskCompliant = netRiskRupees >= 180 && netRiskRupees <= 300.00;
+  const isRiskExceeded = netRiskRupees > 300.00;
 
-  // 1-minute Brownian Micro-Noise Threshold
-  const noiseThreshold = underlying === "SENSEX" ? 12.0 : underlying === "BANKNIFTY" ? 9.0 : 6.0;
+  // 1-minute Brownian Micro-Noise Threshold (calibrated to preserve ₹200-₹300 risk budget on 1-lot)
+  const noiseThreshold = underlying === "SENSEX" ? 8.0 : underlying === "BANKNIFTY" ? 5.0 : 3.0;
   const isMicroNoiseWick = slDiff > 0 && slDiff < noiseThreshold;
   const netRewardRupees = Math.max(0, currentRewardRupees - frictionRupees);
 
   return (
     <div className="space-y-2">
-      {isMicroNoiseWick && (
+      {isMicroNoiseWick && !testingMode && (
         <div className="p-2.5 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-2">
             <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
@@ -97,7 +104,7 @@ export function TargetCalibrationProtect({
           type="button"
           onClick={handleLockInvariant}
           className="flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-mono font-bold bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 transition active:scale-95 cursor-pointer shadow-sm"
-          title="1-Click Lock: Snaps SL to Net ₹250 risk (Gross ~₹195) and Target to Net ₹500 (Gross ~₹555 after ₹55.20 friction)"
+          title="1-Click Lock: Snaps SL to Net ₹250 risk and Target to True Net ₹500 (exact 1:2.00 Risk-Reward after statutory charges)"
         >
           <Zap className="w-3 h-3 text-emerald-400 fill-current" />
           <span>⚡ Lock Net Invariant (₹250 / 1:2 Net)</span>
@@ -110,7 +117,11 @@ export function TargetCalibrationProtect({
           <div className="flex items-center justify-between">
             <label className="text-rose-400 font-bold flex items-center gap-1">
               <span>🛑 Stop Loss</span>
-              {isRiskExceeded ? (
+              {testingMode ? (
+                <span className="text-[9px] text-cyan-300 flex items-center gap-0.5 font-mono">
+                  <ShieldCheck className="w-2.5 h-2.5" /> Testing Sandbox
+                </span>
+              ) : isRiskExceeded ? (
                 <span className="text-[9px] text-rose-400 flex items-center gap-0.5 font-mono">
                   <AlertCircle className="w-2.5 h-2.5" /> &gt;₹300!
                 </span>
@@ -145,6 +156,7 @@ export function TargetCalibrationProtect({
           </div>
           <input
             type="number"
+            data-testid="stop-loss-input"
             value={stopLoss}
             onFocus={handleManualInputFocus}
             onChange={(e) => {
@@ -154,14 +166,21 @@ export function TargetCalibrationProtect({
             step="0.05"
             className={clsx(
               "w-full rounded-xl px-3 py-2 text-white font-mono font-bold focus:outline-none transition border",
-              isRiskExceeded
+              isRiskExceeded && !testingMode
                 ? "bg-rose-950/40 border-rose-500 text-rose-200 shadow-[0_0_15px_rgba(244,63,94,0.3)]"
                 : "bg-rose-500/10 border-rose-500/30 focus:border-rose-500"
             )}
           />
+          {numEntry > 0 && numSL >= numEntry && (
+            <div className="p-2 rounded-lg bg-rose-500/20 border border-rose-500/40 text-[10px] text-rose-200 font-mono font-bold flex items-center gap-1.5">
+              <span>⚠️ Stop Loss (₹{numSL}) is higher than Entry (₹{numEntry}). On Buy/Long, SL must be lower than entry to prevent instant exit!</span>
+            </div>
+          )}
           <div className="text-[10px] font-mono flex items-center justify-between text-rose-400">
-            <span className={clsx(isRiskExceeded ? "font-bold text-rose-300" : "text-slate-400")}>
-              {isRiskExceeded
+            <span className={clsx(isRiskExceeded && !testingMode ? "font-bold text-rose-300" : "text-slate-400")}>
+              {testingMode
+                ? `🧪 Testing Mode: ₹${currentRiskRupees.toFixed(0)} Gross · ₹${netRiskRupees.toFixed(0)} Net (Unrestricted)`
+                : isRiskExceeded
                 ? `⚠️ ₹${netRiskRupees.toFixed(0)} Net Loss (Exceeds ₹300 Cap!)`
                 : `₹${currentRiskRupees.toFixed(0)} Gross · ₹${netRiskRupees.toFixed(0)} Net (Cap ₹300)`}
             </span>
@@ -205,6 +224,7 @@ export function TargetCalibrationProtect({
           </div>
           <input
             type="number"
+            data-testid="target-price-input"
             value={targetPrice}
             onFocus={handleManualInputFocus}
             onChange={(e) => {
@@ -214,6 +234,11 @@ export function TargetCalibrationProtect({
             step="0.05"
             className="w-full bg-emerald-500/10 border border-emerald-500/30 rounded-xl px-3 py-2 text-white font-mono font-bold focus:outline-none focus:border-emerald-500"
           />
+          {numEntry > 0 && numTP > 0 && numTP <= numEntry && (
+            <div className="p-2 rounded-lg bg-amber-500/20 border border-amber-500/40 text-[10px] text-amber-200 font-mono font-bold flex items-center gap-1.5">
+              <span>⚠️ Target Price (₹{numTP}) is lower than Entry (₹{numEntry}). On Buy/Long, Target must be above entry!</span>
+            </div>
+          )}
           <div className="text-[10px] font-mono text-emerald-400 flex items-center justify-between pt-0.5">
             <span className={clsx("text-[9px] font-mono", tpDiff < 3.5 ? "text-amber-400 font-bold" : "text-slate-400")}>
               {tpDiff < 3.5

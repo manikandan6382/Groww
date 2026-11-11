@@ -17,7 +17,7 @@ const staticDir = fs.existsSync(path.join(distDir, "index.html")) ? distDir : pu
 
 loadDotEnv(path.join(projectRoot, ".env"));
 
-const port = Number(process.env.PORT || 3003);
+const port = Number(process.env.BACKEND_PORT || process.env.NODE_PORT || 3004);
 const kiteApiBase = "https://api.kite.trade";
 const alphaApiBase = "https://www.alphavantage.co/query";
 const sessionFile = path.resolve(projectRoot, process.env.KITE_SESSION_FILE || ".zerodha-session.json");

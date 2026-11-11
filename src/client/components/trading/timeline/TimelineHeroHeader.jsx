@@ -19,8 +19,12 @@ export function TimelineHeroHeader({
   carouselNav,
   onClose
 }) {
+  const symUpper = String(symbol || "").toUpperCase().trim();
+  const isPE = symUpper.endsWith("PE") || symUpper.includes(" PE") || trade?.optionType === "PUT";
+  const isCE = !isPE && (symUpper.endsWith("CE") || symUpper.includes(" CE") || trade?.optionType === "CALL");
+
   return (
-    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3.5 border-b border-white/[0.08] shrink-0">
+    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3.5 border-b border-white/[0.08] shrink-0 sticky -top-4 sm:-top-6 z-30 bg-[#060813]/95 backdrop-blur-xl -mx-4 sm:-mx-6 px-4 sm:px-6 pt-3 sm:pt-4">
       {/* Zone 1: Left Identity Cluster */}
       <div className="flex items-center gap-3.5 min-w-0">
         <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-white/[0.12] to-white/[0.03] border border-white/20 flex items-center justify-center text-white shrink-0 shadow-sm backdrop-blur-xl">
@@ -34,11 +38,11 @@ export function TimelineHeroHeader({
             </strong>
             <span className={clsx(
               "px-2.5 py-0.5 rounded-lg text-[10px] font-black uppercase font-mono border shadow-sm whitespace-nowrap shrink-0 tracking-wider",
-              trade?.optionType === "CALL" || symbol.includes("CE")
+              isCE
                 ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30 shadow-sm"
                 : "bg-rose-500/15 text-rose-300 border-rose-500/30 shadow-sm"
             )}>
-              {trade?.optionType === "CALL" || symbol.includes("CE") ? "CALL CE" : "PUT PE"}
+              {isCE ? "CALL CE" : "PUT PE"}
             </span>
             <span className={clsx(
               "text-[10.5px] font-mono font-bold px-2.5 py-0.5 rounded-full border shadow-sm flex items-center gap-1.5 whitespace-nowrap shrink-0",

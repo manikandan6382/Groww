@@ -12,8 +12,15 @@ export function BrokerSessionModal({ isOpen, onClose }) {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-2xl animate-in fade-in duration-200">
-      <div className="w-full max-w-md p-6 rounded-3xl bg-[#121424]/95 border border-cyan-500/30 shadow-[0_20px_50px_rgba(0,0,0,0.7)] space-y-4 relative text-left">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-2xl animate-in fade-in duration-200">
+      <div 
+        className="w-full max-w-md p-5 sm:p-6 rounded-t-3xl sm:rounded-3xl bg-[#121424]/95 border-t sm:border border-cyan-500/30 shadow-[0_20px_50px_rgba(0,0,0,0.7)] space-y-4 relative text-left"
+        style={{ paddingBottom: "max(24px, env(safe-area-inset-bottom))" }}
+      >
+        {/* iOS Drag Grabber on Mobile */}
+        <div className="sm:hidden -mt-2 mb-2 flex justify-center cursor-grab active:cursor-grabbing">
+          <div className="w-12 h-1.5 rounded-full bg-white/25 shadow-sm" />
+        </div>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 shadow-sm">

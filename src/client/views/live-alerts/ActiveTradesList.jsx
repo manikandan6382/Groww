@@ -7,8 +7,7 @@ import { useTradingStore } from "../../stores/useTradingStore";
 export function ActiveTradesList({
   openAlerts,
   activeTradesViewMode,
-  onCloseTrade,
-  onAutoDeploy
+  onCloseTrade
 }) {
   const tiltLockoutUntil = useTradingStore((s) => s.tiltLockoutUntil || 0);
   const tiltReason = useTradingStore((s) => s.tiltReason);

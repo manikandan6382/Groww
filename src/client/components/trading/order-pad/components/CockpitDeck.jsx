@@ -8,12 +8,18 @@ import { QuantitativeRadarDrawer } from "./QuantitativeRadarDrawer";
 
 export function CockpitDeck({ logic, isValidSL, isValidTarget }) {
   const copilotState = logic.copilotState || {};
+  const isCall = logic.optionType === "CALL";
+  const dynamicAtmosphericGlow = isCall ? "bg-emerald-500/15 shadow-[0_0_35px_rgba(16,185,129,0.12)]" : "bg-rose-500/15 shadow-[0_0_35px_rgba(244,63,94,0.12)]";
+  const dynamicAtmosphericBorder = isCall ? "border-emerald-500/30" : "border-rose-500/30";
+
   return (
-    <div className={clsx("relative p-5 rounded-2xl border transition-all duration-500 shadow-xl backdrop-blur-2xl space-y-4 overflow-hidden", copilotState.bannerBg || "bg-app-card/80 border-white/10")}>
-      <div className={clsx("absolute top-0 right-0 w-80 h-80 rounded-full blur-3xl pointer-events-none -mr-16 -mt-16 opacity-40 transition-all duration-700", copilotState.ambientGlow || "bg-cyan-500/10")} />
+    <div className={clsx("relative p-5 rounded-2xl border transition-all duration-500 shadow-xl backdrop-blur-2xl space-y-4 overflow-hidden", dynamicAtmosphericBorder, copilotState.bannerBg || "bg-app-card/80")}>
+      <div className={clsx("absolute top-0 right-0 w-80 h-80 rounded-full blur-3xl pointer-events-none -mr-16 -mt-16 opacity-40 transition-all duration-700", dynamicAtmosphericGlow)} />
+
 
       <CockpitCommandBar
         copilotState={copilotState}
+        canonicalPlan={logic.canonicalPlan}
         optionType={logic.optionType}
         underlying={logic.underlying}
         strikePrice={logic.strikePrice}
@@ -38,6 +44,7 @@ export function CockpitDeck({ logic, isValidSL, isValidTarget }) {
         tiltSecondsRemaining={logic.tiltSecondsRemaining}
         strategyMode={logic.strategyMode}
         onToggleSpreadMode={() => logic.setStrategyMode(logic.strategyMode === "SPREAD" ? "OUTRIGHT" : "SPREAD")}
+        testingMode={logic.testingMode}
       />
 
       <QuotaVaultAlertBar
@@ -61,6 +68,7 @@ export function CockpitDeck({ logic, isValidSL, isValidTarget }) {
         totalQty={logic.totalQty}
         isLiveStreaming={logic.isLiveStreaming}
         onSetIsLiveStreaming={logic.setIsLiveStreaming}
+        onSyncToLive={logic.handleSyncToLive}
         liveContractTick={logic.liveContractTick}
         liveMarkPrice={logic.liveMarkPrice}
         isValidSL={isValidSL}

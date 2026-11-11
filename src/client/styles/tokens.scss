@@ -11,12 +11,13 @@
   --panel: rgba(16, 18, 36, 0.74);
   --panel-2: rgba(24, 26, 52, 0.88);
   --panel-glass: rgba(16, 18, 36, 0.74);
+  --app-bg-wallpaper: url('/wallpapers/dark-spatial-desktop.png');
+  --app-bg-wallpaper-mobile: url('/wallpapers/dark-spatial-mobile.png');
   --app-bg-gradient: 
-    radial-gradient(ellipse 95% 65% at 50% -12%, rgba(129, 140, 248, 0.35) 0%, rgba(99, 102, 241, 0.22) 40%, transparent 75%),
-    radial-gradient(ellipse 70% 55% at 92% 12%, rgba(168, 85, 247, 0.26) 0%, rgba(139, 92, 246, 0.12) 45%, transparent 65%),
-    radial-gradient(ellipse 55% 45% at 6% 32%, rgba(56, 189, 248, 0.16) 0%, transparent 60%),
-    radial-gradient(ellipse 80% 60% at 50% 75%, rgba(99, 102, 241, 0.08) 0%, transparent 80%),
-    #070815;
+    radial-gradient(ellipse 95% 65% at 50% -12%, rgba(129, 140, 248, 0.22) 0%, rgba(99, 102, 241, 0.12) 40%, transparent 75%),
+    radial-gradient(ellipse 70% 55% at 92% 12%, rgba(168, 85, 247, 0.18) 0%, rgba(139, 92, 246, 0.08) 45%, transparent 65%),
+    linear-gradient(180deg, rgba(7, 8, 21, 0.76) 0%, rgba(7, 8, 21, 0.88) 100%),
+    var(--app-bg-wallpaper);
   --line: rgba(168, 85, 247, 0.18);
   --line-soft: rgba(255, 255, 255, 0.05);
   --border-glass: rgba(168, 85, 247, 0.18);

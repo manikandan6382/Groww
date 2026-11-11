@@ -113,6 +113,27 @@ export class TelegramNotifier {
 
     return this.send(msg);
   }
+
+  async notifySquareOff(trade, exitPrice, pnl) {
+    const symbol = trade?.symbol || "OPTION";
+    const pnlFormatted = pnl >= 0 ? `+₹${Number(pnl).toLocaleString("en-IN")}` : `-₹${Math.abs(Number(pnl)).toLocaleString("en-IN")}`;
+    const msg = [
+      `⏰ *MANDATORY EOD SQUARE-OFF — PortfolioX Alert*`,
+      ``,
+      `*Contract:* \`${symbol}\``,
+      `*Exit Price:* \`₹${Number(exitPrice).toFixed(2)}\``,
+      `*Net Return:* *${pnlFormatted}*`,
+      `*Time:* \`${new Date().toLocaleTimeString("en-IN")}\``,
+      ``,
+      `_Session closed. Mandatory square-off executed._`,
+    ].join("\n");
+    return this.send(msg);
+  }
+
+  async notifyBroadcast(payload) {
+    const msg = typeof payload === "string" ? payload : payload?.message || JSON.stringify(payload);
+    return this.send(`📢 *PortfolioX System Notice*\n\n${msg}`);
+  }
 }
 
 export const telegramNotifier = new TelegramNotifier();

@@ -1,5 +1,5 @@
-import { getLocalDateKey } from "../../utils/dateUtils";
-import { resolveIndexLotSize } from "./tradeHelpers";
+import { getLocalDateKey } from "../../utils/dateUtils.js";
+import { resolveIndexLotSize, calculateStatutoryCharges } from "./tradeHelpers.js";
 
 export const createTelemetrySlice = (set, get) => ({
   getPortfolioTelemetry: (timeframe = "all") => {
@@ -56,14 +56,18 @@ export const createTelemetrySlice = (set, get) => ({
     const expectancy = (winProb * avgWin) - (lossProb * avgLoss);
     const expectancyStr = `${expectancy >= 0 ? "+" : ""}₹${Math.abs(expectancy).toFixed(1)}`;
 
+    let incompleteChargesCount = 0;
     const statutoryFrictionTotal = closed.reduce((acc, t) => {
-      if (t.brokerageCharges != null) return acc + Number(t.brokerageCharges);
-      if (t.friction != null) return acc + Number(t.friction);
-      return acc + 55.20;
+      if (t.charges != null && !isNaN(Number(t.charges))) return acc + Number(t.charges);
+      if (t.taxesAndCharges != null && !isNaN(Number(t.taxesAndCharges))) return acc + Number(t.taxesAndCharges);
+      if (t.brokerageCharges != null && !isNaN(Number(t.brokerageCharges))) return acc + Number(t.brokerageCharges);
+      incompleteChargesCount++;
+      return acc;
     }, 0);
+    const hasIncompleteCharges = incompleteChargesCount > 0;
     const frictionDragPct = grossWins > 0 ? Math.min(100, (statutoryFrictionTotal / grossWins) * 100).toFixed(1) : "0.0";
 
-    // Manikandan's Strict ₹300 Daily Circuit Breaker Runway
+    // Manikandan's Strict ₹600 Daily Circuit Breaker Runway (2-Bullet Model)
     const todayClosed = (state.closedAlerts || []).filter((t) => {
       const dt = t.exitDatetime || t.entryDatetime;
       return dt && getLocalDateKey(new Date(dt)) === todayKey;
@@ -71,7 +75,7 @@ export const createTelemetrySlice = (set, get) => ({
     const todayRealizedLoss = todayClosed
       .filter((t) => Number(t.netPnl || 0) < 0)
       .reduce((acc, t) => acc + Number(t.netPnl || 0), 0);
-    const dailyLossLimit = 300;
+    const dailyLossLimit = 600;
     const currentDailyLossAbs = Math.abs(todayRealizedLoss);
     const lossRunwayRemaining = Math.max(0, dailyLossLimit - currentDailyLossAbs);
     const lossRunwayPct = Math.max(0, Math.min(100, Math.round((lossRunwayRemaining / dailyLossLimit) * 100)));
@@ -112,6 +116,8 @@ export const createTelemetrySlice = (set, get) => ({
       expectancy,
       expectancyStr,
       statutoryFrictionTotal,
+      incompleteChargesCount,
+      hasIncompleteCharges,
       frictionDragPct,
       dailyLossLimit,
       todayRealizedLoss,

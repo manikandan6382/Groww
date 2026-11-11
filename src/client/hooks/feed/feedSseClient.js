@@ -1,5 +1,6 @@
 import { useLivePriceStore } from "../../stores/useLivePriceStore";
 import { useTradingStore } from "../../stores/useTradingStore";
+import { isDeploySyncLocked, debounceNetworkSync } from "../../stores/slices/tradePersistence";
 
 export function connectSseFeed({
   onStatusChange,
@@ -53,7 +54,17 @@ export function connectSseFeed({
     eventSource.addEventListener("index_tick", (event) => handleEventData(event.data));
     eventSource.addEventListener("trade_mutation", (event) => {
       handleEventData(event.data);
-      onSyncClosed();
+      if (isDeploySyncLocked()) {
+        debounceNetworkSync("POST_DEPLOY_SSE_MUTATION_SYNC", () => {
+          useTradingStore.getState().hydrateFromSqlite?.();
+          onSyncClosed();
+        }, 1200);
+      } else {
+        debounceNetworkSync("SSE_MUTATION_SYNC", () => {
+          useTradingStore.getState().hydrateFromSqlite?.();
+          onSyncClosed();
+        }, 300);
+      }
     });
     eventSource.addEventListener("status", (event) => handleEventData(event.data));
     eventSource.addEventListener("stop_loss_hit", (event) => {
@@ -63,6 +74,7 @@ export function connectSseFeed({
         const tradeId = data.payload?.tradeId || data.tradeId;
         const ltp = Number(data.payload?.ltp || data.ltp || 0);
         if (tradeId) useTradingStore.getState().squareOffTrade(tradeId, ltp, "STOP_LOSS_HIT");
+        useTradingStore.getState().hydrateFromSqlite?.();
         onSyncClosed();
       } catch {}
     });
@@ -73,7 +85,46 @@ export function connectSseFeed({
         const tradeId = data.payload?.tradeId || data.tradeId;
         const ltp = Number(data.payload?.ltp || data.ltp || 0);
         if (tradeId) useTradingStore.getState().squareOffTrade(tradeId, ltp, "TARGET_HIT");
+        useTradingStore.getState().hydrateFromSqlite?.();
         onSyncClosed();
+      } catch {}
+    });
+    eventSource.addEventListener("breakeven_locked", (event) => {
+      handleEventData(event.data);
+      try {
+        const data = JSON.parse(event.data);
+        const payload = data.payload || data;
+        const tradeId = Number(payload.tradeId);
+        const newSl = Number(payload.stopLoss || payload.newStopLoss || 0);
+        if (tradeId && newSl > 0) {
+          useTradingStore.getState().trailStopLoss?.(tradeId, newSl);
+        }
+        useTradingStore.getState().hydrateFromSqlite?.();
+      } catch {}
+    });
+    eventSource.addEventListener("stop_loss_updated", (event) => {
+      handleEventData(event.data);
+      try {
+        const data = JSON.parse(event.data);
+        const payload = data.payload || data;
+        const tradeId = Number(payload.tradeId);
+        const newSl = Number(payload.stopLoss || 0);
+        if (tradeId && newSl > 0) {
+          useTradingStore.getState().trailStopLoss?.(tradeId, newSl);
+        }
+        useTradingStore.getState().hydrateFromSqlite?.();
+      } catch {}
+    });
+
+    eventSource.addEventListener("copilot_signal", (event) => {
+      try {
+        const raw = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
+        const signal = raw?.payload || raw;
+        if (signal?.cleared) {
+          useTradingStore.getState().clearCopilotSignal();
+        } else if (signal && (signal.symbol || signal.underlying)) {
+          useTradingStore.getState().setCopilotSignal(signal);
+        }
       } catch {}
     });
 
@@ -82,9 +133,9 @@ export function connectSseFeed({
       if (!getIsMounted()) return;
       onStatusChange({ upstoxConnected: false });
 
-      // Jittered Exponential Backoff (1s -> 2s -> 4s -> max 30s)
-      const jitter = Math.random() * 500;
-      const delay = Math.min(30000, backoffRef.current * 2) + jitter;
+      // Fast Local Reconnection (1s -> max 3s) to prevent persistent offline buffering
+      const jitter = Math.random() * 200;
+      const delay = Math.min(3000, (backoffRef.current || 1000) * 1.5) + jitter;
       backoffRef.current = delay;
 
       reconnectTimeoutRef.current = setTimeout(() => {

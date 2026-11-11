@@ -12,11 +12,13 @@ import { createJournalSlice } from "./slices/createJournalSlice";
 import { createTradeUndoSlice } from "./slices/createTradeUndoSlice";
 import { createTradeSyncSlice } from "./slices/createTradeSyncSlice";
 import { createTelemetrySlice } from "./slices/createTelemetrySlice";
+import { createCopilotSlice } from "./slices/createCopilotSlice";
 import { initStoreSyncListeners } from "./slices/storeSyncListeners";
 
 export { INDIAN_STOCK_META, getStockMeta } from "./slices/stockMetadata";
 export {
   resolveIndexLotSize,
+  resolveLiveTickPrice,
   calculateStatutoryCharges,
   CANONICAL_STRATEGY_TAGS,
   canonicalizeStrategyTag,
@@ -44,6 +46,7 @@ export const useTradingStore = create((set, get) => ({
   ...createTradeUndoSlice(set, get),
   ...createTradeSyncSlice(set, get),
   ...createTelemetrySlice(set, get),
+  ...createCopilotSlice(set, get),
 }));
 
 initStoreSyncListeners(useTradingStore);

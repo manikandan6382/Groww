@@ -24,5 +24,27 @@ export const createNavigationSlice = (set, get) => ({
   setSafetyGuardModalOpen: (open) => set({ isSafetyGuardModalOpen: open }),
   
   isCustomTradeModalOpen: false,
-  setCustomTradeModalOpen: (open) => set({ isCustomTradeModalOpen: open })
+  setCustomTradeModalOpen: (open) => set({ isCustomTradeModalOpen: open }),
+
+  isMobileQuickHubOpen: false,
+  setMobileQuickHubOpen: (open) => set({ isMobileQuickHubOpen: open }),
+
+  isSidebarPinned: typeof window !== "undefined"
+    ? localStorage.getItem("portfoliox-sidebar-pinned") !== "false"
+    : true,
+  toggleSidebarPin: () => {
+    set((state) => {
+      const next = !state.isSidebarPinned;
+      if (typeof window !== "undefined") {
+        localStorage.setItem("portfoliox-sidebar-pinned", String(next));
+      }
+      return { isSidebarPinned: next };
+    });
+  },
+  setSidebarPinned: (pinned) => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("portfoliox-sidebar-pinned", String(pinned));
+    }
+    set({ isSidebarPinned: pinned });
+  }
 });

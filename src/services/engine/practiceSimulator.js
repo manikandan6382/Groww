@@ -1,4 +1,5 @@
 import { indicesCache } from "../../routes/trades/option-contract-cache.js";
+import { defaultExchangeCalendar } from "./exchangeCalendar.js";
 
 const DEFAULT_INDICES = {
   "NSE_INDEX|Nifty 50": { name: "NIFTY 50", base: 24005.55, min: 23800, max: 24200, tickSize: 0.25 },
@@ -53,6 +54,12 @@ export class PracticeMarketSimulator {
   step() {
     if (!this.engine?.started) return;
     if (this.isLiveBrokerActive()) return;
+
+    // Zero Fake Data Invariant: Never fabricate synthetic ticks on exchange holidays or weekends
+    const dayStatus = defaultExchangeCalendar.isTradingDay(new Date());
+    if (!dayStatus.isTradingDay) {
+      return;
+    }
 
     this.simulateIndices();
     this.simulateActiveTrades();

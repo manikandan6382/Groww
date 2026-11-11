@@ -7,7 +7,7 @@ export function Topbar() {
   const [showBrokerModal, setShowBrokerModal] = useState(false);
 
   return (
-    <header className="sticky top-0 z-40 bg-[var(--sidebar)] backdrop-blur-3xl border-b border-[var(--line)] px-4 sm:px-6 h-16 flex items-center justify-between gap-4 shadow-[0_16px_40px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.08)] transition-all">
+    <header className="sticky top-0 z-40 bg-[var(--sidebar)] backdrop-blur-3xl border-b border-[var(--line)] px-3 sm:px-6 h-14 sm:h-16 flex items-center justify-between gap-2 sm:gap-4 shadow-[0_16px_40px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.08)] transition-all">
       {/* 🌟 Zone 1: Apple Luxury Hologram Brand Emblem (Left) */}
       <TopbarBrand onOpenBrokerModal={() => setShowBrokerModal(true)} />
 

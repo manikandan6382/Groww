@@ -63,7 +63,6 @@ export function LiveAlertsView() {
             setActiveTradesViewMode={setActiveTradesViewMode}
             onSquareOffAll={() => setShowSquareOffModal(true)}
             onCloseTrade={handleSquareOffWithToast}
-            onAutoDeploy={autoDeployCopilotTrade}
           />
         </>
       )}

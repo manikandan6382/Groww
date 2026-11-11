@@ -5,11 +5,20 @@ import { paperTradeEngine } from "../../services/paperTradeEngine.js";
 import { ensurePaperEngineStarted } from "./paper-sse.js";
 import { readJsonBody, sendJson } from "./route-helpers.js";
 import { handlePaperPartialClose } from "./paper-partial-close.js";
-import { squareOffDotnetPosition } from "../../services/engine/dotnetBridge.js";
+import { squareOffDotnetPosition, updateStopLossDotnet } from "../../services/engine/dotnetBridge.js";
 
 const inFlightCloses = new Set();
 
 export async function handlePaperManageRoutes(req, res, url) {
+  const syncMatch = url.pathname.match(/^\/api\/(?:paper-lab|live-alerts)\/trades\/(\d+)\/sync$/);
+  if (req.method === "POST" && syncMatch) {
+    const id = Number(syncMatch[1]);
+    ensurePaperEngineStarted();
+    await paperTradeEngine.syncTrade(id);
+    paperTradeEngine.publish("trade_mutation", { action: "sync", tradeId: id });
+    sendJson(res, { success: true, tradeId: id, message: `Trade ${id} subscription synced` });
+    return true;
+  }
   const toggleMatch = url.pathname.match(/^\/api\/(?:paper-lab|live-alerts)\/trades\/(\d+)\/toggle-mode$/);
   if (req.method === "POST" && toggleMatch) {
     return handleToggleMode(Number(toggleMatch[1]), res);
@@ -80,10 +89,32 @@ export async function handlePaperManageRoutes(req, res, url) {
       }
     }
 
+    const currentSl = Number(trade.stopLoss || trade.stop_loss || 0);
+    const entry = Number(trade.entryPrice || 0);
+    const isBeLocked = isShort ? (currentSl > 0 && currentSl <= entry) : (currentSl > 0 && currentSl >= entry);
+    if (isBeLocked) {
+      if (!isShort && stopLoss < currentSl) {
+        sendJson(res, { 
+          error: `RMS Ratchet Invariant: Risk-free position stop loss (₹${currentSl.toFixed(2)}) cannot be widened or loosened backwards to ₹${stopLoss.toFixed(2)}.` 
+        }, 422);
+        return true;
+      }
+      if (isShort && stopLoss > currentSl) {
+        sendJson(res, { 
+          error: `RMS Ratchet Invariant: Risk-free position stop loss (₹${currentSl.toFixed(2)}) cannot be widened or loosened backwards to ₹${stopLoss.toFixed(2)}.` 
+        }, 422);
+        return true;
+      }
+    }
+
     getDb().prepare("UPDATE trades SET stop_loss = ?, updated_at = datetime('now') WHERE id = ?").run(stopLoss, id);
+
     if (paperTradeEngine.activeTrades.has(id)) {
       paperTradeEngine.activeTrades.get(id).trade.stopLoss = stopLoss;
     }
+    // Synchronize stop loss with authoritative .NET RMS in-memory position
+    updateStopLossDotnet(id, stopLoss, currentMark).catch(() => {});
+
     const updatedTrade = getTradeById(id);
     paperTradeEngine.publish("stop_loss_updated", { tradeId: id, stopLoss, message: `Stop Loss updated to ₹${stopLoss.toFixed(2)}` });
     paperTradeEngine.publish("trade_mutation", { action: "stop_loss", tradeId: id });
@@ -140,6 +171,26 @@ export async function handlePaperManageRoutes(req, res, url) {
     const updatedTrade = getTradeById(id);
     paperTradeEngine.publish("target_updated", { tradeId: id, targetPrice, message: `Target updated to ₹${targetPrice.toFixed(2)}` });
     sendJson(res, { success: true, item: updatedTrade });
+    return true;
+  }
+
+  if ((req.method === "POST" || req.method === "DELETE") && ["/api/paper-lab/trades/clear-settled", "/api/live-alerts/trades/clear-settled"].includes(url.pathname)) {
+    const db = getDb();
+    db.exec("PRAGMA foreign_keys = ON;");
+    db.exec("BEGIN;");
+    try {
+      db.prepare("DELETE FROM trade_executions WHERE trade_id IN (SELECT id FROM trades WHERE status = 'CLOSED')").run();
+      db.prepare("DELETE FROM trade_journal WHERE trade_id IN (SELECT id FROM trades WHERE status = 'CLOSED')").run();
+      db.prepare("DELETE FROM trade_strategy_tags WHERE trade_id IN (SELECT id FROM trades WHERE status = 'CLOSED')").run();
+      db.prepare("DELETE FROM trade_mistake_tags WHERE trade_id IN (SELECT id FROM trades WHERE status = 'CLOSED')").run();
+      db.prepare("DELETE FROM trade_attachments WHERE trade_id IN (SELECT id FROM trades WHERE status = 'CLOSED')").run();
+      const info = db.prepare("DELETE FROM trades WHERE status = 'CLOSED'").run();
+      db.exec("COMMIT;");
+      sendJson(res, { success: true, count: info.changes });
+    } catch (err) {
+      db.exec("ROLLBACK;");
+      sendJson(res, { success: false, error: err.message }, 500);
+    }
     return true;
   }
 

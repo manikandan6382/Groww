@@ -79,7 +79,7 @@ export function QuantitativeRadarDrawer({
 
     // 12. Black Swan Gap Guard
     const outlay = Number(netEntryPrice || entryPrice) * totalQty;
-    const isOutlaySafe = outlay <= 10000;
+    const isOutlaySafe = testingMode || outlay <= 10000;
 
     return [
       // Category 1: MACRO & REGIME

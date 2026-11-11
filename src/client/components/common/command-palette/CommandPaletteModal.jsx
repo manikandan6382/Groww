@@ -40,7 +40,7 @@ export function CommandPaletteModal() {
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 px-4">
+      <div className="fixed inset-0 z-50 flex items-start justify-center pt-12 sm:pt-20 px-3 sm:px-4">
         {/* Backdrop */}
         <motion.div
           initial={{ opacity: 0 }}

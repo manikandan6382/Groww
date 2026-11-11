@@ -45,6 +45,12 @@ export const createTradeUndoSlice = (set, get) => ({
       localStorage.setItem("portfolio-journal-trades", JSON.stringify(next));
     } catch {}
 
+    // Immediately commit deletions to backend so background sync does not resurrect them
+    tradeList.forEach((t) => {
+      commitTradeDeletionToBackend(t.id);
+      if (t.serverId && t.serverId !== t.id) commitTradeDeletionToBackend(t.serverId);
+    });
+
     let count = 5;
     const interval = setInterval(() => {
       count -= 1;
@@ -57,10 +63,6 @@ export const createTradeUndoSlice = (set, get) => ({
     }, 1000);
 
     const timer = setTimeout(() => {
-      tradeList.forEach((t) => {
-        commitTradeDeletionToBackend(t.id);
-        if (t.serverId && t.serverId !== t.id) commitTradeDeletionToBackend(t.serverId);
-      });
       set({ undoTradeBackup: null, undoCountdown: 5, undoTimerHandle: null, undoIntervalHandle: null });
     }, 5000);
 
@@ -139,4 +141,15 @@ export const createTradeUndoSlice = (set, get) => ({
   },
 
   deleteTrade: async (id) => get().deleteJournalTrade(id),
+
+  clearAllSettledTrades: async () => {
+    try {
+      await fetch("/api/paper-lab/trades/clear-settled", { method: "POST" });
+    } catch {}
+    set({ masterTrades: [], closedAlerts: [], journalTrades: [] });
+    try {
+      localStorage.setItem("portfolio-master-trades", JSON.stringify([]));
+      localStorage.setItem("portfolio-journal-trades", JSON.stringify([]));
+    } catch {}
+  },
 });

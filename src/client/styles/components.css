@@ -1,13 +1,32 @@
 @layer components {
   /* Apple Vision Pro Spatial Shell with Dynamic Atmospheric Luminous Meshes */
   .apple-spatial-shell {
+    position: relative;
+    min-height: 100dvh;
+    background-color: var(--bg);
+    isolation: isolate;
+  }
+
+  .apple-spatial-shell::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
     background-color: var(--bg);
     background-image: var(--app-bg-gradient);
-    background-attachment: fixed;
     background-size: cover;
+    background-position: center center;
     background-repeat: no-repeat;
-    min-height: 100dvh;
-    transition: background-color 400ms ease;
+    transform: translateZ(0);
+    will-change: transform;
+    pointer-events: none;
+    transition: background-color 400ms ease, background-image 400ms ease;
+  }
+
+  @media (max-width: 767px) {
+    :root {
+      --app-bg-wallpaper: var(--app-bg-wallpaper-mobile, url('/wallpapers/dark-spatial-mobile.png'));
+    }
   }
 
   /* Apple Vision Pro Ceramic Frosted Glass Panel */

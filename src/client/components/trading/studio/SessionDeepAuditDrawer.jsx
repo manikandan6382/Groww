@@ -63,54 +63,73 @@ export function SessionDeepAuditDrawer({ selectedDay }) {
           Session Execution Audit &amp; Normalized R-Multiples
         </span>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
-          {(selectedDay.tradesList || []).map((t, idx) => {
-            const { rMultipleStr, isRuleBreached } = calculateTradeRMultiple(t);
-            const pnlNum = Number(t.pnl ?? t.netPnl ?? 0);
-            const isTargetHit = t.status === "TARGET_HIT" || pnlNum >= 400;
+          {(() => {
+            const raw = selectedDay.tradesList || [];
+            const seen = new Set();
+            const deduplicated = [];
+            for (const t of raw) {
+              const key = t.id != null ? String(t.id) : `${t.symbol}_${t.pnl}_${t.status}_${t.tag}_${t.qty}`;
+              if (!seen.has(key)) {
+                seen.add(key);
+                deduplicated.push(t);
+              }
+            }
+            if (deduplicated.length === 0) {
+              return (
+                <div className="col-span-full py-8 text-center text-slate-500 font-mono text-xs">
+                  No practice setups recorded for this session.
+                </div>
+              );
+            }
+            return deduplicated.map((t, idx) => {
+              const { rMultipleStr, isRuleBreached } = calculateTradeRMultiple(t);
+              const pnlNum = Number(t.pnl ?? t.netPnl ?? 0);
+              const isTargetHit = t.status === "TARGET_HIT" || pnlNum >= 400;
 
-            return (
-              <div
-                key={idx}
-                className={clsx(
-                  "p-3 rounded-2xl bg-white/[0.02] border transition flex items-center justify-between text-xs font-mono group",
-                  isRuleBreached ? "border-rose-500/50 bg-rose-950/10" : "border-white/5 hover:border-cyan-500/30"
-                )}
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <span
-                    className={clsx(
-                      "w-2.5 h-2.5 rounded-full shadow-[0_0_8px] shrink-0",
-                      isTargetHit ? "bg-emerald-400 shadow-emerald-400/80" : "bg-rose-400 shadow-rose-400/80"
-                    )}
-                  />
-                  <div className="min-w-0 truncate">
-                    <strong className="text-white font-bold block group-hover:text-cyan-300 transition-colors truncate">
-                      {t.symbol}
-                    </strong>
-                    <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
-                      <span>{t.tag || "Scalp"}</span>
-                      <span>•</span>
-                      <span className={clsx(
-                        "font-bold",
-                        pnlNum > 0 ? "text-emerald-400" : isRuleBreached ? "text-rose-400" : "text-slate-400"
-                      )}>
-                        {rMultipleStr}
-                      </span>
+              return (
+                <div
+                  key={t.id || `${t.symbol}-${idx}`}
+                  className={clsx(
+                    "p-3 rounded-2xl bg-white/[0.02] border transition flex items-center justify-between text-xs font-mono group",
+                    isRuleBreached ? "border-rose-500/50 bg-rose-950/10" : "border-white/5 hover:border-cyan-500/30"
+                  )}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span
+                      className={clsx(
+                        "w-2.5 h-2.5 rounded-full shadow-[0_0_8px] shrink-0",
+                        isTargetHit ? "bg-emerald-400 shadow-emerald-400/80" : "bg-rose-400 shadow-rose-400/80"
+                      )}
+                    />
+                    <div className="min-w-0 truncate">
+                      <strong className="text-white font-bold block group-hover:text-cyan-300 transition-colors truncate">
+                        {t.symbol}
+                      </strong>
+                      <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                        <span>{t.tag || "Scalp"}</span>
+                        <span>•</span>
+                        <span className={clsx(
+                          "font-bold",
+                          pnlNum > 0 ? "text-emerald-400" : isRuleBreached ? "text-rose-400" : "text-slate-400"
+                        )}>
+                          {rMultipleStr}
+                        </span>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="text-right shrink-0">
-                  <span className={clsx("font-black block text-sm font-mono", pnlNum >= 0 ? "text-emerald-400" : "text-rose-400")}>
-                    {pnlNum >= 0 ? "+" : ""}₹{pnlNum}
-                  </span>
-                  <span className="text-[9px] text-slate-500 uppercase block font-sans">
-                    {isRuleBreached ? "⚠️ BREACH (>₹300)" : String(t.status || "CLOSED").replace("_", " ")}
-                  </span>
+                  <div className="text-right shrink-0">
+                    <span className={clsx("font-black block text-sm font-mono", pnlNum >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                      {pnlNum >= 0 ? "+" : ""}₹{pnlNum}
+                    </span>
+                    <span className="text-[9px] text-slate-500 uppercase block font-sans">
+                      {isRuleBreached ? "⚠️ BREACH (>₹300)" : String(t.status || "CLOSED").replace("_", " ")}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            });
+          })()}
         </div>
       </div>
 

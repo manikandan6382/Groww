@@ -19,19 +19,34 @@ export function calculateEntrySlippage(entryPrice, direction = "LONG", simulateS
   };
 }
 
-export function calculateFrictionAndCharges(trade, exitPrice, closeReason = "") {
-  const units = Number(trade.quantity || 0) * Math.max(1, Number(trade.lotSize || 1));
-  const entryPrice = Number(trade.entryPrice || 0);
-  const rawExit = Number(exitPrice || entryPrice);
+export function calculateFrictionAndCharges(trade, exitPrice, closeReason = "", options = {}) {
+  const lotSize = Math.max(1, Number(trade.lotSize || 1));
+  const rawQty = Number(trade.quantity || 0);
+  const units = Number(
+    trade.units ||
+    trade.totalUnits ||
+    (rawQty >= lotSize && rawQty % lotSize === 0 ? rawQty : rawQty * lotSize)
+  );
+  const entryPrice = Number(trade.filledEntryPrice || trade.entryPrice || 0);
+  const rawExit = Number(typeof exitPrice === "object" ? exitPrice.price : exitPrice || entryPrice);
   
-  let slippagePts = 1.25; // Default manual/market exit adverse fill
+  const symUpper = String(trade.symbol || trade.underlyingSymbol || "").toUpperCase();
+  const isSensex = symUpper.includes("SENSEX");
+  const isBankNifty = symUpper.includes("BANKNIFTY");
+
   const reasonUpper = String(closeReason || trade.closeReason || trade.exitReason || "").toUpperCase();
-  if (reasonUpper.includes("TARGET")) {
-    slippagePts = 0.35; // Clean limit order fill
-  } else if (reasonUpper.includes("TRAILING") || reasonUpper.includes("BREAKEVEN") || reasonUpper.includes("BE_HIT") || reasonUpper.includes("RISK_FREE")) {
-    slippagePts = 0.85; // Trailing market stop fill
-  } else if (reasonUpper.includes("STOP_LOSS") || reasonUpper.includes("SL_HIT") || reasonUpper.includes("PROTECTED")) {
-    slippagePts = 1.65; // Pessimistic market stop-loss fill in rapid liquidity drops
+  const isTarget = reasonUpper.includes("TARGET");
+  const isExactFill = Boolean(options.exactFill || trade.exactFill || trade.isExecutedPrice || (typeof exitPrice === "object" && exitPrice.exactFill));
+
+  let slippagePts = 0;
+  if (!isExactFill && !isTarget) {
+    if (reasonUpper.includes("TRAILING") || reasonUpper.includes("BREAKEVEN") || reasonUpper.includes("BE_HIT") || reasonUpper.includes("RISK_FREE")) {
+      slippagePts = isSensex ? 1.25 : (isBankNifty ? 0.70 : 0.35); // Trailing market stop fill
+    } else if (reasonUpper.includes("STOP_LOSS") || reasonUpper.includes("SL_HIT") || reasonUpper.includes("PROTECTED")) {
+      slippagePts = isSensex ? 1.50 : (isBankNifty ? 0.85 : 0.50); // Realistic index stop-loss fill
+    } else {
+      slippagePts = isSensex ? 1.00 : (isBankNifty ? 0.60 : 0.35); // Default manual/market exit adverse fill
+    }
   }
 
   const isShort = trade.direction === "SHORT";
@@ -45,8 +60,8 @@ export function calculateFrictionAndCharges(trade, exitPrice, closeReason = "") 
 
   const brokerage = 40.0;
   const sellTurnover = isShort ? buyTurnover : exitTurnover;
-  const stt = Number((sellTurnover * 0.001).toFixed(2));
-  const exchangeCharges = Number((totalTurnover * 0.000505).toFixed(2));
+  const stt = Number((sellTurnover * 0.0015).toFixed(2));
+  const exchangeCharges = Number((totalTurnover * 0.0003553).toFixed(2));
   const sebiCharges = Number((totalTurnover * 0.000001).toFixed(2));
   const buyLegTurnover = isShort ? exitTurnover : buyTurnover;
   const stampDuty = Number((buyLegTurnover * 0.00003).toFixed(2));
@@ -56,15 +71,7 @@ export function calculateFrictionAndCharges(trade, exitPrice, closeReason = "") 
   let netPnl = Number((grossPnl - statutoryCharges).toFixed(2));
   let finalExitPrice = filledExit;
 
-  // Manikandan's Strict Capital Risk Invariant Armor: Loss can never exceed ₹300 per single lot!
-  const isSingleLot = units <= 65;
-  if (isSingleLot && netPnl < -300.00) {
-    netPnl = -300.00;
-    grossPnl = Number((-300.00 + statutoryCharges).toFixed(2));
-    finalExitPrice = isShort
-      ? Number((entryPrice - (grossPnl / units)).toFixed(2))
-      : Number((entryPrice + (grossPnl / units)).toFixed(2));
-  }
+  // Realized P&L reflects true fill price and actual market execution; risk constraints govern pre-trade sizing and RMS triggers.
   
   const entrySlippagePts = Number(trade.entrySlippage || 0);
   const totalSlippagePts = Number((entrySlippagePts + slippagePts).toFixed(2));
@@ -92,7 +99,9 @@ export function calculateFrictionAndCharges(trade, exitPrice, closeReason = "") 
 }
 
 export function getTrigger(trade, markPrice, reason) {
-  if (reason === "MANUAL_EXIT") return { shouldClose: true, closeReason: "MANUAL_EXIT" };
+  if (reason && reason !== "MARK_ONLY" && reason !== "EVALUATE") {
+    return { shouldClose: true, closeReason: reason };
+  }
   if (reason === "MARK_ONLY") return { shouldClose: false, closeReason: null };
   if (trade.status !== "OPEN") return { shouldClose: false, closeReason: trade.closeReason };
 
@@ -101,11 +110,11 @@ export function getTrigger(trade, markPrice, reason) {
 
   if (trade.direction === "SHORT") {
     if (tp > 0 && markPrice <= tp) return { shouldClose: true, closeReason: "TARGET_HIT" };
-    if (sl > 0 && markPrice > sl) return { shouldClose: true, closeReason: "STOP_LOSS_HIT" };
+    if (sl > 0 && markPrice >= sl) return { shouldClose: true, closeReason: "STOP_LOSS_HIT" };
     return { shouldClose: false, closeReason: null };
   }
 
   if (tp > 0 && markPrice >= tp) return { shouldClose: true, closeReason: "TARGET_HIT" };
-  if (sl > 0 && markPrice < sl) return { shouldClose: true, closeReason: "STOP_LOSS_HIT" };
+  if (sl > 0 && markPrice <= sl) return { shouldClose: true, closeReason: "STOP_LOSS_HIT" };
   return { shouldClose: false, closeReason: null };
 }

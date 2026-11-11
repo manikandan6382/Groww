@@ -4,3 +4,15 @@ node_modules/
 npm-debug.log*
 data/
 dist/*
+server-dotnet/*
+.agents/AGENTS.md
+dist/index.html
+database.sqlite
+*.sqlite
+*.sqlite-journal
+*.db
+*.png
+*.jpg
+playwright-report/
+test-results/
+scratch/

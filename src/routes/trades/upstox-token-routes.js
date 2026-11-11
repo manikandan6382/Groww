@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { paperTradeEngine } from "../../services/paperTradeEngine.js";
+import { defaultExchangeCalendar } from "../../services/engine/exchangeCalendar.js";
 import { ensurePaperEngineStarted } from "./paper-sse.js";
 import { readJsonBody, sendJson } from "./route-helpers.js";
 
@@ -205,6 +206,7 @@ export async function handleUpstoxTokenRoutes(req, res, url) {
 
     const isExpired = checkUpstoxTokenExpired(updatedAt, fileMtimeMs);
     const hasValidToken = Boolean(token && token.length > 20 && !isExpired);
+    const tradingDay = defaultExchangeCalendar.isTradingDay(new Date());
 
     sendJson(res, {
       configured: client.isConfigured(),
@@ -219,6 +221,9 @@ export async function handleUpstoxTokenRoutes(req, res, url) {
       polling: Boolean(client.pollTimer),
       lastError: client.lastError,
       status: hasValidToken ? "Token Active · Feed Ready" : isExpired ? "Expired (03:30 AM IST Daily Reset)" : "Token Required · OAuth Expired",
+      isTradingDay: tradingDay.isTradingDay,
+      marketHoliday: !tradingDay.isTradingDay,
+      holidayName: tradingDay.holiday?.description || tradingDay.reason || null
     });
     return true;
   }

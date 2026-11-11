@@ -1,8 +1,10 @@
 import { resolveNextExpiryDate } from "../../utils/expiryUtils";
 import { resolveIndexLotSize } from "./tradeHelpers";
-import { tradeIdMap, flushPendingPartialClose, broadcastTradeAction } from "./tradePersistence";
+import { tradeIdMap, flushPendingPartialClose, broadcastTradeAction, lockDeploySync, debounceOpenAlertsStorage, debounceNetworkSync } from "./tradePersistence";
 import { calculateRiskRewardTargets } from "../../components/trading/order-pad/hooks/orderPadCalculations";
 import { useLivePriceStore } from "../useLivePriceStore";
+import { recordLifecycleEvent, assertTradeInvariants } from "../../utils/tradeLifecycleAuditor";
+import { calculateCanonicalExecutionPlan } from "../../utils/canonicalExecutionPlan.js";
 
 export const createOrderExecutionSlice = (set, get) => ({
   openAlerts: (() => {
@@ -32,7 +34,22 @@ export const createOrderExecutionSlice = (set, get) => ({
   clearTiltShield: () => set({ tiltLockoutUntil: 0, tiltReason: null }),
 
   deployPracticeTrade: (trade) => {
-    const isTesting = Boolean(get().testingMode);
+    lockDeploySync(1500);
+    const isTesting = Boolean(get().testingMode || trade?.testingMode);
+    const isUnrestricted = Boolean(isTesting && (get().testingRestrictionMode === "UNRESTRICTED" || trade?.isUnrestricted));
+
+    // Exchange Holiday Gate: Strictly block deployment on NSE market holidays (bypassed in Unrestricted Sandbox)
+    if (!isUnrestricted && get().brokerStatus?.marketHoliday) {
+      const holidayName = get().brokerStatus?.holidayName || "Exchange Holiday";
+      set({
+        deployToast: {
+          error: true,
+          symbol: trade.symbol,
+          message: `🛑 Trade Rejected: Market is closed today for ${holidayName}. Paper orders cannot be deployed on exchange holidays.`
+        }
+      });
+      return null;
+    }
 
     // Anti-Tilt Cooling Shield Check (30s lockout after SL hit)
     if (get().tiltLockoutUntil > Date.now() && !isTesting) {
@@ -74,19 +91,38 @@ export const createOrderExecutionSlice = (set, get) => ({
     const todayCount = typeof get().getTodayTradesCount === "function" ? get().getTodayTradesCount() : 0;
     if (todayCount >= (get().dailyQuotaLimit || 3) && !get().dailyQuotaBypass && !isTesting) {
       console.warn("[Chaos Guard] Trade deployment blocked: Daily quota reached.");
+      set({
+        deployToast: {
+          error: true,
+          symbol: trade.symbol,
+          message: `🛡️ Daily 3-Trade Quota Locked: Maximum 3 disciplined trades permitted per day. Capital preserved.`
+        }
+      });
       return null;
     }
 
-    // Daily Realized Loss Circuit Breaker: ₹300 hard limit
+    // Daily Realized Loss Circuit Breaker: ₹600 hard limit (2-Bullet model: 2 x ₹250 risk + statutory friction)
     const todayLoss = typeof get().getTodayRealizedLoss === "function" ? get().getTodayRealizedLoss() : 0;
-    if (todayLoss <= -300 && !isTesting && !get().dailyQuotaBypass) {
-      console.warn("[Risk Engine] Daily realized loss cap reached (-₹300). Locking cooling vault.");
+    if (todayLoss <= -600 && !isTesting && !get().dailyQuotaBypass) {
+      console.warn("[Risk Engine] Daily realized loss cap reached (-₹600). Locking cooling vault.");
       get().requestCoolingVaultUnlock?.();
       set({
         deployToast: {
           error: true,
           symbol: trade.symbol,
-          message: `🛡️ Capital Discipline Vault Locked: Daily loss limit (-₹300) hit. 15-min cooling engaged to prevent revenge trading.`
+          message: `🛡️ Capital Discipline Vault Locked: Daily loss limit (-₹600) hit. 15-min cooling engaged to prevent revenge trading.`
+        }
+      });
+      return null;
+    }
+
+    // Concurrency Lock: Strictly Max 1 Concurrent Active Position (Zero testing-mode bypass in Like Real)
+    if (!isUnrestricted && get().openAlerts.length >= 1) {
+      set({
+        deployToast: {
+          error: true,
+          symbol: trade.symbol,
+          message: "🔒 Active Position Lock: You already have an open active trade (1/1 Max). Close it before opening another."
         }
       });
       return null;
@@ -101,12 +137,13 @@ export const createOrderExecutionSlice = (set, get) => ({
     const quantity = Number(trade.quantity || 1);
     const totalUnits = quantity * Math.max(1, lotSize);
 
-    const shouldSlippage = get().simulateSlippage;
+    const isLiveFeed = get().feedMode === "LIVE";
+    const shouldSlippage = isLiveFeed ? false : Boolean(get().simulateSlippage);
     const baseEntry = Number(trade.entryPrice || 0);
     const isShort = String(trade.direction || "LONG").toUpperCase() === "SHORT";
     
-    // Pessimistic market order execution slippage: 1.05 - 1.45 pts adverse spread fill
-    const slippagePts = shouldSlippage ? Number((1.25 + (Math.random() * 0.40 - 0.20)).toFixed(2)) : 0;
+    // Stage 7: Deterministic slippage (no Math.random()) for reproducible lifecycle validation
+    const slippagePts = shouldSlippage ? 1.25 : 0;
     const entryFillPrice = shouldSlippage 
       ? (isShort ? Number(Math.max(0.05, baseEntry - slippagePts).toFixed(2)) : Number((baseEntry + slippagePts).toFixed(2)))
       : baseEntry;
@@ -116,35 +153,67 @@ export const createOrderExecutionSlice = (set, get) => ({
     let stopLoss = Number(trade.stopLoss || 0);
     let targetPrice = Number(trade.targetPrice || trade.target || 0);
 
-    // If adverse slippage occurred on entry, dynamically anchor Stop Loss and Target
-    // relative to the actual fill price, strictly preserving Manikandan's planned risk budget (₹200–₹300)
-    if (shouldSlippage && stopLoss > 0 && baseEntry > 0) {
-      const plannedSlPoints = Number(Math.abs(baseEntry - stopLoss).toFixed(2));
-      const plannedTargetPoints = targetPrice > 0 ? Number(Math.abs(targetPrice - baseEntry).toFixed(2)) : Number((plannedSlPoints * 2.0).toFixed(2));
-      stopLoss = isShort
-        ? Number((entryFillPrice + plannedSlPoints).toFixed(2))
-        : Number(Math.max(0.05, entryFillPrice - plannedSlPoints).toFixed(2));
-      targetPrice = isShort
-        ? Number(Math.max(0.05, entryFillPrice - plannedTargetPoints).toFixed(2))
-        : Number((entryFillPrice + plannedTargetPoints).toFixed(2));
-    }
+    const canonicalPlan = calculateCanonicalExecutionPlan({
+      symbol: trade.symbol,
+      underlying: uSym,
+      entryPrice: baseEntry,
+      stopLoss,
+      targetPrice,
+      quantity,
+      lotSize,
+      totalUnits,
+      direction: trade.direction || "LONG",
+      stopPolicy: trade.stopPolicy || "ATR_ENTRY_RELATIVE",
+      targetPolicy: trade.targetPolicy || "RR_DERIVED",
+      adverseSlippageAllowance: 0.50,
+      testingMode: isTesting,
+      isUnrestricted
+    });
 
-    // Strict Capital Risk Invariant Check (Max risk ₹200 to ₹300, target ₹250)
-    if (stopLoss > 0 && !isTesting) {
-      const rupeeRisk = isShort
-        ? (stopLoss - entryFillPrice) * totalUnits
-        : (entryFillPrice - stopLoss) * totalUnits;
-      if (rupeeRisk > 300.50) {
-        console.warn(`[Risk Engine] Trade blocked: Rupee risk ₹${rupeeRisk.toFixed(2)} exceeds ₹300 ceiling.`);
+    // Strict Capital Risk & Reward Gate: Enforced in LIVE & LIKE_REAL; Bypassed in Unrestricted Sandbox
+    if (isUnrestricted) {
+      if (!canonicalPlan.isStopLossValid || !canonicalPlan.isTargetValid) {
+        const errorMsg = !canonicalPlan.isStopLossValid
+          ? "🛑 Trade Rejected: Invalid Stop Loss (must be strictly below Entry for CALL/Long)."
+          : "🛑 Trade Rejected: Invalid Target Price (must be strictly above Entry for CALL/Long).";
         set({
           deployToast: {
             error: true,
             symbol: trade.symbol,
-            message: `🛑 Risk ₹${rupeeRisk.toFixed(0)} exceeds ₹300 max cap! Manikandan rule: ₹200–₹300 risk (target ₹250).`
+            message: errorMsg
           }
         });
         return null;
       }
+    } else if (!canonicalPlan.isCompliant) {
+      const errorMsg = !canonicalPlan.isRiskCeilingSatisfied
+        ? `🛑 Trade Rejected: Modelled net risk ₹${canonicalPlan.modelledNetRisk.toFixed(0)} exceeds ₹300 ceiling (Cap ₹300.00).`
+        : !canonicalPlan.isRewardToRiskSatisfied
+        ? `🛑 Trade Rejected: Net R:R 1:${canonicalPlan.netRewardToRiskRatio.toFixed(2)} is below 2:1 minimum requirement.`
+        : `🛑 Trade Rejected: ${canonicalPlan.rejectionReasonCodes.join(", ")}`;
+
+      console.warn(`[Risk Engine] Trade blocked:`, errorMsg);
+      set({
+        deployToast: {
+          error: true,
+          symbol: trade.symbol,
+          message: errorMsg
+        }
+      });
+      return null;
+    }
+
+    // Dynamic slippage pegging: preserve canonical stop distance strictly relative to actual entry fill price
+    if (shouldSlippage && baseEntry > 0) {
+      stopLoss = isShort
+        ? Number((entryFillPrice + canonicalPlan.stopDistancePts).toFixed(2))
+        : Number(Math.max(0.05, entryFillPrice - canonicalPlan.stopDistancePts).toFixed(2));
+      targetPrice = isShort
+        ? Number(Math.max(0.05, entryFillPrice - canonicalPlan.targetDistancePts).toFixed(2))
+        : Number((entryFillPrice + canonicalPlan.targetDistancePts).toFixed(2));
+    } else {
+      stopLoss = Number(canonicalPlan.stopLoss.toFixed(2));
+      targetPrice = Number(canonicalPlan.targetPrice.toFixed(2));
     }
 
     let expiryDatetime = trade.expiryDatetime;
@@ -153,6 +222,7 @@ export const createOrderExecutionSlice = (set, get) => ({
     }
     const expiryDate = trade.expiryDate || (expiryDatetime ? expiryDatetime.split("T")[0] : null);
 
+    // STAGES 2 & 5: Immutable parameters and PENDING_SERVER_CONFIRMATION status
     const newTrade = {
       id: Date.now(),
       idempotencyKey,
@@ -161,18 +231,46 @@ export const createOrderExecutionSlice = (set, get) => ({
       expiryDate,
       plannedEntryPrice: baseEntry,
       entryPrice: entryFillPrice,
+      actualFillPrice: entryFillPrice,
       lastMarkPrice: entryFillPrice,
       entrySlippage,
+      initialStopLoss: stopLoss,
+      currentStopLoss: stopLoss,
       stopLoss,
+      initialTargetPrice: targetPrice,
       targetPrice,
+      breakevenTrigger: null,
       quantity,
       lotSize,
       underlyingSymbol: uSym,
+      status: "PENDING_SERVER_CONFIRMATION",
+      revision: 1,
       ...trade,
       entryPrice: entryFillPrice,
+      actualFillPrice: entryFillPrice,
+      initialStopLoss: stopLoss,
+      currentStopLoss: stopLoss,
       stopLoss,
-      targetPrice
+      targetPrice,
+      status: "PENDING_SERVER_CONFIRMATION",
+      revision: 1
     };
+
+    assertTradeInvariants(newTrade, "PENDING_SERVER_CONFIRMATION");
+    recordLifecycleEvent({
+      tradeId: newTrade.id,
+      revision: 1,
+      event: "TRADE_CREATED",
+      state_before: "IDLE",
+      state_after: "PENDING_SERVER_CONFIRMATION",
+      currentPrice: entryFillPrice,
+      entryPrice: entryFillPrice,
+      initialSL: stopLoss,
+      currentSL: stopLoss,
+      target: targetPrice,
+      source: "CLIENT_STORE"
+    });
+
     const nextAlerts = [newTrade, ...get().openAlerts];
     if (get().dailyQuotaBypass || isTesting) {
       try { localStorage.removeItem("finance_cooling_vault_unlock_time"); } catch {}
@@ -183,7 +281,7 @@ export const createOrderExecutionSlice = (set, get) => ({
       dailyQuotaBypass: isTesting ? true : false,
       coolingVaultUnlockTime: null
     });
-    try { localStorage.setItem("portfoliox_open_alerts", JSON.stringify(nextAlerts)); } catch {}
+    debounceOpenAlertsStorage(nextAlerts);
 
     try {
       fetch("/api/paper-lab/trades", {
@@ -193,6 +291,7 @@ export const createOrderExecutionSlice = (set, get) => ({
           idempotencyKey: newTrade.idempotencyKey,
           symbol: newTrade.symbol,
           underlyingSymbol: uSym,
+          tokenKey: newTrade.tokenKey,
           strikePrice: newTrade.strikePrice || Number((newTrade.symbol.match(/\d+/) || [24000])[0]),
           entryPrice: newTrade.entryPrice,
           plannedEntryPrice: baseEntry,
@@ -206,26 +305,30 @@ export const createOrderExecutionSlice = (set, get) => ({
           direction: newTrade.direction || "LONG",
           feedMode: get().feedMode || "LIVE",
           testingMode: isTesting,
+          tradeMode: (isTesting && (get().testingRestrictionMode === "UNRESTRICTED" || newTrade.isUnrestricted)) ? "SANDBOX" : "PAPER",
+          isUnrestricted: Boolean(isTesting && (get().testingRestrictionMode === "UNRESTRICTED" || newTrade.isUnrestricted)),
+          testingRestrictionMode: get().testingRestrictionMode || "UNRESTRICTED",
           strategyTags: [newTrade.strategyTag || "Practice Scalp"],
-          personalNotes: newTrade.personalNotes || newTrade.catalyst || "Practice Scalp Order"
+          personalNotes: newTrade.personalNotes || (newTrade.dotnetPositionId ? `[LIVE_FEED] [DOTNET_HFT:LIVE:${newTrade.dotnetPositionId}] ${newTrade.strategy || "Practice Scalp"}` : (newTrade.catalyst || "Practice Scalp Order"))
         })
       })
       .then(async (r) => {
         const data = await r.json();
         if (!r.ok) {
-          console.warn("[UnifiedExecution] Order rejected by risk guard:", data.error);
+          const errMsg = data.detail || data.title || data.error || data.message || "Order rejected by risk guard.";
+          console.warn("[UnifiedExecution] Order rejected by risk guard:", errMsg);
           if (r.status === 423) {
             get().requestCoolingVaultUnlock?.();
           }
           set((state) => {
             const rollback = state.openAlerts.filter((t) => t.id !== newTrade.id);
-            try { localStorage.setItem("portfoliox_open_alerts", JSON.stringify(rollback)); } catch {}
+            debounceOpenAlertsStorage(rollback);
             return {
               openAlerts: rollback,
               deployToast: {
                 error: true,
                 symbol: newTrade.symbol,
-                message: data.error || "Order rejected by risk guard."
+                message: errMsg
               }
             };
           });
@@ -236,18 +339,54 @@ export const createOrderExecutionSlice = (set, get) => ({
       .then((res) => {
         if (res?.item?.id) {
           const authId = res.item.id;
+          const authTrade = res.item;
           [newTrade.id, String(newTrade.id), authId, String(authId)].forEach((k) => tradeIdMap.set(k, authId));
           set((state) => {
-            const updated = state.openAlerts.map((t) => t.id === newTrade.id ? { ...t, id: authId, serverId: authId, tokenKey: res.item.tokenKey } : t);
-            try { localStorage.setItem("portfoliox_open_alerts", JSON.stringify(updated)); } catch {}
+            const updated = state.openAlerts.map((t) =>
+              t.id === newTrade.id
+                ? {
+                    ...t,
+                    id: authId,
+                    serverId: authId,
+                    tokenKey: authTrade.tokenKey || res.item.tokenKey || t.tokenKey || null,
+                    instrumentKey: authTrade.instrumentKey || res.item.instrumentKey || t.instrumentKey || authTrade.tokenKey || res.item.tokenKey || t.tokenKey || null,
+                    status: "ACTIVE",
+                    revision: authTrade.revision || 2,
+                    initialStopLoss: authTrade.initialStopLoss || t.initialStopLoss,
+                    currentStopLoss: authTrade.stopLoss || t.currentStopLoss,
+                    stopLoss: authTrade.stopLoss || t.stopLoss,
+                    targetPrice: authTrade.targetPrice || t.targetPrice,
+                    entryPrice: authTrade.entryPrice || t.entryPrice,
+                    actualFillPrice: authTrade.entryPrice || t.actualFillPrice
+                  }
+                : t
+            );
+            debounceOpenAlertsStorage(updated);
             return { openAlerts: updated };
           });
+
+          recordLifecycleEvent({
+            tradeId: authId,
+            revision: 2,
+            event: "SERVER_CONFIRMED",
+            state_before: "PENDING_SERVER_CONFIRMATION",
+            state_after: "ACTIVE",
+            currentPrice: authTrade.entryPrice || newTrade.entryPrice,
+            entryPrice: authTrade.entryPrice || newTrade.entryPrice,
+            initialSL: authTrade.initialStopLoss || newTrade.initialStopLoss,
+            currentSL: authTrade.stopLoss || newTrade.currentStopLoss,
+            target: authTrade.targetPrice || newTrade.targetPrice,
+            source: "DOTNET_RMS"
+          });
+
           flushPendingPartialClose(newTrade.id, authId);
           broadcastTradeAction("TRADE_CREATED", { id: authId });
-          fetch("/api/paper-lab").then((r) => r.ok ? r.json() : null).then((data) => {
-            if (data?.closedTrades) get().syncBackendTrades(data.closedTrades);
-            if (data?.openTrades) get().syncBackendOpenTrades(data.openTrades);
-          }).catch(() => {});
+          debounceNetworkSync("POST_DEPLOY_PAPER_LAB_SYNC", () => {
+            fetch("/api/paper-lab").then((r) => r.ok ? r.json() : null).then((data) => {
+              if (data?.closedTrades) get().syncBackendTrades(data.closedTrades);
+              if (data?.openTrades) get().syncBackendOpenTrades(data.openTrades);
+            }).catch(() => {});
+          }, 1500);
         }
       }).catch(() => {});
     } catch {}
@@ -255,7 +394,7 @@ export const createOrderExecutionSlice = (set, get) => ({
     return newTrade;
   },
 
-  autoDeployCopilotTrade: (params = {}) => {
+  autoDeployCopilotTrade: async (params = {}) => {
     const underlying = params.underlying || "NIFTY";
     const indices = useLivePriceStore.getState().indices;
     const indexKey = underlying === "BANKNIFTY"
@@ -266,14 +405,32 @@ export const createOrderExecutionSlice = (set, get) => ({
       ? "NSE_INDEX|Nifty Fin Service"
       : "NSE_INDEX|Nifty 50";
     const indexData = indices?.[indexKey];
-    const liveSpot = Number(indexData?.ltp || (underlying === "BANKNIFTY" ? 57200 : underlying === "SENSEX" ? 79800 : 23250));
+    const liveSpot = Number(indexData?.ltp || (underlying === "BANKNIFTY" ? 57200 : underlying === "SENSEX" ? 79800 : 22520));
     const step = underlying === "BANKNIFTY" || underlying === "SENSEX" ? 100 : 50;
     const strikePrice = params.strikePrice || (Math.round(liveSpot / step) * step);
     const isBullish = (indexData?.change ?? 0) >= 0;
     const optionType = params.optionType || (isBullish ? "CALL" : "PUT");
     const symbol = `${underlying} ${strikePrice} ${optionType === "CALL" ? "CE" : "PE"}`;
 
-    const liveTick = useLivePriceStore.getState().ticks?.[symbol]?.ltp;
+    // 1. Fetch authentic real-time market quote for this exact strike directly from Upstox
+    let verifiedLtp = null;
+    let resolvedTokenKey = null;
+    try {
+      const qRes = await fetch(`/api/market/option-quote?symbol=${encodeURIComponent(symbol)}`);
+      if (qRes.ok) {
+        const qData = await qRes.json();
+        const qObj = qData?.quotes?.[symbol] || (qData?.quotes ? Object.values(qData.quotes)[0] : null);
+        if (qObj && Number(qObj.ltp) > 0) {
+          verifiedLtp = Number(qObj.ltp);
+          resolvedTokenKey = qObj.tokenKey;
+          useLivePriceStore.getState().updateTick?.(symbol, verifiedLtp, Number(qObj.change || 0));
+        }
+      }
+    } catch (err) {
+      console.warn("[autoDeployCopilotTrade] Live option quote fetch failed:", err);
+    }
+
+    const liveTick = verifiedLtp || useLivePriceStore.getState().ticks?.[symbol]?.ltp;
     let entryPrice = Number(params.entryPrice || liveTick || 0);
     if (!entryPrice || entryPrice <= 0) {
       entryPrice = underlying === "BANKNIFTY" ? 350.0 : underlying === "SENSEX" ? 420.0 : 150.0;
@@ -301,6 +458,7 @@ export const createOrderExecutionSlice = (set, get) => ({
     return get().deployPracticeTrade({
       symbol,
       underlyingSymbol: underlying,
+      tokenKey: resolvedTokenKey,
       strikePrice,
       optionType,
       entryPrice,

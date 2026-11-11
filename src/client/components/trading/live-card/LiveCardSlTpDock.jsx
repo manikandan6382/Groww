@@ -2,6 +2,7 @@ import React from "react";
 import { ShieldAlert, Target, Edit3, ShieldCheck } from "lucide-react";
 import clsx from "clsx";
 import { soundEngine } from "../../../utils/soundEngine";
+import { calculateStatutoryCharges } from "../../../stores/slices/tradeHelpers.js";
 
 export const LiveCardSlTpDock = ({
   id,
@@ -57,10 +58,11 @@ export const LiveCardSlTpDock = ({
     puckPos = Math.max(0, entryPos - riskRatio * entryPos);
   }
 
-  const beTriggerPos = Math.min(95, Math.max(entryPos + 5, entryPos + 0.45 * (100 - entryPos)));
+  const beTriggerPos = Math.min(95, Math.max(entryPos + 5, entryPos + 0.50 * (100 - entryPos)));
   const autoBePrice = isShort
-    ? Number((entry - rewardDistance * 0.45).toFixed(2))
-    : Number((entry + rewardDistance * 0.45).toFixed(2));
+    ? Number((entry - rewardDistance * 0.50).toFixed(2))
+    : Number((entry + rewardDistance * 0.50).toFixed(2));
+  const ptsToBe = Math.max(0, isShort ? (currentLtp - autoBePrice) : (autoBePrice - currentLtp));
 
   const stopDistance = Math.max(0, isShort ? (stopLoss - currentLtp) : (currentLtp - stopLoss));
 
@@ -77,9 +79,11 @@ export const LiveCardSlTpDock = ({
   const rawTrailWide = isShort ? Number((currentLtp + wideTrailPts).toFixed(2)) : Number((currentLtp - wideTrailPts).toFixed(2));
   const isTrailWideTightening = isShort ? rawTrailWide < stopLoss : rawTrailWide > stopLoss;
 
-  // Invariant Profit Snaps: Lock +1R (₹250 Net after ~₹55.20 friction)
-  const frictionPerUnit = totalQty > 0 ? 55.20 / totalQty : 0.85;
-  const net250Pts = (250 / totalQty) + frictionPerUnit;
+  // Invariant Profit Snaps: Lock +1R (₹250 Net after canonical statutory friction)
+  const safeQty = Number(totalQty) > 0 ? Number(totalQty) : 65;
+  const canonicalCharges = calculateStatutoryCharges(entry, entry, safeQty, isShort ? "SHORT" : "LONG");
+  const frictionPerUnit = canonicalCharges / safeQty;
+  const net250Pts = (250 / safeQty) + frictionPerUnit;
   const rawLock1R = isShort ? Number((entry - net250Pts).toFixed(2)) : Number((entry + net250Pts).toFixed(2));
   const isLock1RTightening = isShort ? rawLock1R < stopLoss : rawLock1R > stopLoss;
 
@@ -170,7 +174,7 @@ export const LiveCardSlTpDock = ({
 
           <div className="absolute top-0 bottom-0 w-0.5 bg-white z-10 shadow-[0_0_6px_white]" style={{ left: `${entryPos}%` }} title={`Entry ₹${entry.toFixed(2)}`} />
 
-          <div className="absolute top-0 bottom-0 w-[2px] z-15 pointer-events-none" style={{ left: `${beTriggerPos}%` }} title={`Auto-BE Gate: ₹${autoBePrice.toFixed(2)}`}>
+          <div className="absolute top-0 bottom-0 w-[2px] z-15 pointer-events-none" style={{ left: `${beTriggerPos}%` }} title={isProtected || hasAutoLockedBE ? "100% Capital Protected · Auto-BE Active" : `Institutional Auto-BE Gate: ₹${autoBePrice.toFixed(2)} (${ptsToBe.toFixed(1)} pts away)`}>
             <div className={clsx("w-full h-full transition-all", isProtected || hasAutoLockedBE ? "bg-cyan-400 shadow-[0_0_8px_#22d3ee]" : "bg-cyan-400/75 shadow-[0_0_4px_rgba(34,211,238,0.5)] border-r border-dashed border-cyan-200/50")} />
             <div className={clsx("absolute -top-0.5 left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full", isProtected || hasAutoLockedBE ? "bg-cyan-300 shadow-[0_0_6px_#22d3ee]" : "bg-cyan-400/90 shadow-[0_0_3px_rgba(34,211,238,0.6)]")} />
           </div>
@@ -186,10 +190,19 @@ export const LiveCardSlTpDock = ({
 
         <div className="flex items-center justify-between text-[11px] text-white/40 font-mono">
           <span className="text-rose-400/90 font-medium">Risk: -₹{slRupees.toFixed(0)} ({slPct}%)</span>
-          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/[0.03] border border-white/5 transition-all">
-            <ShieldCheck className={clsx("w-3 h-3 shrink-0", isProtected || hasAutoLockedBE ? "text-cyan-300 animate-pulse" : "text-cyan-400/70")} />
-            <span className={clsx("text-[10px] font-bold tracking-tight", isProtected || hasAutoLockedBE ? "text-cyan-300 font-extrabold" : "text-cyan-400/90")}>
-              {isProtected || hasAutoLockedBE ? "True BE Locked (Taxes Covered) 🛡️" : `Auto-BE Trigger @ ₹${autoBePrice.toFixed(2)}`}
+          <div className={clsx(
+            "flex items-center gap-1.5 px-2.5 py-0.5 rounded-md transition-all border",
+            (isProtected || hasAutoLockedBE)
+              ? "bg-cyan-500/15 border-cyan-400/40 shadow-[0_0_12px_rgba(34,211,238,0.25)] text-cyan-300"
+              : "bg-white/[0.03] border-white/10 text-cyan-400/90"
+          )}>
+            <ShieldCheck className={clsx("w-3.5 h-3.5 shrink-0", (isProtected || hasAutoLockedBE) ? "text-cyan-300 animate-pulse" : "text-cyan-400/70")} />
+            <span className="text-[10px] font-bold tracking-tight">
+              {isProtected || hasAutoLockedBE
+                ? `100% CAPITAL PROTECTED · SL @ ₹${stopLoss.toFixed(2)} 🛡️`
+                : ptsToBe > 0
+                  ? `🛡️ ${ptsToBe.toFixed(1)} pts to Risk-Free Lock (Trigger @ ₹${autoBePrice.toFixed(2)})`
+                  : `Auto-BE Trigger @ ₹${autoBePrice.toFixed(2)}`}
             </span>
           </div>
           <span className="text-emerald-400/90 font-medium">Goal: +₹{targetRupees.toFixed(0)} (+{targetGainPct}%)</span>
@@ -204,9 +217,14 @@ export const LiveCardSlTpDock = ({
               <ShieldAlert className="w-3.5 h-3.5" />
               <span>Safety Net (Stop Loss)</span>
             </span>
-            <span className="text-white/40 text-[11px]" title="Maximum rupee loss and percentage drawdown if this Stop Loss is hit">
-              Max Risk: -₹{slRupees.toFixed(0)} ({slPct}%)
-            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/20" title="Distance from current market price to Stop Loss">
+                {stopDistance.toFixed(1)} pts cushion
+              </span>
+              <span className="text-white/40 text-[11px]" title="Maximum rupee loss and percentage drawdown if this Stop Loss is hit">
+                Max Risk: -₹{slRupees.toFixed(0)} ({slPct}%)
+              </span>
+            </div>
           </div>
 
           <div className="p-1 rounded-xl bg-black/40 border border-white/[0.06] flex items-center gap-1">
@@ -264,6 +282,25 @@ export const LiveCardSlTpDock = ({
             >
               +5
             </button>
+          </div>
+
+          {/* Transparent Multi-Tier Risk Breakdown at Stop Loss */}
+          <div className="p-2 rounded-xl bg-black/50 border border-white/[0.06] text-[10px] font-mono grid grid-cols-3 gap-1.5 text-center">
+            <div className="bg-white/[0.02] p-1.5 rounded-lg border border-white/5">
+              <div className="text-white/40 text-[9px] uppercase tracking-wider">Market Loss</div>
+              <div className="text-rose-400 font-bold text-xs mt-0.5">−₹{slRupees.toFixed(0)}</div>
+              <div className="text-slate-400 text-[8px] mt-0.5">{slPts.toFixed(1)} pts</div>
+            </div>
+            <div className="bg-white/[0.02] p-1.5 rounded-lg border border-white/5">
+              <div className="text-white/40 text-[9px] uppercase tracking-wider">Statutory Fees</div>
+              <div className="text-amber-400 font-bold text-xs mt-0.5">−₹{canonicalCharges.toFixed(0)}</div>
+              <div className="text-slate-400 text-[8px] mt-0.5">STT + Brokerage</div>
+            </div>
+            <div className="bg-rose-500/[0.06] p-1.5 rounded-lg border border-rose-500/20">
+              <div className="text-rose-300/70 text-[9px] uppercase tracking-wider">Total At SL</div>
+              <div className="text-rose-300 font-black text-xs mt-0.5">−₹{Math.round(slRupees + canonicalCharges)}</div>
+              <div className="text-rose-400/80 text-[8px] mt-0.5">All-In Outlay</div>
+            </div>
           </div>
 
           <div className="space-y-1 pt-1">

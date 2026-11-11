@@ -84,12 +84,20 @@ export function LiveAlertCard({ trade, alert, onClose, viewMode = "deck" }) {
 
   if (isCompact) {
     return (
-      <div className={clsx(
+      <div data-testid="live-alert-card" className={clsx(
         "p-3.5 px-4 sm:px-5 rounded-2xl border backdrop-blur-xl transition-all duration-300 flex items-center justify-between gap-3 flex-wrap sm:flex-nowrap font-mono shadow-lg relative overflow-hidden",
         isProtected
           ? "border-emerald-500/40 bg-[#051117]/95 shadow-[0_0_25px_rgba(16,185,129,0.12)]"
           : "border-white/10 bg-[#070d18]/90 hover:border-white/20"
       )}>
+        {state.isGlobalLiquidating && (
+          <div className="absolute inset-0 z-40 bg-black/75 backdrop-blur-md flex items-center justify-center gap-2 text-center animate-in fade-in duration-200">
+            <div className="w-4 h-4 rounded-full border-2 border-rose-500 border-t-transparent animate-spin" />
+            <span className="text-[11px] font-mono font-bold text-rose-300">
+              Liquidating Position...
+            </span>
+          </div>
+        )}
         {/* Left: Contract, Symbol & Chronometer */}
         <div className="flex items-center gap-2.5 min-w-[210px]">
           <span className={clsx(
@@ -200,14 +208,14 @@ export function LiveAlertCard({ trade, alert, onClose, viewMode = "deck" }) {
           <button
             type="button"
             onClick={handleSquareOff}
-            disabled={state.isClosing}
+            disabled={state.isClosing || state.isGlobalLiquidating}
             className={clsx(
               "px-3 py-1 rounded-lg text-xs font-bold font-mono tracking-tight transition cursor-pointer active:scale-95 disabled:opacity-50",
               state.netRupees >= 0 ? "bg-emerald-600 hover:bg-emerald-500 text-white" : "bg-rose-600 hover:bg-rose-500 text-white"
             )}
             title="Instant Square Off"
           >
-            {state.isClosing ? "..." : "EXIT"}
+            {state.isClosing || state.isGlobalLiquidating ? "..." : "EXIT"}
           </button>
 
           <button
@@ -227,12 +235,23 @@ export function LiveAlertCard({ trade, alert, onClose, viewMode = "deck" }) {
   }
 
   return (
-    <div className={clsx(
+    <div data-testid="live-alert-card" className={clsx(
       "rounded-2xl border backdrop-blur-xl shadow-2xl overflow-hidden relative flex flex-col transition-all duration-300",
       isProtected
         ? "border-emerald-500/40 bg-[#051117]/95 shadow-[0_0_35px_rgba(16,185,129,0.12)] hover:border-emerald-500/60"
         : "border-white/10 bg-[#070d18]/90 hover:border-white/20"
     )}>
+      {state.isGlobalLiquidating && (
+        <div className="absolute inset-0 z-40 bg-black/75 backdrop-blur-md flex flex-col items-center justify-center gap-2 p-6 text-center animate-in fade-in duration-200">
+          <div className="w-8 h-8 rounded-full border-2 border-rose-500 border-t-transparent animate-spin" />
+          <span className="text-xs font-mono font-bold uppercase tracking-wider text-rose-300">
+            Emergency Liquidation in Progress...
+          </span>
+          <span className="text-[10px] text-slate-400 font-mono">
+            Squaring off active position with .NET RMS engine
+          </span>
+        </div>
+      )}
       {isProtected && (
         <div className="absolute top-0 right-0 w-80 h-80 rounded-full bg-emerald-500/[0.04] blur-3xl pointer-events-none -mr-20 -mt-20" />
       )}
@@ -263,13 +282,15 @@ export function LiveAlertCard({ trade, alert, onClose, viewMode = "deck" }) {
         strategyTag={item.strategyTag || item.strategyTags || "Practice Scalp"}
         latencyMs={state.latencyMs}
         isFeedStalled={state.isFeedStalled}
+        isStaleOffline={state.isStaleOffline}
+        isMarketOpen={state.isMarketOpen}
         soundMuted={state.soundMuted}
         setSoundMuted={state.setSoundMuted}
         setShowInfoSheet={state.setShowInfoSheet}
         onSquareOff={handleSquareOff}
         isClosing={state.isClosing}
         isProtected={isProtected}
-        isLiveBroker={Boolean(item.isLiveBroker || item.broker === "ZERODHA")}
+        isLiveBroker={Boolean((item.isLiveBroker || item.broker === "ZERODHA") && state.isMarketOpen)}
         focusMode={state.focusMode}
         onToggleFocusMode={() => state.setFocusMode(state.focusMode === "cash" ? "points" : "cash")}
         elapsedSeconds={state.elapsedSeconds}
