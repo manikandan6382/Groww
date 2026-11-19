@@ -46,6 +46,9 @@ export function SettledTradeForensicDrawer({
   const rawQty = Number(trade.quantity || 1);
   const lotSize = Number(trade.lotSize || 65);
   const totalQty = Number(trade.totalQty || (rawQty >= lotSize ? rawQty : rawQty * lotSize) || 65);
+  const capitalUsed = Number(
+    trade.capitalUsed || trade.positionSize || (totalQty * Number(trade.entryPrice || 0))
+  );
 
   const slPrice = Number(trade.stopLoss || 0);
   const exitPrice = Number(trade.exitPrice || 0);
@@ -77,7 +80,7 @@ export function SettledTradeForensicDrawer({
             Order #{String(trade.id || "").slice(-6) || "PRACTICE"}
           </span>
           <span className="text-slate-400 font-mono text-[11px]">
-            {trade.symbol} · {totalQty} Qty ({trade.lots || Math.round(totalQty / lotSize)} Lots)
+            {trade.symbol} · {totalQty} Qty ({trade.lots || Math.round(totalQty / lotSize)} Lots) · <span className="text-cyan-300 font-bold">₹{capitalUsed.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> Invested
           </span>
           <span className={clsx(
             "text-[10px] font-mono font-bold px-2 py-0.5 rounded border shadow-sm",

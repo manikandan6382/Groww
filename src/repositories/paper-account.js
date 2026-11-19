@@ -113,6 +113,12 @@ export function buildPaperSymbol(input) {
 
 export function buildPaperTradePayload(input, accountId) {
   const symbol = buildPaperSymbol(input);
+  const symUpper = symbol.toUpperCase();
+  const inferredOptionType = (symUpper.endsWith("PE") || symUpper.includes(" PE") || symUpper.includes("PUT")) ? "PUT" : "CALL";
+  const optionType = input.optionType ? (input.optionType.toUpperCase() === "PUT" || input.optionType.toUpperCase() === "PE" ? "PUT" : "CALL") : inferredOptionType;
+  const inferredUnderlying = symUpper.includes("BANKNIFTY") ? "BANKNIFTY" : symUpper.includes("FINNIFTY") ? "FINNIFTY" : symUpper.includes("MIDCPNIFTY") ? "MIDCPNIFTY" : symUpper.includes("SENSEX") ? "SENSEX" : "NIFTY";
+  const underlyingSymbol = (input.underlyingSymbol && !input.underlyingSymbol.includes(" ")) ? input.underlyingSymbol : inferredUnderlying;
+  const strikePrice = Number(input.strikePrice) || Number((symbol.match(/\b(\d{4,6})\b/) || [])[1]) || null;
   return {
     ...input,
     accountId,
@@ -122,8 +128,9 @@ export function buildPaperTradePayload(input, accountId) {
     status: "OPEN",
     market: input.market || "INDIA",
     instrumentType: "OPTION",
-    optionType: input.optionType || "CALL",
-    underlyingSymbol: input.underlyingSymbol || symbol,
+    optionType,
+    strikePrice,
+    underlyingSymbol,
     symbol,
     displayName: symbol,
     entryDatetime: input.entryDatetime || toLocalDateTimeInput(new Date()),

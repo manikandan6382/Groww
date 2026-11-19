@@ -555,13 +555,18 @@ export async function executeCandidateDeployment({
   }
 
   // 9. Persist to Authoritative SQLite Trade Ledger
+  const symUpper = String(fullTradingSymbol || candidate.symbol || "").toUpperCase();
+  const inferredOptType = (symUpper.endsWith("PE") || symUpper.includes(" PE") || symUpper.includes("PUT")) ? "PUT" : "CALL";
+  const resolvedOptionType = candidate.optionType ? (candidate.optionType.toUpperCase() === "PUT" || candidate.optionType.toUpperCase() === "PE" ? "PUT" : "CALL") : inferredOptType;
+  const resolvedStrike = Number(candidate.strike) || Number((symUpper.match(/\b(\d{4,6})\b/) || [])[1]) || 25000;
+
   const trade = mockPersist
     ? {
         id: 999999,
         symbol: fullTradingSymbol,
         underlyingSymbol: "NIFTY",
-        strikePrice: candidate.strike || 25000,
-        optionType: candidate.optionType || "CALL",
+        strikePrice: resolvedStrike,
+        optionType: resolvedOptionType,
         currentPrice: effectiveEntryPrice,
         entryPrice: effectiveEntryPrice,
         plannedEntryPrice: refEntry,
@@ -577,8 +582,8 @@ export async function executeCandidateDeployment({
     : createPaperTrade({
         symbol: fullTradingSymbol,
         underlyingSymbol: "NIFTY",
-        strikePrice: candidate.strike || 25000,
-        optionType: candidate.optionType || "CALL",
+        strikePrice: resolvedStrike,
+        optionType: resolvedOptionType,
         currentPrice: effectiveEntryPrice,
         entryPrice: effectiveEntryPrice,
         plannedEntryPrice: refEntry,

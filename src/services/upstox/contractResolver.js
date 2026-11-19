@@ -34,7 +34,17 @@ export async function resolveContractToken(client, trade) {
     ).toUpperCase();
     const parsedStrike = Number(trade.strikePrice || trade.strike_price || 0) || extractStrikeFromSymbol(sym);
     const strike = parsedStrike;
-    const side = toUpstoxSide(trade.optionType || trade.option_type || (sym.includes("PE") ? "PUT" : "CALL"));
+    const symUpper = sym.toUpperCase();
+    const symHasPe = symUpper.endsWith("PE") || symUpper.includes(" PE") || symUpper.includes("PUT");
+    const symHasCe = symUpper.endsWith("CE") || symUpper.includes(" CE") || symUpper.includes("CALL");
+    let side = "";
+    if (symHasPe && !symHasCe) {
+      side = "PE";
+    } else if (symHasCe && !symHasPe) {
+      side = "CE";
+    } else {
+      side = toUpstoxSide(trade.optionType || trade.option_type || "CALL");
+    }
     const underlyingKey = underlying.includes("SENSEX") ? "BSE_INDEX|SENSEX" : (underlying.includes("BANK") ? "NSE_INDEX|Nifty Bank" : (underlying.includes("FIN") ? "NSE_INDEX|Nifty Fin Service" : "NSE_INDEX|Nifty 50"));
     
     const endpoint = new URL("https://api.upstox.com/v2/option/contract");

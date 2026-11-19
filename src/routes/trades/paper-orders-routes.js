@@ -168,6 +168,18 @@ export async function handlePaperOrdersRoutes(req, res, url) {
       });
     }
 
+    // 3. Daily Loss Calculation
+    const todayDate = new Date(Date.now() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 10);
+    const dailyRow = db.prepare(`
+      SELECT COALESCE(SUM(net_pnl), 0) AS dailyPnl
+      FROM trades
+      WHERE trade_mode = 'PAPER'
+        AND status = 'CLOSED'
+        AND substr(exit_datetime, 1, 10) = ?
+    `).get(todayDate);
+    const dailyPnl = Number(dailyRow?.dailyPnl || 0);
+    const realizedDailyLoss = dailyPnl < 0 ? Math.abs(dailyPnl) : 0;
+
     if (!isUnrestricted) {
       const activePosition = db.prepare("SELECT t.id, COALESCE(i.symbol, 'ACTIVE') AS symbol FROM trades t LEFT JOIN instruments i ON i.id = t.instrument_id WHERE t.trade_mode = 'PAPER' AND t.status = 'OPEN' LIMIT 1").get();
       if (activePosition) {
@@ -178,18 +190,6 @@ export async function handlePaperOrdersRoutes(req, res, url) {
           detail: `You already have an active open position (${activePosition.symbol}). Strictly maximum 1 concurrent trade permitted.`,
         });
       }
-
-      // 3. Daily Loss Circuit Breaker: Hard ₹300.00 daily loss limit
-      const todayDate = new Date(Date.now() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 10);
-      const dailyRow = db.prepare(`
-        SELECT COALESCE(SUM(net_pnl), 0) AS dailyPnl
-        FROM trades
-        WHERE trade_mode = 'PAPER'
-          AND status = 'CLOSED'
-          AND substr(exit_datetime, 1, 10) = ?
-      `).get(todayDate);
-      const dailyPnl = Number(dailyRow?.dailyPnl || 0);
-      const realizedDailyLoss = dailyPnl < 0 ? Math.abs(dailyPnl) : 0;
 
       if (realizedDailyLoss >= 300.00) {
         releaseIdempotencyLock(idempotencyKey);

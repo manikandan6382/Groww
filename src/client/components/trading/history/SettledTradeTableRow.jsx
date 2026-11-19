@@ -32,6 +32,10 @@ export function SettledTradeTableRow({
     : (rawQty >= lotSize && rawQty % lotSize === 0) 
       ? Math.round(rawQty / lotSize) 
       : Math.max(1, Math.round(rawQty));
+  const totalUnits = Number(trade.totalUnits || trade.units || (rawQty >= lotSize ? rawQty : lots * lotSize));
+  const capitalUsed = Number(
+    trade.capitalUsed || trade.positionSize || (totalUnits * Number(trade.entryPrice || 0))
+  );
 
   const formattedEntryTime = formatLocalDateTime(trade.entryDatetime);
   const formattedExitTime = formatLocalDateTime(trade.exitDatetime || trade.entryDatetime);
@@ -84,7 +88,7 @@ export function SettledTradeTableRow({
             {isCE ? "CALL" : "PUT"}
           </span>
           <div className="flex flex-col min-w-0">
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 flex-wrap">
               <span className="font-bold text-white text-xs tracking-tight group-hover/row:text-cyan-300 transition-colors font-mono">
                 {trade.symbol}
               </span>
@@ -94,16 +98,28 @@ export function SettledTradeTableRow({
                 </span>
               )}
             </div>
-            <span className="text-[10px] text-slate-400 font-mono">
-              {lots} {lots === 1 ? "Lot" : "Lots"} ({lotSize} Lot Size)
-            </span>
+            <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+              <span className="text-[10px] text-slate-400 font-mono">
+                {lots} {lots === 1 ? "Lot" : "Lots"} ({lotSize} Lot Size)
+              </span>
+              <span className="text-slate-600 font-bold text-[10px]">·</span>
+              <span 
+                className="inline-flex items-center gap-1 text-[10px] font-bold font-mono bg-cyan-950/70 text-cyan-300 px-1.5 py-0.5 rounded border border-cyan-500/35 shadow-[0_0_8px_rgba(6,182,212,0.15)]"
+                title={`Total Capital Deployed to Buy: ₹${capitalUsed.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${totalUnits} units @ ₹${Number(trade.entryPrice || 0).toFixed(2)})`}
+              >
+                <span className="text-[8.5px] uppercase font-semibold text-cyan-400/80 tracking-wider">Invested</span>
+                <span>₹{capitalUsed.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </span>
+            </div>
           </div>
         </div>
       </td>
 
       {/* 2. Entry Time with Institutional Market Session Badge */}
       <td className="py-3.5 px-3 text-slate-400 text-[11px] whitespace-nowrap font-mono">
-        <span className="block text-slate-300">{formattedEntryTime}</span>
+        <span className="block text-slate-300">
+          {formattedEntryTime} <span className="text-[9px] text-slate-500 font-semibold">IST</span>
+        </span>
         <span 
           className={clsx(
             "inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.2 rounded border mt-0.5 shadow-sm",
@@ -118,7 +134,9 @@ export function SettledTradeTableRow({
 
       {/* 3. Exit Time / Duration */}
       <td className="py-3.5 px-3 whitespace-nowrap font-mono">
-        <span className="text-cyan-300 font-bold text-[11px] block">{formattedExitTime}</span>
+        <span className="text-cyan-300 font-bold text-[11px] block">
+          {formattedExitTime} <span className="text-[9px] text-cyan-500/70 font-semibold">IST</span>
+        </span>
         <span className="text-[10px] text-slate-400 flex items-center gap-1 font-sans mt-0.5">
           <Clock className="w-2.5 h-2.5 text-cyan-400" />
           <span>{duration}</span>
@@ -127,7 +145,15 @@ export function SettledTradeTableRow({
 
       {/* 4. Entry Price (₹) */}
       <td className="py-3.5 px-3 text-right text-slate-300 font-mono">
-        ₹{Number(trade.entryPrice || 0).toFixed(2)}
+        <div>
+          <span>₹{Number(trade.entryPrice || 0).toFixed(2)}</span>
+          <span
+            className="block text-[9.5px] text-slate-500 font-normal tracking-tight"
+            title={`Total Capital Deployed: ₹${capitalUsed.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          >
+            ₹{capitalUsed.toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+          </span>
+        </div>
       </td>
 
       {/* 5. Exit Price (₹) */}
